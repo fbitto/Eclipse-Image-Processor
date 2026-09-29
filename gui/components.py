@@ -1,225 +1,213 @@
-"""Reusable UI components: ClickableLabel, CollapsibleSection."""
+"""GUI components for EclipseProcessorApp."""
 
-from typing import Optional
-
-import numpy as np
-from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QSizePolicy,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QLabel, QWidget, QVBoxLayout, QCheckBox, QPushButton
+from PySide6.QtGui import QPainter, QPen, QColor
 
 
 class ClickableLabel(QLabel):
-    """Interactive image viewer with dynamic geometric projection in real-time."""
-
-    image_clicked = Signal(int, int)
-
-    def __init__(self, parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.circle_x: Optional[float] = None
-        self.circle_y: Optional[float] = None
-        self.circle_r: Optional[float] = None
-        self.native_w: Optional[int] = None
-        self.native_h: Optional[int] = None
-
-        self.setMinimumSize(1, 1)
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-
-    def set_circle_parameters(
-        self,
-        x: float,
-        y: float,
-        r: float,
-        native_w: Optional[int] = None,
-        native_h: Optional[int] = None,
-    ):
-        self.circle_x = x
-        self.circle_y = y
-        self.circle_r = r
-        if native_w is not None and native_h is not None:
-            self.native_w = native_w
-            self.native_h = native_h
-        self.update()
-
+    """QLabel that emits signals on click and Ctrl+click."""
+    
+    image_clicked = Signal(int, int)  # Normal click
+    image_ctrl_clicked = Signal(int, int)  # Ctrl+Click
+    
+    def __init__(self):
+        super().__init__()
+        self.circle_cx = 0
+        self.circle_cy = 0
+        self.circle_r = 0
+        self.native_w = 0
+        self.native_h = 0
+    
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            pix = self.pixmap()
-            if pix is None or pix.isNull() or not self.native_w or self.native_w <= 0:
-                return
-
-            w_widget, h_widget = self.width(), self.height()
-            w_pix, h_pix = pix.width(), pix.height()
-            bx = (w_widget - w_pix) // 2
-            by = (h_widget - h_pix) // 2
-
-            pos = event.position().toPoint()
-            if bx <= pos.x() <= bx + w_pix and by <= pos.y() <= by + h_pix:
-                scale = w_pix / float(self.native_w)
-                orig_x = int((pos.x() - bx) / scale)
-                orig_y = int((pos.y() - by) / scale)
-                self.image_clicked.emit(orig_x, orig_y)
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        pix = self.pixmap()
-        if pix is None or pix.isNull() or not self.native_w or self.native_w <= 0:
+        """Handle mouse click with modifier support."""
+        if self.pixmap() is None:
             return
-
-        if self.circle_x is not None and self.circle_y is not None and self.circle_r is not None:
-            w_widget, h_widget = self.width(), self.height()
-            w_pix, h_pix = pix.width(), pix.height()
-            bx = (w_widget - w_pix) // 2
-            by = (h_widget - h_pix) // 2
-            scale = w_pix / float(self.native_w)
-
-            screen_x = int(self.circle_x * scale) + bx
-            screen_y = int(self.circle_y * scale) + by
-            screen_r = int(self.circle_r * scale)
-
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            pen = QPen(QColor(255, 50, 50, 220), 2, Qt.PenStyle.SolidLine)
-            painter.setPen(pen)
-
-            painter.drawEllipse(QPoint(screen_x, screen_y), screen_r, screen_r)
-            painter.drawLine(screen_x - 6, screen_y, screen_x + 6, screen_y)
-            painter.drawLine(screen_x, screen_y - 6, screen_x, screen_y + 6)
+        
+        # Get click position in label coordinates
+        x = event.position().x()
+        y = event.position().y()
+        
+        # Convert to image coordinates
+        pixmap = self.pixmap()
+        if pixmap.isNull():
+            return
+        
+        label_w, label_h = self.width(), self.height()
+        pixmap_w, pixmap_h = pixmap.width(), pixmap.height()
+        
+        # Calculate scaling (centered, aspect ratio preserved)
+        scale_x = pixmap_w / label_w if label_w > 0 else 1.0
+        scale_y = pixmap_h / label_h if label_h > 0 else 1.0
+        
+        # Offset for centered image
+        offset_x = (label_w - pixmap_w / max(scale_x, scale_y)) / 2.0
+        offset_y = (label_h - pixmap_h / max(scale_x, scale_y)) / 2.0
+        
+        # Convert to image coordinates
+        img_x = int((x - offset_x) * max(scale_x, scale_y))
+        img_y = int((y - offset_y) * max(scale_x, scale_y))
+        
+        # Convert preview coords to full resolution if needed
+        if self.native_w > 0 and self.native_h > 0:
+            preview_w = self.pixmap().width()
+            preview_h = self.pixmap().height()
+            scale_to_native = self.native_w / preview_w if preview_w > 0 else 1.0
+            img_x = int(img_x * scale_to_native)
+            img_y = int(img_y * scale_to_native)
+        
+        # Check for Ctrl modifier
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.image_ctrl_clicked.emit(img_x, img_y)
+        else:
+            self.image_clicked.emit(img_x, img_y)
+    
+    def set_circle_parameters(self, cx, cy, r, native_w=0, native_h=0):
+        """Set circle parameters for overlay drawing."""
+        self.circle_cx = cx
+        self.circle_cy = cy
+        self.circle_r = r
+        self.native_w = native_w
+        self.native_h = native_h
+        self.update()
+    
+    def paintEvent(self, event):
+        """Paint the label with circle overlay."""
+        super().paintEvent(event)
+        
+        if self.circle_r <= 0 or self.pixmap() is None:
+            return
+        
+        # Draw circle overlay
+        painter = QPainter(self)
+        pen = QPen(QColor(255, 165, 0, 200))  # Orange with transparency
+        pen.setWidth(2)
+        painter.setPen(pen)
+        
+        # Calculate scaling from native to display
+        if self.native_w > 0 and self.native_h > 0:
+            pixmap = self.pixmap()
+            preview_w = pixmap.width()
+            preview_h = pixmap.height()
+            scale = preview_w / self.native_w if self.native_w > 0 else 1.0
+            
+            # Convert to preview coordinates
+            cx_preview = int(self.circle_cx * scale)
+            cy_preview = int(self.circle_cy * scale)
+            r_preview = int(self.circle_r * scale)
+            
+            # Calculate label offset
+            label_w, label_h = self.width(), self.height()
+            scale_factor = max(preview_w / label_w, preview_h / label_h) if label_w > 0 and label_h > 0 else 1.0
+            offset_x = (label_w - preview_w / scale_factor) / 2.0
+            offset_y = (label_h - preview_h / scale_factor) / 2.0
+            
+            # Draw circle
+            display_cx = offset_x + cx_preview / scale_factor
+            display_cy = offset_y + cy_preview / scale_factor
+            display_r = r_preview / scale_factor
+            
+            painter.drawEllipse(int(display_cx - display_r), int(display_cy - display_r),
+                              int(display_r * 2), int(display_r * 2))
+        
+        painter.end()
 
 
 class CollapsibleSection(QWidget):
-    """Collapsible UI container with optional filter enable/bypass checkbox."""
-
+    """Collapsible section with checkbox and content area."""
+    
     toggled_active = Signal(bool)
-
-    def __init__(
-        self,
-        title: str,
-        has_checkbox: bool = False,
-        is_expanded: bool = True,
-        is_active: bool = True,
-        parent: Optional[QWidget] = None,
-    ):
-        super().__init__(parent)
-        self.title_text = title
+    
+    def __init__(self, title: str, has_checkbox: bool = True, is_expanded: bool = True, is_active: bool = False):
+        super().__init__()
+        self.title = title
         self.has_checkbox = has_checkbox
         self.is_expanded = is_expanded
-
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 2, 0, 2)
-        main_layout.setSpacing(2)
-
-        self.header_frame = QFrame()
-        self.header_frame.setStyleSheet("""
-            QFrame {
-                background-color: #333333;
-                border: 1px solid #3d3d3d;
-                border-radius: 3px;
-            }
-            QFrame:hover {
-                background-color: #3a3a3a;
-                border-color: #4a4a4a;
-            }
-        """)
-        header_layout = QHBoxLayout(self.header_frame)
-        header_layout.setContentsMargins(8, 4, 8, 4)
-        header_layout.setSpacing(6)
-
-        self.toggle_btn = QPushButton()
-        self.toggle_btn.setFlat(True)
-        self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.toggle_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                color: #e0e0e0;
-                font-weight: 700;
-                font-size: 11px;
-                border: none;
-                text-align: left;
-                padding: 0px;
-                letter-spacing: 0.5px;
-            }
-            QPushButton:hover {
-                color: #ffffff;
-            }
-        """)
-        self.toggle_btn.clicked.connect(self.toggle_expanded)
-        header_layout.addWidget(self.toggle_btn, stretch=1)
-
-        if self.has_checkbox:
-            self.chk_active = QCheckBox("Active")
-            self.chk_active.setChecked(is_active)
-            self.chk_active.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.chk_active.setStyleSheet("""
+        self.is_filter_active_flag = is_active
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # Header with expand/collapse and checkbox
+        header_layout = QVBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(0)
+        
+        if has_checkbox:
+            self.checkbox = QCheckBox(f"▼ {title}" if is_expanded else f"▶ {title}")
+            self.checkbox.setChecked(is_active)
+            self.checkbox.setStyleSheet("""
                 QCheckBox {
-                    background: transparent;
-                    color: #a0a0a0;
-                    font-size: 11px;
-                    font-weight: 600;
-                    spacing: 5px;
-                }
-                QCheckBox:hover {
                     color: #ffffff;
+                    font-weight: bold;
+                    font-size: 11px;
+                    spacing: 6px;
                 }
                 QCheckBox::indicator {
-                    width: 13px;
-                    height: 13px;
-                    border-radius: 2px;
-                    border: 1px solid #4a4a4a;
-                    background-color: #1e1e1e;
-                }
-                QCheckBox::indicator:hover {
-                    border: 1px solid #707070;
-                    background-color: #282828;
-                }
-                QCheckBox::indicator:checked {
-                    background-color: #e5a00d;
-                    border: 1px solid #f5b025;
+                    width: 0px;
+                    height: 0px;
                 }
             """)
-            self.chk_active.toggled.connect(self._on_active_toggled)
-            header_layout.addWidget(self.chk_active)
+            self.checkbox.stateChanged.connect(self._on_checkbox_changed)
+            header_layout.addWidget(self.checkbox)
         else:
-            self.chk_active = None
-
-        main_layout.addWidget(self.header_frame)
-
-        self.content_widget = QWidget()
-        self.content_widget.setStyleSheet("background-color: #282828; border-radius: 3px;")
-        self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(6, 6, 6, 6)
-        self.content_layout.setSpacing(5)
-        self.content_widget.setVisible(self.is_expanded)
-        # Note: We do NOT disable content_widget initially, even if not active.
-        # Users should be able to configure filter parameters before enabling the filter.
-
-        main_layout.addWidget(self.content_widget)
-        self._update_header_text()
-
-    def _update_header_text(self):
+            self.header_btn = QPushButton(f"▼ {title}" if is_expanded else f"▶ {title}")
+            self.header_btn.setFlat(True)
+            self.header_btn.setStyleSheet("""
+                QPushButton {
+                    color: #ffffff;
+                    font-weight: bold;
+                    font-size: 11px;
+                    text-align: left;
+                    padding: 4px;
+                    border: none;
+                }
+                QPushButton:hover {
+                    background-color: #3c3c3c;
+                }
+            """)
+            self.header_btn.clicked.connect(self._toggle_expand)
+            header_layout.addWidget(self.header_btn)
+        
+        layout.addLayout(header_layout)
+        
+        # Content area
+        self.content_layout = QVBoxLayout()
+        self.content_layout.setContentsMargins(12, 6, 6, 6)
+        self.content_layout.setSpacing(6)
+        layout.addLayout(self.content_layout)
+        
+        # Show/hide content based on expanded state
+        if not is_expanded:
+            self._set_content_visible(False)
+    
+    def _on_checkbox_changed(self, state):
+        """Handle checkbox state change."""
+        self.is_filter_active_flag = self.checkbox.isChecked()
+        
+        # Update arrow
         arrow = "▼" if self.is_expanded else "▶"
-        self.toggle_btn.setText(f"{arrow}  {self.title_text}")
-
-    def toggle_expanded(self):
+        self.checkbox.setText(f"{arrow} {self.title}")
+        
+        self.toggled_active.emit(self.is_filter_active_flag)
+    
+    def _toggle_expand(self):
+        """Toggle expansion state."""
         self.is_expanded = not self.is_expanded
-        self.content_widget.setVisible(self.is_expanded)
-        self._update_header_text()
-
-    def _on_active_toggled(self, checked: bool):
-        """Handle checkbox toggle. Sliders remain enabled for configuration."""
-        # Note: We do NOT disable content_widget when unchecked.
-        # This allows users to adjust filter parameters even when the filter is inactive.
-        # The pipeline will skip disabled filters anyway.
-        self.toggled_active.emit(checked)
-
+        arrow = "▼" if self.is_expanded else "▶"
+        self.header_btn.setText(f"{arrow} {self.title}")
+        self._set_content_visible(self.is_expanded)
+    
+    def _set_content_visible(self, visible: bool):
+        """Show or hide content area."""
+        for i in range(self.content_layout.count()):
+            widget = self.content_layout.itemAt(i).widget()
+            if widget:
+                widget.setVisible(visible)
+    
     def is_filter_active(self) -> bool:
-        if self.has_checkbox and self.chk_active is not None:
-            return self.chk_active.isChecked()
-        return True
+        """Check if filter is active (checkbox checked)."""
+        if self.has_checkbox:
+            return self.checkbox.isChecked()
+        return self.is_filter_active_flag

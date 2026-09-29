@@ -80,6 +80,9 @@ class EclipseProcessorApp(QMainWindow):
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet("QLabel { background-color: #1c1c1c; border: 1px solid #333333; border-radius: 4px; }")
         self.image_label.image_clicked.connect(self.on_image_canvas_clicked)
+        # Connect Ctrl+Click separately if available
+        if hasattr(self.image_label, 'image_ctrl_clicked'):
+            self.image_label.image_ctrl_clicked.connect(self.on_image_ctrl_clicked)
         main_layout.addWidget(self.image_label, stretch=3)
 
         right_container = QWidget()
@@ -623,7 +626,7 @@ class EclipseProcessorApp(QMainWindow):
         return np.clip((f_v - f_bp) / denom, 0.0, 1.0)
 
     def on_image_canvas_clicked(self, x: int, y: int):
-        """Handle canvas click (SP picker or coordinate setting)."""
+        """Handle normal canvas click (SP picker only)."""
         if self.sp_picker_active and hasattr(self, "btn_pick_sp") and self.btn_pick_sp.isChecked():
             proc_mat = self.processed_image if self.processed_image is not None else self.raw_image
             if proc_mat is not None:
@@ -643,10 +646,17 @@ class EclipseProcessorApp(QMainWindow):
                 self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
                 self.render_matrix_to_screen()
                 return
+        
+        # Normal click does nothing if SP picker is not active
+        # User must use Ctrl+Click to set center
 
+    def on_image_ctrl_clicked(self, x: int, y: int):
+        """Handle Ctrl+Click to set lunar disk center."""
         self.txt_x.setText(str(x))
         self.txt_y.setText(str(y))
         self.dispatch_pipeline_request_if_auto()
+        self.status_label.setText(f"Status: Center set to X:{x}, Y:{y} (Ctrl+Click)")
+        self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
 
     def trigger_circle_redraw(self):
         """Redraw the solar disk circle on the canvas."""
