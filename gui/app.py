@@ -177,6 +177,26 @@ class EclipseProcessorApp(QMainWindow):
 
         self.btn_auto_moon = QPushButton("🎯 Auto-detect Lunar Disk")
         self.btn_auto_moon.setToolTip("Automatically detect the lunar disk center and radius using Hough Circle Transform")
+        self.btn_auto_moon = QPushButton("🌙 Auto-detect Lunar Disk")
+        self.btn_auto_moon.setToolTip("Automatically detect the lunar disk center and radius using Hough Circle Transform")
+        self.btn_auto_moon.setStyleSheet("""
+            QPushButton {
+                background-color: #3c3c3c;
+                color: #e5a00d;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 6px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+                border: 1px solid #e5a00d;
+            }
+            QPushButton:pressed {
+                background-color: #2a2a2a;
+            }
+        """)
         self.btn_auto_moon.clicked.connect(self.auto_detect_moon_action)
         self.sec_geo.content_layout.addWidget(self.btn_auto_moon)
         layout.addWidget(self.sec_geo)
@@ -442,6 +462,36 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_stretch_mode = QComboBox()
         self.combo_stretch_mode.addItems(["Asinh (Smooth)", "Logarithmic: ln(1 + Kx)", "GHS (Hyperbolic Precision)"])
         self.combo_stretch_mode.setToolTip("Select final display curve: Smooth Asinh, fast outer corona Logarithmic, or professional GHS")
+        self.combo_stretch_mode.setStyleSheet("""
+            QComboBox {
+                background-color: #2a2a2a;
+                color: #ffffff;
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 4px;
+                font-size: 11px;
+                outline: none;
+            }
+            QComboBox:focus {
+                border: 1px solid #555555;
+                outline: none;
+            }
+            QComboBox::drop-down {
+                border: none;
+                background-color: #2a2a2a;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                width: 0px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #3c3c3c;
+                color: #ffffff;
+                selection-background-color: #0082c9;
+                border: 1px solid #555555;
+                outline: none;
+            }
+        """)
         self.combo_stretch_mode.currentIndexChanged.connect(self._on_stretch_mode_changed)
         mode_row.addWidget(mode_lbl)
         mode_row.addWidget(self.combo_stretch_mode)
