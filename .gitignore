@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+*.tif
+*.tiff
+*.jpg
+*.jpeg
+__pycache__
+*.zip
