@@ -80,9 +80,6 @@ class EclipseProcessorApp(QMainWindow):
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet("QLabel { background-color: #1c1c1c; border: 1px solid #333333; border-radius: 4px; }")
         self.image_label.image_clicked.connect(self.on_image_canvas_clicked)
-        # Connect Ctrl+Click separately if available
-        if hasattr(self.image_label, 'image_ctrl_clicked'):
-            self.image_label.image_ctrl_clicked.connect(self.on_image_ctrl_clicked)
         main_layout.addWidget(self.image_label, stretch=3)
 
         right_container = QWidget()
@@ -177,26 +174,6 @@ class EclipseProcessorApp(QMainWindow):
 
         self.btn_auto_moon = QPushButton("🎯 Auto-detect Lunar Disk")
         self.btn_auto_moon.setToolTip("Automatically detect the lunar disk center and radius using Hough Circle Transform")
-        self.btn_auto_moon = QPushButton("🌙 Auto-detect Lunar Disk")
-        self.btn_auto_moon.setToolTip("Automatically detect the lunar disk center and radius using Hough Circle Transform")
-        self.btn_auto_moon.setStyleSheet("""
-            QPushButton {
-                background-color: #3c3c3c;
-                color: #e5a00d;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                padding: 6px;
-                font-weight: bold;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #e5a00d;
-            }
-            QPushButton:pressed {
-                background-color: #2a2a2a;
-            }
-        """)
         self.btn_auto_moon.clicked.connect(self.auto_detect_moon_action)
         self.sec_geo.content_layout.addWidget(self.btn_auto_moon)
         layout.addWidget(self.sec_geo)
@@ -462,36 +439,6 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_stretch_mode = QComboBox()
         self.combo_stretch_mode.addItems(["Asinh (Smooth)", "Logarithmic: ln(1 + Kx)", "GHS (Hyperbolic Precision)"])
         self.combo_stretch_mode.setToolTip("Select final display curve: Smooth Asinh, fast outer corona Logarithmic, or professional GHS")
-        self.combo_stretch_mode.setStyleSheet("""
-            QComboBox {
-                background-color: #2a2a2a;
-                color: #ffffff;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                padding: 4px;
-                font-size: 11px;
-                outline: none;
-            }
-            QComboBox:focus {
-                border: 1px solid #555555;
-                outline: none;
-            }
-            QComboBox::drop-down {
-                border: none;
-                background-color: #2a2a2a;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                width: 0px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #3c3c3c;
-                color: #ffffff;
-                selection-background-color: #0082c9;
-                border: 1px solid #555555;
-                outline: none;
-            }
-        """)
         self.combo_stretch_mode.currentIndexChanged.connect(self._on_stretch_mode_changed)
         mode_row.addWidget(mode_lbl)
         mode_row.addWidget(self.combo_stretch_mode)
@@ -676,7 +623,7 @@ class EclipseProcessorApp(QMainWindow):
         return np.clip((f_v - f_bp) / denom, 0.0, 1.0)
 
     def on_image_canvas_clicked(self, x: int, y: int):
-        """Handle normal canvas click (SP picker only)."""
+        """Handle canvas click (SP picker or coordinate setting)."""
         if self.sp_picker_active and hasattr(self, "btn_pick_sp") and self.btn_pick_sp.isChecked():
             proc_mat = self.processed_image if self.processed_image is not None else self.raw_image
             if proc_mat is not None:
@@ -696,17 +643,10 @@ class EclipseProcessorApp(QMainWindow):
                 self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
                 self.render_matrix_to_screen()
                 return
-        
-        # Normal click does nothing if SP picker is not active
-        # User must use Ctrl+Click to set center
 
-    def on_image_ctrl_clicked(self, x: int, y: int):
-        """Handle Ctrl+Click to set lunar disk center."""
         self.txt_x.setText(str(x))
         self.txt_y.setText(str(y))
         self.dispatch_pipeline_request_if_auto()
-        self.status_label.setText(f"Status: Center set to X:{x}, Y:{y} (Ctrl+Click)")
-        self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
 
     def trigger_circle_redraw(self):
         """Redraw the solar disk circle on the canvas."""
