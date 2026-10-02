@@ -4,7 +4,7 @@
 [![Python 3.14+](https://img.shields.io/badge/Python-3.14%2B-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-A powerful desktop application for processing and analyzing solar eclipse images. **Eclipse Image Processor** provides advanced image filtering, radial normalization, and harmonic analysis tools specifically designed for eclipse corona imaging.
+A desktop application for processing and analyzing solar eclipse images. **Eclipse Image Processor** provides advanced image filtering, radial normalization, and harmonic analysis tools specifically designed for eclipse corona imaging.
 
 **Author:** Francisco Bitto  
 **Repository:** https://github.com/fbitto/Eclipse-Image-Processor
