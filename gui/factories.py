@@ -202,3 +202,76 @@ def create_filter_group(group_title: str, control_layout: QVBoxLayout) -> QVBoxL
     group_layout.addWidget(inner_container)
     control_layout.addWidget(group_frame)
     return inner_layout
+
+
+def create_dyadic_slider(
+    label_text: str,
+    min_exp: int,
+    max_exp: int,
+    default_exp: int,
+    target_layout: QVBoxLayout,
+    tooltip: Optional[str] = None,
+    on_release_callback=None,
+) -> Tuple[QSlider, QLabel]:
+    """Create a dyadic slider (powers of 2: 2^min_exp to 2^max_exp).
+    
+    Slider internally uses exponent values (e.g., 4, 5, 6, 7, 8)
+    but displays them as powers of 2 (e.g., 2^4=16, 2^5=32, etc).
+    
+    Args:
+        label_text: Label for the slider
+        min_exp: Minimum exponent (e.g., 4 for 2^4=16)
+        max_exp: Maximum exponent (e.g., 8 for 2^8=256)
+        default_exp: Default exponent (e.g., 6 for 2^6=64)
+        target_layout: QVBoxLayout to add the slider to
+        tooltip: Optional tooltip text
+        on_release_callback: Optional callback when slider is released
+    
+    Returns:
+        Tuple of (QSlider, QLabel) where slider value is exponent,
+        and label displays "2^n = value"
+    
+    Example:
+        slider, label = create_dyadic_slider(
+            "Angular Segments", 4, 8, 6, layout,
+            tooltip="Segments must be powers of 2"
+        )
+        # User sees: "2^6 = 64"
+        # Code gets: slider.value() = 6, then 2**6 = 64
+    """
+    
+    row = QHBoxLayout()
+    lbl_name = QLabel(label_text)
+    lbl_name.setStyleSheet("background: transparent; color: #b8b8b8; font-size: 11px;")
+    if tooltip:
+        lbl_name.setToolTip(tooltip)
+
+    # Display label: "2^6 = 64"
+    default_value = 2 ** default_exp
+    lbl_val = QLabel(f"2^{default_exp} = {default_value}")
+    lbl_val.setStyleSheet("background: transparent; color: #e0e0e0; font-size: 11px; font-weight: bold; font-family: 'Consolas', monospace;")
+    if tooltip:
+        lbl_val.setToolTip(tooltip)
+
+    row.addWidget(lbl_name)
+    row.addStretch()
+    row.addWidget(lbl_val)
+
+    slider = QSlider(Qt.Orientation.Horizontal)
+    slider.setRange(min_exp, max_exp)
+    slider.setValue(default_exp)
+    if tooltip:
+        slider.setToolTip(tooltip)
+
+    def update_lbl(exp_val):
+        """Update label with 2^n = value format."""
+        segments = 2 ** exp_val
+        lbl_val.setText(f"2^{exp_val} = {segments}")
+
+    slider.valueChanged.connect(update_lbl)
+    if on_release_callback:
+        slider.sliderReleased.connect(on_release_callback)
+
+    target_layout.addLayout(row)
+    target_layout.addWidget(slider)
+    return slider, lbl_val

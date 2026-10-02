@@ -28,7 +28,13 @@ import tifffile
 from config import LIGHTROOM_QSS, CPU_CORES
 from core.filters import FilterWorker
 from gui.components import ClickableLabel, CollapsibleSection
-from gui.factories import create_filter_group, create_slider, create_slider_float, create_stepper_input
+from gui.factories import (
+    create_filter_group,
+    create_slider,
+    create_slider_float,
+    create_stepper_input,
+    create_dyadic_slider,
+)
 from utils.helpers import resource_path
 
 
@@ -101,17 +107,20 @@ class EclipseProcessorApp(QMainWindow):
 
         btn_row = QHBoxLayout()
         self.btn_load = QPushButton("📁 Open Image")
+        self.btn_load.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
         self.btn_load.setToolTip("Load a 16-bit or 32-bit TIFF, FITS, or XISF solar master frame")
         self.btn_load.clicked.connect(self.load_image_action)
         btn_row.addWidget(self.btn_load)
 
         self.btn_compare = QPushButton("👁️ View Original")
+        self.btn_compare.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
         self.btn_compare.setCheckable(True)
         self.btn_compare.setToolTip("Toggle between filtered and original image for quick comparison")
         self.btn_compare.clicked.connect(self.toggle_compare_mode)
         btn_row.addWidget(self.btn_compare)
 
         self.btn_auto_calc = QPushButton("Auto Calculate")
+        self.btn_auto_calc.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
         self.btn_auto_calc.setCheckable(True)
         self.btn_auto_calc.setChecked(True)
         self.btn_auto_calc.setToolTip("Toggle automatic pipeline recomputation on slider release")
@@ -173,6 +182,7 @@ class EclipseProcessorApp(QMainWindow):
         self.txt_r.textChanged.connect(self.trigger_circle_redraw)
 
         self.btn_auto_moon = QPushButton("🎯 Auto-detect Lunar Disk")
+        self.btn_auto_moon.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
         self.btn_auto_moon.setToolTip("Automatically detect the lunar disk center and radius using Hough Circle Transform")
         self.btn_auto_moon.clicked.connect(self.auto_detect_moon_action)
         self.sec_geo.content_layout.addWidget(self.btn_auto_moon)
@@ -247,10 +257,10 @@ class EclipseProcessorApp(QMainWindow):
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
             tooltip="Maximum azimuthal Fourier harmonics to retain for fine filament detail"
         )
-        self.sl_fnrgf_seg, _ = create_slider(
-            "Angular Segments", 10, 360, 50, self.sec_fnrgf.content_layout,
+        self.sl_fnrgf_seg, _ = create_dyadic_slider(
+            "Angular Segments", 4, 8, 6, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
-            tooltip="Number of angular subdivisions for radial analysis"
+            tooltip="Angular subdivisions (2^n powers of 2). Minimum: 2×Fourier Order. Suggested: 2^6=64 for typical use."
         )
         self.sl_fnrgf_cut, _ = create_slider(
             "Harmonic Cutoff", 0, 20, 0, self.sec_fnrgf.content_layout,
@@ -758,7 +768,7 @@ class EclipseProcessorApp(QMainWindow):
             "fnrgf_enabled": self.sec_fnrgf.is_filter_active(),
             "fnrgf_str": self.sl_fnrgf_str.value(),
             "fnrgf_ord": self.sl_fnrgf_ord.value(),
-            "fnrgf_seg": self.sl_fnrgf_seg.value(),
+"fnrgf_seg": 2 ** self.sl_fnrgf_seg.value(),
             "fnrgf_cut": self.sl_fnrgf_cut.value(),
             "fnrgf_rad": self.sl_fnrgf_rad.value(),
             "fnrgf_rmax": self.sl_fnrgf_rmax.value(),
@@ -1126,7 +1136,7 @@ class EclipseProcessorApp(QMainWindow):
                     img,
                     self.sl_fnrgf_str.value(),
                     self.sl_fnrgf_ord.value(),
-                    self.sl_fnrgf_seg.value(),
+2 ** self.sl_fnrgf_seg.value(),
                     self.sl_fnrgf_cut.value(),
                     self.sl_fnrgf_rad.value(),
                     self.sl_fnrgf_rmax.value(),
