@@ -12,7 +12,7 @@
 # ]
 # ///
 """
-FiltrosEclipse v1.3.1 - Entry Point
+FiltrosEclipse v0.4.0 - Entry Point
 Modular structure for token-efficient development.
 """
 
