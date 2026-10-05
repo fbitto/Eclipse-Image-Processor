@@ -45,7 +45,7 @@ class EclipseProcessorApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Solar Corona Enhancement Filters v1.3.1")
+        self.setWindowTitle("Solar Corona Enhancement Filters v0.4.0")
         self.resize(1180, 780)
         self.setMinimumSize(960, 600)
 
