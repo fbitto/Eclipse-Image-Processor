@@ -1,4 +1,4 @@
-# config.py - Global Configuration & Styling for FiltrosEclipse v1.4.0
+# config.py - Global Configuration & Styling for FiltrosEclipse v0.4.0
 
 import os
 
@@ -19,7 +19,7 @@ CANVAS_HEIGHT = 600
 # ============================================================================
 # PERFORMANCE SETTINGS
 # ============================================================================
-FNRGF_THREADS = 4  # Number of threads for FNRGF - match your CPU core count
+FNRGF_THREADS = CPU_CORES  # Number of threads for FNRGF - match your CPU core count
 HISTOGRAM_LEVELS = 256
 PREVIEW_SCALE = 0.5  # Scale factor for faster preview updates
 
@@ -107,7 +107,7 @@ FILTER_DEFAULTS = {
 }
 
 # ============================================================================
-# QT STYLESHEET - Dark theme with Siemens blue accent
+# QT STYLESHEET - Dark theme with blue accent
 # ============================================================================
 # Alias for backward compatibility with main_new.py
 LIGHTROOM_QSS = '''
