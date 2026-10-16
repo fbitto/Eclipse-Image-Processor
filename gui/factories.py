@@ -3,6 +3,7 @@
 from typing import Optional, Tuple
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -33,7 +34,8 @@ def create_slider(
         lbl_name.setToolTip(tooltip)
 
     lbl_val = QLabel(str(default_v))
-    lbl_val.setStyleSheet("background: transparent; color: #e0e0e0; font-size: 11px; font-weight: bold; font-family: 'Consolas', monospace;")
+    lbl_val.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+    lbl_val.setStyleSheet("background: transparent; color: #e0e0e0; font-size: 11px; font-weight: bold;")
     if tooltip:
         lbl_val.setToolTip(tooltip)
 
@@ -82,7 +84,8 @@ def create_slider_float(
 
     init_float = default_v / divisor
     lbl_val = QLabel(f"{init_float:.2f}" if divisor < 100 else f"{init_float:.3f}")
-    lbl_val.setStyleSheet("background: transparent; color: #e0e0e0; font-size: 11px; font-weight: bold; font-family: 'Consolas', monospace;")
+    lbl_val.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+    lbl_val.setStyleSheet("background: transparent; color: #e0e0e0; font-size: 11px; font-weight: bold;")
     if tooltip:
         lbl_val.setToolTip(tooltip)
 
@@ -249,7 +252,8 @@ def create_dyadic_slider(
     # Display label: "2^6 = 64"
     default_value = 2 ** default_exp
     lbl_val = QLabel(f"2^{default_exp} = {default_value}")
-    lbl_val.setStyleSheet("background: transparent; color: #e0e0e0; font-size: 11px; font-weight: bold; font-family: 'Consolas', monospace;")
+    lbl_val.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+    lbl_val.setStyleSheet("background: transparent; color: #e0e0e0; font-size: 11px; font-weight: bold;")
     if tooltip:
         lbl_val.setToolTip(tooltip)
 

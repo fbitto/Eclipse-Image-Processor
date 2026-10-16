@@ -7,7 +7,7 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 from PySide6.QtCore import QThread, Signal, Qt
-from PySide6.QtGui import QCloseEvent, QIcon, QImage, QPixmap
+from PySide6.QtGui import QFontDatabase, QCloseEvent, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -69,6 +69,7 @@ class EclipseProcessorApp(QMainWindow):
         self.filter_worker.moveToThread(self.persistent_thread)
         self.request_processing_signal.connect(self.filter_worker.process_pipeline)
         self.filter_worker.finished.connect(self.on_processing_finished)
+        self.filter_worker.failed.connect(self.on_processing_failed)
         self.persistent_thread.start()
 
         self._build_ui()
@@ -214,7 +215,7 @@ class EclipseProcessorApp(QMainWindow):
         denoising_group = create_filter_group("🔇 DENOISING & NOISE SUPPRESSION", layout)
         self.sec_noise_gate = CollapsibleSection("RADIAL NOISE GATE", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_noise_gate_str, _ = create_slider(
-            "Gate Strength (%)", 0, 100, 0, self.sec_noise_gate.content_layout,
+            "Gate Strength (%)", 0, 100, 10, self.sec_noise_gate.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_noise_gate, self.sl_noise_gate_str),
             tooltip="Noise suppression strength in outer corona (Recommended: 50–70% for noisy images)"
         )
@@ -223,12 +224,12 @@ class EclipseProcessorApp(QMainWindow):
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_noise_gate, self.sl_noise_gate_str),
             tooltip="Signal-to-noise ratio threshold (Recommended: 15–25 for outer corona, higher = more aggressive)"
         )
-        self.sec_noise_gate.toggled_active.connect(self.on_filter_toggled)
+        self.sec_noise_gate.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_noise_gate_str))
         denoising_group.addWidget(self.sec_noise_gate)
 
         self.sec_bilateral = CollapsibleSection("EDGE-PRESERVING DENOISE", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_bilateral_str, _ = create_slider(
-            "Strength (%)", 0, 100, 0, self.sec_bilateral.content_layout,
+            "Strength (%)", 0, 100, 10, self.sec_bilateral.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_bilateral, self.sl_bilateral_str),
             tooltip="Denoising strength (Recommended: 40–60% for smooth noise reduction without posterization)"
         )
@@ -248,7 +249,7 @@ class EclipseProcessorApp(QMainWindow):
         radial_group = create_filter_group("🔄 RADIAL ENHANCEMENT", layout)
         self.sec_fnrgf = CollapsibleSection("FNRGF", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_fnrgf_str, _ = create_slider(
-            "Strength (%)", 0, 100, 0, self.sec_fnrgf.content_layout,
+            "Strength (%)", 0, 100, 10, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
             tooltip="Blend percentage of the radial gradient filter (0=off, 100=full effect)"
         )
@@ -260,23 +261,33 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_seg, _ = create_dyadic_slider(
             "Angular Segments", 4, 8, 6, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
-            tooltip="Angular subdivisions (2^n powers of 2). Minimum: 2×Fourier Order. Suggested: 2^6=64 for typical use."
+            tooltip="Angular subdivisions (2^n powers of 2). Minimum: 2×Fourier Order + 1. Suggested: 2^6=64 for typical use."
         )
         self.sl_fnrgf_cut, _ = create_slider(
-            "Harmonic Cutoff", 0, 20, 0, self.sec_fnrgf.content_layout,
+            "Coefficients to Remove", 0, 7, 0, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
-            tooltip="Harmonic frequency cutoff to attenuate unwanted spatial oscillations"
+            tooltip="Number of final Fourier coefficients set to zero, as in sunkit-image"
         )
+        def sync_fnrgf_limits(_=None):
+            order = self.sl_fnrgf_ord.value()
+            self.sl_fnrgf_cut.setMaximum(order + 1)
+            self.sl_fnrgf_seg.setMinimum(int(np.ceil(np.log2(2*order+1))))
+
+        self.sl_fnrgf_ord.valueChanged.connect(sync_fnrgf_limits)
+        sync_fnrgf_limits()
         self.sl_fnrgf_rad, _ = create_slider(
             "App Radius (×10)", 5, 25, 10, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
-            tooltip="Application radius in tenths of solar radius for the filter envelope"
+            tooltip="Process only above this radius, in tenths of solar radius"
         )
         self.sl_fnrgf_rmax, _ = create_slider(
             "Outer Radius R_max (×10)", 15, 60, 30, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
             tooltip="Outer boundary radius in tenths of solar radius (1.5–6.0 R_sun)"
         )
+        self.sl_fnrgf_rmax.setMinimum(self.sl_fnrgf_rad.value() + 1)
+        self.sl_fnrgf_rad.valueChanged.connect(
+            lambda value: self.sl_fnrgf_rmax.setMinimum(value + 1))
         self.sl_fnrgf_nbins, _ = create_slider(
             "Radial Bin Count", 20, 300, 80, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
@@ -308,14 +319,72 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_mask, _ = create_slider(
             "Apply Mask (%)", 0, 100, 0, self.sec_fnrgf.content_layout,
             on_release_callback=self.dispatch_pipeline_request_if_auto,
-            tooltip="Lunar limb protection (0=off, 60% recommended to preserve limb transition)"
+            tooltip="Optional original-image blend confined to 0.95–1.05 solar radii"
         )
         self.sec_fnrgf.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_fnrgf_str))
         radial_group.addWidget(self.sec_fnrgf)
 
+        multiscale_group = create_filter_group("📊 MULTI-SCALE / WAVELETS", layout)
+        self.sec_mgn = CollapsibleSection("MGN", has_checkbox=True, is_expanded=False, is_active=False)
+        self.sl_mgn_str, _ = create_slider(
+            "Strength (%)", 0, 100, 10, self.sec_mgn.content_layout,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn, self.sl_mgn_str),
+            tooltip="Multi-Scale Gaussian Normalization blend strength"
+        )
+        self.sl_mgn_gam, _ = create_slider(
+            "Gamma (×10)", 1, 100, 32, self.sec_mgn.content_layout,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn, self.sl_mgn_str),
+            tooltip="Global gamma exponent: displayed value / 10 (32 = 3.2)"
+        )
+        self.sl_mgn_k, _ = create_slider(
+            "Factor k (×100)", 1, 200, 70, self.sec_mgn.content_layout,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn, self.sl_mgn_str),
+            tooltip="Arctangent factor k: displayed value / 100 (70 = 0.70)"
+        )
+        self.sl_mgn_h, _ = create_slider(
+            "Global Weight h (×100)", 0, 100, 70, self.sec_mgn.content_layout,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn, self.sl_mgn_str),
+            tooltip="Global blending weight for multi-scale combination"
+        )
+        self.sl_mgn_trunc, _ = create_slider(
+            "Kernel Truncation (Sigmas)", 1, 6, 3, self.sec_mgn.content_layout,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn, self.sl_mgn_str),
+            tooltip="Gaussian truncation in standard deviations; all values 1–6 are honored"
+        )
+        self.sec_mgn.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_mgn_str))
+        multiscale_group.addWidget(self.sec_mgn)
+
+        self.sec_wow = CollapsibleSection("WOW", has_checkbox=True, is_expanded=False, is_active=False)
+        self.sl_wow_str, _ = create_slider(
+            "Strength (%)", 0, 100, 10, self.sec_wow.content_layout,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow, self.sl_wow_str),
+            tooltip="Wavelets Optimized Whitening blend strength"
+        )
+        self.sl_wow_scales, _ = create_slider(
+            "Wavelet Scales (0 = Auto)", 0, 10, 0, self.sec_wow.content_layout,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow, self.sl_wow_str),
+            tooltip="0 selects the maximum compatible with image dimensions; larger requests are capped"
+        )
+        self.sl_wow_denoise = []
+        for scale in range(3):
+            slider, _ = create_slider(
+                f"Denoise Scale {scale+1} (sigma)", 0, 10, 0,
+                self.sec_wow.content_layout,
+                on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow, self.sl_wow_str),
+                tooltip="0 disables denoising at this scale; noise is estimated from current input"
+            )
+            self.sl_wow_denoise.append(slider)
+        self.combo_wow_bilateral = QComboBox()
+        self.combo_wow_bilateral.addItems(["Standard WOW", "Edge-aware WOW (bilateral = 1)"])
+        self.combo_wow_bilateral.currentIndexChanged.connect(self.dispatch_pipeline_request_if_auto)
+        self.sec_wow.content_layout.addWidget(self.combo_wow_bilateral)
+        self.sec_wow.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_wow_str))
+        multiscale_group.addWidget(self.sec_wow)
+
+        histogram_group = create_filter_group("📈 RADIAL HISTOGRAM EQUALIZATION", layout)
         self.sec_rhef = CollapsibleSection("RHEF", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_rhef_str, _ = create_slider(
-            "Strength (%)", 0, 100, 0, self.sec_rhef.content_layout,
+            "Strength (%)", 0, 100, 10, self.sec_rhef.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_rhef, self.sl_rhef_str),
             tooltip="Radial Histogram Equalization blend strength (0=off, 100=full effect)"
         )
@@ -327,69 +396,20 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_rhef_upsilon, _ = create_slider(
             "Upsilon Parameter (×100)", 1, 100, 35, self.sec_rhef.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_rhef, self.sl_rhef_str),
-            tooltip="Non-linear normalization exponent (higher = stronger contrast enhancement)"
+            tooltip="Double-sided upsilon exponent (0.01–1.00); 1 leaves ranks unchanged"
+        )
+        self.sl_rhef_bin, _ = create_slider(
+            "Ring Width (×10 preview px)", 5, 100, 10, self.sec_rhef.content_layout,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_rhef, self.sl_rhef_str),
+            tooltip="Annular width in tenths of preview pixels; scaled to full resolution on export"
         )
         self.sec_rhef.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_rhef_str))
-        radial_group.addWidget(self.sec_rhef)
-
-        multiscale_group = create_filter_group("📊 MULTI-SCALE / WAVELETS", layout)
-        self.sec_mgn = CollapsibleSection("MGN", has_checkbox=True, is_expanded=False, is_active=False)
-        self.sl_mgn_str, _ = create_slider(
-            "Strength (%)", 0, 100, 0, self.sec_mgn.content_layout,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn, self.sl_mgn_str),
-            tooltip="Multi-Scale Gaussian Normalization blend strength"
-        )
-        self.sl_mgn_gam, _ = create_slider(
-            "Gamma (×10)", 1, 100, 32, self.sec_mgn.content_layout,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn, self.sl_mgn_str),
-            tooltip="Gamma exponent for local contrast compression (higher = stronger)"
-        )
-        self.sl_mgn_k, _ = create_slider(
-            "Factor k (×100)", 1, 200, 70, self.sec_mgn.content_layout,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn, self.sl_mgn_str),
-            tooltip="Arctangent steepness factor for normalized gradient mapping"
-        )
-        self.sl_mgn_h, _ = create_slider(
-            "Global Weight h (×100)", 0, 100, 70, self.sec_mgn.content_layout,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn, self.sl_mgn_str),
-            tooltip="Global blending weight for multi-scale combination"
-        )
-        self.sl_mgn_trunc, _ = create_slider(
-            "Kernel Truncation (Sigmas)", 1, 6, 3, self.sec_mgn.content_layout,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn, self.sl_mgn_str),
-            tooltip="Gaussian kernel truncation in standard deviations"
-        )
-        self.sec_mgn.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_mgn_str))
-        multiscale_group.addWidget(self.sec_mgn)
-
-        self.sec_wow = CollapsibleSection("WOW", has_checkbox=True, is_expanded=False, is_active=False)
-        self.sl_wow_str, _ = create_slider(
-            "Strength (%)", 0, 100, 0, self.sec_wow.content_layout,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow, self.sl_wow_str),
-            tooltip="Wavelets Optimized Whitening blend strength"
-        )
-        self.sl_wow_scales, _ = create_slider(
-            "Wavelet Scales", 3, 10, 6, self.sec_wow.content_layout,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow, self.sl_wow_str),
-            tooltip="Number of wavelet decomposition scales for multi-frequency analysis"
-        )
-        self.sl_wow_gam, _ = create_slider(
-            "Gamma (×10)", 1, 100, 32, self.sec_wow.content_layout,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow, self.sl_wow_str),
-            tooltip="Gamma exponent for wavelet coefficient compression"
-        )
-        self.sl_wow_h, _ = create_slider(
-            "Background Weight h (×100)", 0, 100, 20, self.sec_wow.content_layout,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow, self.sl_wow_str),
-            tooltip="Global weighting for background suppression"
-        )
-        self.sec_wow.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_wow_str))
-        multiscale_group.addWidget(self.sec_wow)
+        histogram_group.addWidget(self.sec_rhef)
 
         sharpening_group = create_filter_group("✨ SHARPENING", layout)
         self.sec_usm = CollapsibleSection("USM", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_usm_str, _ = create_slider(
-            "Strength (%)", 0, 100, 0, self.sec_usm.content_layout,
+            "Strength (%)", 0, 100, 10, self.sec_usm.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_usm, self.sl_usm_str),
             tooltip="Unsharp Mask blend strength (0=off, 100=full sharpening)"
         )
@@ -408,19 +428,29 @@ class EclipseProcessorApp(QMainWindow):
 
         self.sec_achf = CollapsibleSection("ACHF", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_achf_str, _ = create_slider(
-            "Strength (%)", 0, 100, 0, self.sec_achf.content_layout,
+            "Strength (%)", 0, 100, 10, self.sec_achf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf, self.sl_achf_str),
             tooltip="Adaptive Circular High-Pass Filter blend strength"
         )
         self.sl_achf_kernel, _ = create_slider(
-            "Base Kernel Radius (×10)", 5, 200, 20, self.sec_achf.content_layout,
+            "Support Radius (×10)", 5, 200, 20, self.sec_achf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf, self.sl_achf_str),
-            tooltip="Base Gaussian kernel radius in tenths of pixels (0.5–20.0 px)"
+            tooltip="Circular support radius in tenths of pixels; large radii are expensive"
         )
         self.sl_achf_boost, _ = create_slider(
             "Contrast Gain (×10)", 10, 50, 20, self.sec_achf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf, self.sl_achf_str),
             tooltip="High-pass amplification factor for filament microcontrast (1.0–5.0×)"
+        )
+        self.sl_achf_threshold, _ = create_slider(
+            "Intensity Threshold (%)", 0, 100, 10, self.sec_achf.content_layout,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf, self.sl_achf_str),
+            tooltip="Maximum neighbor difference as percent of current input intensity range; opposite pairs must both pass"
+        )
+        self.sl_achf_background, _ = create_slider(
+            "Background Retention (%)", 0, 99, 10, self.sec_achf.content_layout,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf, self.sl_achf_str),
+            tooltip="Low-frequency retention at full strength; display stretch is applied separately"
         )
         self.sec_achf.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_achf_str))
         sharpening_group.addWidget(self.sec_achf)
@@ -470,7 +500,8 @@ class EclipseProcessorApp(QMainWindow):
         sp_title.setToolTip("Brightness level where maximum contrast enhancement occurs (typically shadow region)")
         sp_header.addWidget(sp_title)
         self.lbl_ghs_sp = QLabel("0.050")
-        self.lbl_ghs_sp.setStyleSheet("color: #e5a00d; font-size: 11px; font-weight: bold; font-family: 'Consolas', monospace;")
+        self.lbl_ghs_sp.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.lbl_ghs_sp.setStyleSheet("color: #e5a00d; font-size: 11px; font-weight: bold;")
         sp_header.addStretch()
         sp_header.addWidget(self.lbl_ghs_sp)
         ghs_layout.addLayout(sp_header)
@@ -697,22 +728,12 @@ class EclipseProcessorApp(QMainWindow):
             self.dispatch_pipeline_request()
 
     def on_filter_toggled(self, is_active: bool, strength_slider=None):
-        """Handle filter checkbox toggle.
-        
-        - If DISABLING: Always recalculate (to remove filter effect)
-        - If ENABLING: Only recalculate if strength > 0 (filter will have visible effect)
-        """
-        if not is_active:
-            # Disabling: always recalculate to remove filter effect
-            self.dispatch_pipeline_request_if_auto()
-        elif is_active and strength_slider is not None:
-            # Enabling: only recalculate if strength > 0
-            if strength_slider.value() > 0:
-                self.dispatch_pipeline_request_if_auto()
+        """Keep the configured strength, including an intentional zero."""
+        self.dispatch_pipeline_request_if_auto()
 
     def on_filter_slider_released(self, section, strength_slider):
-        """Handle filter slider release - only dispatch if filter is active."""
-        if section.is_filter_active() and strength_slider.value() > 0:
+        # Releasing at zero must remove the previously rendered effect, too.
+        if section.is_filter_active():
             self.dispatch_pipeline_request_if_auto()
 
     def dispatch_pipeline_request_if_auto(self):
@@ -768,7 +789,7 @@ class EclipseProcessorApp(QMainWindow):
             "fnrgf_enabled": self.sec_fnrgf.is_filter_active(),
             "fnrgf_str": self.sl_fnrgf_str.value(),
             "fnrgf_ord": self.sl_fnrgf_ord.value(),
-"fnrgf_seg": 2 ** self.sl_fnrgf_seg.value(),
+            "fnrgf_seg": 2 ** self.sl_fnrgf_seg.value(),
             "fnrgf_cut": self.sl_fnrgf_cut.value(),
             "fnrgf_rad": self.sl_fnrgf_rad.value(),
             "fnrgf_rmax": self.sl_fnrgf_rmax.value(),
@@ -786,11 +807,12 @@ class EclipseProcessorApp(QMainWindow):
             "rhef_str": self.sl_rhef_str.value(),
             "rhef_rad": self.sl_rhef_rad.value(),
             "rhef_upsilon": self.sl_rhef_upsilon.value(),
+            "rhef_bin_px": self.sl_rhef_bin.value()/10.0,
             "wow_enabled": self.sec_wow.is_filter_active(),
             "wow_str": self.sl_wow_str.value(),
             "wow_scales": self.sl_wow_scales.value(),
-            "wow_gam": self.sl_wow_gam.value(),
-            "wow_h": self.sl_wow_h.value(),
+            "wow_denoise": [slider.value() for slider in self.sl_wow_denoise],
+            "wow_bilateral": 1 if self.combo_wow_bilateral.currentIndex() else None,
             "usm_enabled": self.sec_usm.is_filter_active(),
             "usm_str": self.sl_usm_str.value(),
             "usm_radius": self.sl_usm_radius.value(),
@@ -799,11 +821,21 @@ class EclipseProcessorApp(QMainWindow):
             "achf_str": self.sl_achf_str.value(),
             "achf_kernel": self.sl_achf_kernel.value(),
             "achf_boost": self.sl_achf_boost.value(),
+            "achf_threshold": self.sl_achf_threshold.value(),
+            "achf_background": self.sl_achf_background.value(),
             "sx": sx_preview,
             "sy": sy_preview,
             "sr": sr_preview,
         }
         self.request_processing_signal.emit(self.raw_image, params)
+
+    def on_processing_failed(self, message: str):
+        self.is_processing = False
+        self.status_label.setText(f"Status: Processing failed — {message}")
+        self.status_label.setStyleSheet("color: #ff3333; font-weight: bold;")
+        if self.has_pending_request:
+            self.has_pending_request = False
+            self.dispatch_pipeline_request()
 
     def on_processing_finished(self, output_matrix: np.ndarray):
         """Handle filter pipeline completion."""
@@ -847,7 +879,7 @@ class EclipseProcessorApp(QMainWindow):
         print(f"   [2] FNRGF ENGINE      : Order = {rec_fnrgf_ord} | Radial Bins = {rec_fnrgf_nbins} | R_max = {rec_fnrgf_rmax:.1f} R_sun")
         print(f"   [3] RHEF ENGINE       : App Radius = 10 (1.0 R_sun) | Upsilon = 35")
         print(f"   [4] MGN ENGINE        : Gamma = 32 | k = 70 | h = 70 | Trunc = 3")
-        print(f"   [5] WOW ENGINE        : Wavelet Scales = {rec_wow_scales} | Gamma = 32 | h = 20")
+        print(f"   [5] WOW ENGINE        : Wavelet Scales = {rec_wow_scales}")
         print(f"   [6] USM SHARPENING    : Blur Radius ~ {rec_usm_radius_px * 10:.0f} (slider value = {rec_usm_radius_px:.1f} px)")
         print(f"   [7] ACHF FILTER       : Base Kernel ~ {rec_achf_kernel_px * 10:.0f} (slider value = {rec_achf_kernel_px:.1f} px)")
         print(f"{'='*80}\n")
@@ -856,7 +888,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_ord.setValue(rec_fnrgf_ord)
         self.sl_fnrgf_nbins.setValue(rec_fnrgf_nbins)
         self.sl_fnrgf_rmax.setValue(int(round(rec_fnrgf_rmax * 10.0)))
-        self.sl_wow_scales.setValue(rec_wow_scales)
+        self.sl_wow_scales.setValue(0)  # automatic, dimension-dependent scales
         self.sl_usm_radius.setValue(int(round(rec_usm_radius_px * 10.0)))
         self.sl_achf_kernel.setValue(int(round(rec_achf_kernel_px * 10.0)))
 
@@ -1136,7 +1168,7 @@ class EclipseProcessorApp(QMainWindow):
                     img,
                     self.sl_fnrgf_str.value(),
                     self.sl_fnrgf_ord.value(),
-2 ** self.sl_fnrgf_seg.value(),
+                    2 ** self.sl_fnrgf_seg.value(),
                     self.sl_fnrgf_cut.value(),
                     self.sl_fnrgf_rad.value(),
                     self.sl_fnrgf_rmax.value(),
@@ -1149,13 +1181,6 @@ class EclipseProcessorApp(QMainWindow):
                     apply_mask=self.sl_fnrgf_mask.value(),
                 )
                 print(f"[EXPORT: FNRGF NATIVE] Done in {time.time() - t0:.3f}s")
-
-            if self.sec_rhef.is_filter_active():
-                t0 = time.time()
-                img = worker.run_rhef_native(
-                    img, self.sl_rhef_str.value(), self.sl_rhef_rad.value(), self.sl_rhef_upsilon.value(), sx_full, sy_full, sr_full
-                )
-                print(f"[EXPORT: RHEF NATIVE] Done in {time.time() - t0:.3f}s")
 
             if self.sec_mgn.is_filter_active():
                 t0 = time.time()
@@ -1172,9 +1197,19 @@ class EclipseProcessorApp(QMainWindow):
             if self.sec_wow.is_filter_active():
                 t0 = time.time()
                 img = worker.run_wow_native(
-                    img, self.sl_wow_str.value(), self.sl_wow_scales.value(), self.sl_wow_gam.value(), self.sl_wow_h.value()
+                    img, self.sl_wow_str.value(), self.sl_wow_scales.value(),
+                    denoise_coefficients=[slider.value() for slider in self.sl_wow_denoise],
+                    bilateral=1 if self.combo_wow_bilateral.currentIndex() else None,
                 )
                 print(f"[EXPORT: WOW NATIVE] Done in {time.time() - t0:.3f}s")
+
+            if self.sec_rhef.is_filter_active():
+                t0 = time.time()
+                img = worker.run_rhef_native(
+                    img, self.sl_rhef_str.value(), self.sl_rhef_rad.value(), self.sl_rhef_upsilon.value(), sx_full, sy_full, sr_full,
+                    bin_px=self.sl_rhef_bin.value()/10.0 * scale_factor,
+                )
+                print(f"[EXPORT: RHEF NATIVE] Done in {time.time() - t0:.3f}s")
 
             if self.sec_usm.is_filter_active():
                 t0 = time.time()
@@ -1187,7 +1222,9 @@ class EclipseProcessorApp(QMainWindow):
                 t0 = time.time()
                 achf_kernel_scaled = max(1, int(round(self.sl_achf_kernel.value() * scale_factor)))
                 img = worker.run_achf(
-                    img, self.sl_achf_str.value(), achf_kernel_scaled, self.sl_achf_boost.value(), sx_full, sy_full, sr_full
+                    img, self.sl_achf_str.value(), achf_kernel_scaled, self.sl_achf_boost.value(), sx_full, sy_full, sr_full,
+                    intensity_threshold=self.sl_achf_threshold.value(),
+                    background=self.sl_achf_background.value(),
                 )
                 print(f"[EXPORT: ACHF] Done in {time.time() - t0:.3f}s (kernel={achf_kernel_scaled})")
 
