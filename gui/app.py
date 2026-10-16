@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QThread, Signal, Qt
+from PySide6.QtCore import QThread, QTimer, Signal, Qt
 from PySide6.QtGui import QFontDatabase, QCloseEvent, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 import tifffile
 
 from config import LIGHTROOM_QSS, CPU_CORES
-from core.filters import FilterWorker
+from core.filters import FilterWorker, finite_image, normalize_image
 from gui.components import ClickableLabel, CollapsibleSection
 from gui.factories import (
     create_filter_group,
@@ -35,7 +35,7 @@ from gui.factories import (
     create_stepper_input,
     create_dyadic_slider,
 )
-from utils.helpers import application_icon_path
+from utils.helpers import application_icon_path, recommended_radial_bins
 
 
 class EclipseProcessorApp(QMainWindow):
@@ -61,6 +61,10 @@ class EclipseProcessorApp(QMainWindow):
         self.is_processing: bool = False
         self.has_pending_request: bool = False
         self.sp_picker_active: bool = False
+        self.recalculation_timer = QTimer(self)
+        self.recalculation_timer.setSingleShot(True)
+        self.recalculation_timer.setInterval(300)
+        self.recalculation_timer.timeout.connect(self.dispatch_pipeline_request)
 
         self.persistent_thread = QThread()
         self.filter_worker = FilterWorker()
@@ -85,6 +89,8 @@ class EclipseProcessorApp(QMainWindow):
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet("QLabel { background-color: #1c1c1c; border: 1px solid #333333; border-radius: 4px; }")
         self.image_label.image_clicked.connect(self.on_image_canvas_clicked)
+        self.image_label.circle_center_requested.connect(self.on_circle_center_requested)
+        self.image_label.setToolTip("Ctrl-click (Command-click on macOS) to move the lunar circle")
         main_layout.addWidget(self.image_label, stretch=3)
 
         right_container = QWidget()
@@ -122,7 +128,7 @@ class EclipseProcessorApp(QMainWindow):
         self.btn_auto_calc.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
         self.btn_auto_calc.setCheckable(True)
         self.btn_auto_calc.setChecked(True)
-        self.btn_auto_calc.setToolTip("Toggle automatic pipeline recomputation on slider release")
+        self.btn_auto_calc.setToolTip("Recalculate automatically after a 300 ms pause in geometry or filter adjustments")
         self.btn_auto_calc.clicked.connect(self.toggle_auto_calc_mode)
         btn_row.addWidget(self.btn_auto_calc)
 
@@ -152,6 +158,12 @@ class EclipseProcessorApp(QMainWindow):
 
         self._build_geometry_section(control_layout)
         self._build_filters_section(control_layout)
+        for section in (self.sec_pre_stretch, self.sec_noise_gate, self.sec_bilateral,
+                        self.sec_fnrgf, self.sec_mgn, self.sec_wow, self.sec_rhef,
+                        self.sec_usm, self.sec_achf):
+            for slider in section.findChildren(QSlider):
+                slider.valueChanged.connect(
+                    lambda value, section=section: self.on_filter_slider_released(section, None))
         self._build_stretch_section(control_layout)
 
     def _build_geometry_section(self, layout: QVBoxLayout):
@@ -179,6 +191,8 @@ class EclipseProcessorApp(QMainWindow):
         self.txt_x.textChanged.connect(self.trigger_circle_redraw)
         self.txt_y.textChanged.connect(self.trigger_circle_redraw)
         self.txt_r.textChanged.connect(self.trigger_circle_redraw)
+        for field in (self.txt_x, self.txt_y, self.txt_r):
+            field.textChanged.connect(lambda _: self.dispatch_pipeline_request_if_auto())
 
         self.btn_auto_moon = QPushButton("🎯 Auto-detect Lunar Disk")
         self.btn_auto_moon.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
@@ -257,9 +271,9 @@ class EclipseProcessorApp(QMainWindow):
             tooltip="Maximum azimuthal Fourier harmonics to retain for fine filament detail"
         )
         self.sl_fnrgf_seg, _ = create_dyadic_slider(
-            "Angular Segments", 4, 8, 6, self.sec_fnrgf.content_layout,
+            "Angular Segments", 4, 8, 4, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
-            tooltip="Angular subdivisions (2^n powers of 2). Minimum: 2×Fourier Order + 1. Suggested: 2^6=64 for typical use."
+            tooltip="Defaults to the smallest power of 2 ≥ 2×Fourier Order + 1; resets when Fourier Order changes."
         )
         self.sl_fnrgf_cut, _ = create_slider(
             "Coefficients to Remove", 0, 7, 0, self.sec_fnrgf.content_layout,
@@ -269,7 +283,9 @@ class EclipseProcessorApp(QMainWindow):
         def sync_fnrgf_limits(_=None):
             order = self.sl_fnrgf_ord.value()
             self.sl_fnrgf_cut.setMaximum(order + 1)
-            self.sl_fnrgf_seg.setMinimum(int(np.ceil(np.log2(2*order+1))))
+            exponent = (2 * order).bit_length()
+            self.sl_fnrgf_seg.setMinimum(exponent)
+            self.sl_fnrgf_seg.setValue(exponent)
 
         self.sl_fnrgf_ord.valueChanged.connect(sync_fnrgf_limits)
         sync_fnrgf_limits()
@@ -281,15 +297,15 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_rmax, _ = create_slider(
             "Outer Radius R_max (×10)", 15, 60, 30, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
-            tooltip="Outer boundary radius in tenths of solar radius (1.5–6.0 R_sun)"
+            tooltip="Outer boundary in tenths of solar radius; maximum is half the image diagonal divided by the lunar radius"
         )
         self.sl_fnrgf_rmax.setMinimum(self.sl_fnrgf_rad.value() + 1)
         self.sl_fnrgf_rad.valueChanged.connect(
             lambda value: self.sl_fnrgf_rmax.setMinimum(value + 1))
         self.sl_fnrgf_nbins, _ = create_slider(
-            "Radial Bin Count", 20, 300, 80, self.sec_fnrgf.content_layout,
+            "Radial Bin Count", 1, 2000, 80, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
-            tooltip="Number of concentric radial bins for harmonic decomposition"
+            tooltip="Preview radial bins; defaults to approximately 4-pixel rings. Export increases the count with image resolution."
         )
 
         w_row = QHBoxLayout()
@@ -374,6 +390,7 @@ class EclipseProcessorApp(QMainWindow):
             self.sl_wow_denoise.append(slider)
         self.combo_wow_bilateral = QComboBox()
         self.combo_wow_bilateral.addItems(["Standard WOW", "Edge-aware WOW (bilateral = 1)"])
+        self.combo_wow_bilateral.setCurrentIndex(1)
         self.combo_wow_bilateral.currentIndexChanged.connect(self.dispatch_pipeline_request_if_auto)
         self.sec_wow.content_layout.addWidget(self.combo_wow_bilateral)
         self.sec_wow.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_wow_str))
@@ -662,17 +679,14 @@ class EclipseProcessorApp(QMainWindow):
         return np.clip((f_v - f_bp) / denom, 0.0, 1.0)
 
     def on_image_canvas_clicked(self, x: int, y: int):
-        """Handle canvas click (SP picker or coordinate setting)."""
+        """Ordinary clicks only sample shadows when the SP picker is active."""
         if self.sp_picker_active and hasattr(self, "btn_pick_sp") and self.btn_pick_sp.isChecked():
             proc_mat = self.processed_image if self.processed_image is not None else self.raw_image
             if proc_mat is not None:
                 h, w = proc_mat.shape[:2]
                 clamped_x = int(np.clip(x, 0, w - 1))
                 clamped_y = int(np.clip(y, 0, h - 1))
-                proc_cleaned = np.nan_to_num(proc_mat, nan=0.0)
-                p_min, p_max = float(np.min(proc_cleaned)), float(np.max(proc_cleaned))
-
-                sample_norm = float(np.clip((proc_cleaned[clamped_y, clamped_x] - p_min) / (p_max - p_min + 1e-5), 0.0, 0.5))
+                sample_norm = float(np.clip(normalize_image(proc_mat)[clamped_y, clamped_x], 0.0, 0.5))
                 self.sl_ghs_sp.setValue(int(round((sample_norm / 0.5) * 1000)))
                 self.lbl_ghs_sp.setText(f"{sample_norm:.3f}")
                 self.btn_pick_sp.setChecked(False)
@@ -683,6 +697,8 @@ class EclipseProcessorApp(QMainWindow):
                 self.render_matrix_to_screen()
                 return
 
+    def on_circle_center_requested(self, x: int, y: int):
+        """Only modified canvas clicks move the lunar center."""
         self.txt_x.setText(str(x))
         self.txt_y.setText(str(y))
         self.dispatch_pipeline_request_if_auto()
@@ -696,6 +712,11 @@ class EclipseProcessorApp(QMainWindow):
             cy_full = int(self.txt_y.text())
             r_full = int(self.txt_r.text())
             h_full, w_full = self.full_raw_image.shape[:2]
+            if r_full > 0:
+                self.sl_fnrgf_rmax.setMaximum(max(
+                    self.sl_fnrgf_rmax.minimum(),
+                    int(np.ceil(10 * np.hypot(w_full, h_full) / (2 * r_full))),
+                ))
             self.image_label.set_circle_parameters(cx_full, cy_full, r_full, native_w=w_full, native_h=h_full)
         except ValueError:
             pass
@@ -719,6 +740,8 @@ class EclipseProcessorApp(QMainWindow):
     def toggle_auto_calc_mode(self, checked: bool):
         """Toggle automatic calculation mode."""
         self.auto_calculate = checked
+        self.recalculation_timer.stop()
+        self.has_pending_request = False
         self.btn_auto_calc.setText("Auto Calculate" if checked else "Man Calc")
         self.btn_recalc.setVisible(not checked)
         self.status_label.setText("Status: Auto Calculate" if checked else "Status: Manual Calculate")
@@ -735,12 +758,14 @@ class EclipseProcessorApp(QMainWindow):
             self.dispatch_pipeline_request_if_auto()
 
     def dispatch_pipeline_request_if_auto(self):
-        """Dispatch pipeline request if auto-calculate is enabled."""
-        if self.auto_calculate:
-            self.dispatch_pipeline_request()
+        """Debounce edits, including edits made while a filter is running."""
+        if self.auto_calculate and self.raw_image is not None:
+            self.has_pending_request = False
+            self.recalculation_timer.start()
 
     def dispatch_pipeline_request(self):
         """Dispatch a new filter pipeline execution."""
+        self.recalculation_timer.stop()
         if self.raw_image is None or self.full_raw_image is None:
             return
 
@@ -859,9 +884,20 @@ class EclipseProcessorApp(QMainWindow):
         rec_usm_radius_px = max(1.0, r_full * 0.012)
         rec_achf_kernel_px = max(1.5, r_full * 0.025)
 
-        rec_fnrgf_nbins = int(np.clip(r_full * 0.20, 50, 300))
         rec_fnrgf_ord = int(np.clip(r_full * 0.015 + 4, 6, 24))
-        rec_fnrgf_rmax = min(4.5, (min(w_full, h_full) / 2.0) / float(r_full))
+        # Half-diagonal reaches the corners for a disk at the frame center.
+        # Round upwards to the slider's 0.1 R_sun step to include corner pixels.
+        rmax_slider = int(np.ceil(10 * np.hypot(w_full, h_full) / (2 * r_full)))
+        self.sl_fnrgf_rmax.setMaximum(max(self.sl_fnrgf_rmax.minimum(), rmax_slider))
+        rec_fnrgf_rmax = self.sl_fnrgf_rmax.maximum() / 10.0
+        preview_ratio = (self.raw_image.shape[0] / float(h_full)
+                         if self.raw_image is not None else 1.0)
+        rec_fnrgf_nbins = recommended_radial_bins(
+            self.sl_fnrgf_rad.value() / 10.0 * r_full * preview_ratio,
+            rec_fnrgf_rmax * r_full * preview_ratio,
+            logarithmic=self.combo_fnrgf_binning.currentIndex() == 1,
+        )
+        self.sl_fnrgf_nbins.setMaximum(max(2000, rec_fnrgf_nbins))
         rec_wow_scales = int(np.clip(np.log2(r_full / 8.0), 3, 8))
 
         print(f"\n{'='*80}")
@@ -870,7 +906,7 @@ class EclipseProcessorApp(QMainWindow):
         print(f"📊 Astrometric Properties:")
         print(f"   • Sensor Plate Scale : {pixel_scale_arcsec:.3f} arcsec/pixel")
         print(f"   • Full Sensor Size   : {w_full} × {h_full} px")
-        print(f"   • Coronal Coverage   : up to ~{rec_fnrgf_rmax:.2f} R_sun (limited by frame bounds)")
+        print(f"   • Coronal Coverage   : up to ~{rec_fnrgf_rmax:.2f} R_sun (half image diagonal)")
         print(f"\n⚙️ Applied Initial Slider Positions:")
         print(f"   [0] PRE-STRETCH       : Log Exp = 1.0 (K=10^1.0) | Range: 0.0 to 6.0")
         print(f"   [1] BILATERAL DENOISE : Blur Radius ~ {rec_bilateral_px * 10:.0f} (slider value = {rec_bilateral_px:.1f} px)")
@@ -884,6 +920,7 @@ class EclipseProcessorApp(QMainWindow):
 
         self.sl_bilateral_d.setValue(int(round(rec_bilateral_px * 10.0)))
         self.sl_fnrgf_ord.setValue(rec_fnrgf_ord)
+        self.sl_fnrgf_seg.setValue((2 * rec_fnrgf_ord).bit_length())
         self.sl_fnrgf_nbins.setValue(rec_fnrgf_nbins)
         self.sl_fnrgf_rmax.setValue(int(round(rec_fnrgf_rmax * 10.0)))
         self.sl_wow_scales.setValue(0)  # automatic, dimension-dependent scales
@@ -898,12 +935,7 @@ class EclipseProcessorApp(QMainWindow):
         self.status_label.setStyleSheet("color: #e5a00d; font-weight: bold;")
         QApplication.processEvents()
 
-        cx_prev, cy_prev, r_prev = self.detect_lunar_limb(self.raw_image)
-        scale_factor = self.full_raw_image.shape[0] / float(self.raw_image.shape[0])
-
-        cx_full = int(round(cx_prev * scale_factor))
-        cy_full = int(round(cy_prev * scale_factor))
-        r_full = int(round(r_prev * scale_factor))
+        cx_full, cy_full, r_full = self.detect_lunar_limb(self.full_raw_image)
 
         self.txt_x.setText(str(cx_full))
         self.txt_y.setText(str(cy_full))
@@ -929,12 +961,13 @@ class EclipseProcessorApp(QMainWindow):
             img_gray = raw_img
 
         h, w = img_gray.shape
-        clean_img = np.nan_to_num(img_gray, nan=0.0)
-        norm = cv2.normalize(clean_img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        clean_img = np.nan_to_num(img_gray, nan=0.0, posinf=0.0, neginf=0.0)
+        # Keep the full-resolution limb in floating point for subpixel sampling.
+        norm = cv2.normalize(clean_img.astype(np.float32), None, 0, 255, cv2.NORM_MINMAX)
 
-        scale = 800.0 / max(h, w)
-        sw, sh = int(w * scale), int(h * scale)
-        small = cv2.resize(norm, (sw, sh), interpolation=cv2.INTER_AREA)
+        scale = min(1.0, 800.0 / max(h, w))
+        sw, sh = max(1, int(w * scale)), max(1, int(h * scale))
+        small = cv2.resize(norm, (sw, sh), interpolation=cv2.INTER_AREA).astype(np.uint8)
         filtered = cv2.bilateralFilter(small, 9, 75, 75)
 
         circles = cv2.HoughCircles(
@@ -964,24 +997,29 @@ class EclipseProcessorApp(QMainWindow):
                 contrast = cv2.mean(small, mask=mask_out)[0] - cv2.mean(small, mask=mask_in)[0]
                 if contrast > best_contrast and contrast > 5:
                     best_contrast = contrast
-                    best_candidate = (int(cx / scale), int(cy / scale), int(r / scale))
+                    best_candidate = ((cx + 0.5) * w / sw - 0.5,
+                                      (cy + 0.5) * h / sh - 0.5,
+                                      float(r) / scale)
 
         if best_candidate is None:
             return w // 2, h // 2, min(w, h) // 4
 
         init_cx, init_cy, init_r = best_candidate
         r_search = int(init_r * 0.15)
-        radii = np.arange(max(10, init_r - r_search), min(min(w, h) // 2, init_r + r_search))
-        angles = np.linspace(0, 2 * np.pi, 72, endpoint=False)
+        radii = np.arange(max(1, init_r - r_search), min(min(w, h) / 2, init_r + r_search), 0.5)
+        angles = np.linspace(0, 2 * np.pi, 360, endpoint=False)
 
         edge_pts = []
         for ang in angles:
-            xs = np.clip((init_cx + radii * np.cos(ang)).astype(int), 0, w - 1)
-            ys = np.clip((init_cy + radii * np.sin(ang)).astype(int), 0, h - 1)
-            profile = norm[ys, xs].astype(float)
+            xs = (init_cx + radii * np.cos(ang)).astype(np.float32)
+            ys = (init_cy + radii * np.sin(ang)).astype(np.float32)
+            if not len(radii) or xs.min() < 0 or xs.max() > w - 1 or ys.min() < 0 or ys.max() > h - 1:
+                continue
+            profile = cv2.remap(norm, xs[None, :], ys[None, :], cv2.INTER_LINEAR)[0]
             grad = np.diff(profile)
-            if len(grad) > 0 and grad.max() > 5:
-                best_r = radii[np.argmax(grad)]
+            if len(grad) > 0 and grad.max() > 2.5:
+                index = np.argmax(grad)
+                best_r = (radii[index] + radii[index + 1]) / 2
                 edge_pts.append((init_cx + best_r * np.cos(ang), init_cy + best_r * np.sin(ang)))
 
         if len(edge_pts) >= 12:
@@ -998,7 +1036,7 @@ class EclipseProcessorApp(QMainWindow):
             except Exception:
                 pass
 
-        return init_cx, init_cy, init_r
+        return int(round(init_cx)), int(round(init_cy)), int(round(init_r))
 
     def load_image_action(self):
         """Load an astronomical image (FITS, XISF, TIFF, etc)."""
@@ -1065,7 +1103,7 @@ class EclipseProcessorApp(QMainWindow):
             elif img.ndim > 3:
                 img = np.squeeze(img)
 
-            self.full_raw_image = np.ascontiguousarray(img, dtype=np.float32)
+            self.full_raw_image = np.ascontiguousarray(finite_image(img), dtype=np.float32)
             h_full, w_full = self.full_raw_image.shape[:2]
 
             max_dim = 1500
@@ -1083,10 +1121,7 @@ class EclipseProcessorApp(QMainWindow):
             scale_ratio = h_full / float(self.preview_image.shape[0])
             self.lbl_scale_info.setText(f"Scale: {scale_ratio:.1f}x (100% = {w_full}×{h_full}px)")
 
-            cx_prev, cy_prev, r_prev = self.detect_lunar_limb(self.raw_image)
-            cx_full = int(round(cx_prev * scale_ratio))
-            cy_full = int(round(cy_prev * scale_ratio))
-            r_full = int(round(r_prev * scale_ratio))
+            cx_full, cy_full, r_full = self.detect_lunar_limb(self.full_raw_image)
 
             self.txt_x.setText(str(cx_full))
             self.txt_y.setText(str(cy_full))
@@ -1133,7 +1168,7 @@ class EclipseProcessorApp(QMainWindow):
             self.status_label.setStyleSheet("color: #e5a00d; font-weight: bold;")
             QApplication.processEvents()
 
-            img = self.full_raw_image.copy()
+            img = finite_image(self.full_raw_image).astype(np.float32)
 
             # APPLY ALL ENABLED FILTERS (same as preview pipeline)
             if self.sec_pre_stretch.is_filter_active():
@@ -1150,7 +1185,8 @@ class EclipseProcessorApp(QMainWindow):
             if self.sec_noise_gate.is_filter_active():
                 t0 = time.time()
                 img = worker.run_radial_noise_gate(
-                    img, self.sl_noise_gate_str.value(), self.sl_noise_gate_thr.value(), sx_full, sy_full, sr_full
+                    img, self.sl_noise_gate_str.value(), self.sl_noise_gate_thr.value(), sx_full, sy_full, sr_full,
+                    spatial_scale=scale_factor,
                 )
                 print(f"[EXPORT: NOISE GATE] Done in {time.time() - t0:.3f}s")
 
@@ -1162,6 +1198,9 @@ class EclipseProcessorApp(QMainWindow):
 
             if self.sec_fnrgf.is_filter_active():
                 t0 = time.time()
+                # Keep approximately the same ring width in image pixels as
+                # the preview, increasing sampling at full export resolution.
+                export_nbins = max(1, int(round(self.sl_fnrgf_nbins.value() * scale_factor)))
                 img = worker.run_fnrgf_native(
                     img,
                     self.sl_fnrgf_str.value(),
@@ -1170,7 +1209,7 @@ class EclipseProcessorApp(QMainWindow):
                     self.sl_fnrgf_cut.value(),
                     self.sl_fnrgf_rad.value(),
                     self.sl_fnrgf_rmax.value(),
-                    self.sl_fnrgf_nbins.value(),
+                    export_nbins,
                     sx_full,
                     sy_full,
                     sr_full,
@@ -1178,7 +1217,7 @@ class EclipseProcessorApp(QMainWindow):
                     radial_binning="log" if self.combo_fnrgf_binning.currentIndex() == 1 else "linear",
                     apply_mask=self.sl_fnrgf_mask.value(),
                 )
-                print(f"[EXPORT: FNRGF NATIVE] Done in {time.time() - t0:.3f}s")
+                print(f"[EXPORT: FNRGF NATIVE] Done in {time.time() - t0:.3f}s (radial bins={export_nbins})")
 
             if self.sec_mgn.is_filter_active():
                 t0 = time.time()
@@ -1189,6 +1228,7 @@ class EclipseProcessorApp(QMainWindow):
                     self.sl_mgn_k.value(),
                     self.sl_mgn_h.value(),
                     self.sl_mgn_trunc.value(),
+                    sigmas=tuple(s * scale_factor for s in (1.25, 2.5, 5, 10, 20, 40)),
                 )
                 print(f"[EXPORT: MGN NATIVE] Done in {time.time() - t0:.3f}s")
 
@@ -1226,12 +1266,7 @@ class EclipseProcessorApp(QMainWindow):
                 )
                 print(f"[EXPORT: ACHF] Done in {time.time() - t0:.3f}s (kernel={achf_kernel_scaled})")
 
-            img_clean = np.nan_to_num(img, nan=0.0)
-            i_min, i_max = float(np.min(img_clean)), float(np.max(img_clean))
-            if i_max - i_min > 1e-6:
-                img_norm = (img_clean - i_min) / (i_max - i_min)
-            else:
-                img_norm = np.zeros_like(img_clean)
+            img_norm = normalize_image(img)
 
             img_16bit = np.clip(img_norm * 65535.0, 0, 65535).astype(np.uint16)
 
@@ -1268,14 +1303,8 @@ class EclipseProcessorApp(QMainWindow):
         proc_mat = self.processed_image if self.processed_image is not None else self.raw_image
         orig_mat = self.raw_image
 
-        proc_cleaned = np.nan_to_num(proc_mat, nan=0.0)
-        orig_cleaned = np.nan_to_num(orig_mat, nan=0.0)
-
-        p_min, p_max = float(np.min(proc_cleaned)), float(np.max(proc_cleaned))
-        o_min, o_max = float(np.min(orig_cleaned)), float(np.max(orig_cleaned))
-
-        p_norm = (proc_cleaned - p_min) / (p_max - p_min + 1e-5)
-        o_norm = (orig_cleaned - o_min) / (o_max - o_min + 1e-5)
+        p_norm = normalize_image(proc_mat).astype(np.float32)
+        o_norm = normalize_image(orig_mat).astype(np.float32)
 
         mode_idx = self.combo_stretch_mode.currentIndex()
 
@@ -1330,6 +1359,7 @@ class EclipseProcessorApp(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent):
         """Handle window close."""
+        self.recalculation_timer.stop()
         if self.persistent_thread is not None and self.persistent_thread.isRunning():
             self.persistent_thread.quit()
             self.persistent_thread.wait()

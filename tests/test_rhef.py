@@ -4,6 +4,17 @@ from core.filters import rhef_normalize, FilterWorker
 
 
 class RHEFTests(unittest.TestCase):
+    def test_corona_changes_without_changing_lunar_disk(self):
+        y, x = np.indices((128, 128))
+        r = np.hypot(x - 64, y - 64)
+        angle = np.arctan2(y - 64, x - 64)
+        corona = 10000 * np.exp(-r / 30) * (1 + .2 * np.cos(4 * angle))
+        image = np.where(r < 20, 100., corona).astype(np.float32)
+        actual = FilterWorker().run_rhef_native(image, 50, 10, 35, 64, 64, 20)
+        np.testing.assert_array_equal(actual[r < 20], image[r < 20])
+        outer = r > 40
+        self.assertGreater(np.mean(np.abs(actual[outer] - image[outer])), 100)
+
     def test_average_ties(self):
         a=np.array([[1,1,3,4.]])
         out=rhef_normalize(a,np.ones_like(a),[0,2],upsilon=None)

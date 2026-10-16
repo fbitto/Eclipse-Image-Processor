@@ -1,0 +1,57 @@
+"""Exercise the real export action without a visible Qt window or file dialog."""
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+import cv2
+import numpy as np
+import tifffile
+
+from core.filters import FilterWorker
+from gui.app import EclipseProcessorApp
+
+
+class FilterExportTests(unittest.TestCase):
+    def test_scaled_kernels_bins_and_real_16bit_tiff_and_jpeg(self):
+        image = np.random.default_rng(81).uniform(100, 5000, (128, 160)).astype(np.float32)
+        enabled = {"noise_gate", "fnrgf", "mgn"}
+        window = SimpleNamespace(
+            raw_image=image[::2, ::2], preview_image=image[::2, ::2],
+            full_raw_image=image, status_label=Mock(),
+            txt_x=Mock(text=lambda: "80"), txt_y=Mock(text=lambda: "64"), txt_r=Mock(text=lambda: "16"),
+        )
+        for name in ("pre_stretch", "noise_gate", "bilateral", "fnrgf", "mgn", "wow", "rhef", "usm", "achf"):
+            setattr(window, f"sec_{name}", Mock(is_filter_active=lambda n=name: n in enabled))
+        values = dict(noise_gate_str=10, noise_gate_thr=10,
+                      fnrgf_str=32, fnrgf_ord=6, fnrgf_seg=4, fnrgf_cut=0,
+                      fnrgf_rad=10, fnrgf_rmax=61, fnrgf_nbins=20, fnrgf_mask=0,
+                      mgn_str=10, mgn_gam=32, mgn_k=70, mgn_h=70, mgn_trunc=3)
+        for name, value in values.items():
+            setattr(window, f"sl_{name}", Mock(value=lambda v=value: v))
+        window.combo_fnrgf_width = Mock(currentIndex=lambda: 0)
+        window.combo_fnrgf_binning = Mock(currentIndex=lambda: 0)
+        originals = {name: getattr(FilterWorker, name) for name in
+                     ("run_radial_noise_gate", "run_mgn_native", "run_fnrgf_native")}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "export.tiff"
+            with patch("gui.app.QFileDialog.getSaveFileName", return_value=(str(path), "")), \
+                 patch("gui.app.QApplication.processEvents"), \
+                 patch.object(FilterWorker, "run_radial_noise_gate", autospec=True,
+                              side_effect=originals["run_radial_noise_gate"]) as gate, \
+                 patch.object(FilterWorker, "run_mgn_native", autospec=True,
+                              side_effect=originals["run_mgn_native"]) as mgn, \
+                 patch.object(FilterWorker, "run_fnrgf_native", autospec=True,
+                              side_effect=originals["run_fnrgf_native"]) as fnrgf:
+                EclipseProcessorApp.export_image_action(window)
+            self.assertTrue(path.is_file(), window.status_label.setText.call_args)
+            self.assertEqual(gate.call_args.kwargs["spatial_scale"], 2)
+            self.assertEqual(mgn.call_args.kwargs["sigmas"], (2.5, 5, 10, 20, 40, 80))
+            self.assertEqual(fnrgf.call_args.args[8], 40)
+            exported = tifffile.imread(path)
+            self.assertEqual(exported.dtype, np.uint16)
+            self.assertEqual(exported.shape, image.shape)
+            jpeg = cv2.imread(str(path.with_name("export_gamma2_2.jpg")), cv2.IMREAD_GRAYSCALE)
+            self.assertIsNotNone(jpeg)
+            self.assertEqual(jpeg.shape, image.shape)

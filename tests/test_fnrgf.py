@@ -4,6 +4,24 @@ from core.filters import fnrgf_normalize, FilterWorker
 
 
 class FNRGFTests(unittest.TestCase):
+    def test_width_floor_bounds_high_order_amplification_in_input_units(self):
+        n = 64
+        phi = (np.arange(n) + .5) * 2 * np.pi / n
+        widths = np.random.default_rng(7).lognormal(-2, 2, n)
+        image = np.stack([100 - widths, 100 + widths])
+        angles = np.broadcast_to(phi, image.shape)
+        radii = np.full(image.shape, 1.5)
+        for order in (20, 21, 22):
+            kwargs = dict(order=order, segments=n, width_floor_fraction=.05)
+            out = fnrgf_normalize(image, radii, angles, [1, 2], **kwargs)
+            self.assertTrue(np.isfinite(out).all())
+            # Fourier mean is constant here: attenuation[1] = 1 - 1/order.
+            numerator = image - 100 * (1 - 1 / order)
+            bound = np.abs(numerator) / (.05 * np.median(widths))
+            self.assertTrue(np.all(np.abs(out) <= bound + 1e-8))
+            scaled = fnrgf_normalize(image * 65535, radii, angles, [1, 2], **kwargs)
+            np.testing.assert_allclose(scaled, out, rtol=1e-9, atol=1e-8)
+
     def test_direct_reference_and_angular_width(self):
         # One complete annulus, with controlled mean and width in each sector.
         n, order = 16, 3

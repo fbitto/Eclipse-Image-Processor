@@ -8,6 +8,7 @@ class FilterBlendTests(unittest.TestCase):
         a=np.random.default_rng(13).uniform(1000,50000,(64,64)).astype(np.float32)
         worker=FilterWorker()
         for run in (lambda x,s:worker.run_mgn_native(x,s,32,70,70,3),
+                    lambda x,s:worker.run_rhef_native(x,s,10,35,32,32,12),
                     lambda x,s:worker.run_wow_native(x,s,3)):
             full=run(a,100)
             for strength in (1,10,50,95,99):

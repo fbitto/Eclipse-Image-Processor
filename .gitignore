@@ -3,6 +3,17 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# macOS metadata (also applies inside assets/, core/, etc.)
+.DS_Store
+.AppleDouble/
+.LSOverride
+._*
+
+# Editor temporary files
+*.swp
+*.swo
+*~
+
 # C extensions
 *.so
 
@@ -151,6 +162,7 @@ activemq-data/
 .env
 .envrc
 .venv
+.uv-cache/
 env/
 venv/
 ENV/

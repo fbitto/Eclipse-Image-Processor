@@ -18,10 +18,24 @@ import cv2
 import numpy as np
 from PySide6.QtCore import QObject, Signal, Slot
 from scipy.ndimage import gaussian_filter, gaussian_filter1d
-import numpy as np
 from scipy.stats import rankdata
 
 CPU_CORES = os.cpu_count() or 4
+
+
+def finite_image(image):
+    """Validate application input before convolutions; compute in floating point."""
+    a = np.asarray(image, dtype=np.float64)
+    if a.ndim != 2 or not a.size or not np.isfinite(a).all():
+        raise ValueError("Filters require a nonempty finite 2D image")
+    return a
+
+
+def normalize_image(image):
+    """Map finite intensities to [0, 1] without an absolute intensity epsilon."""
+    a = finite_image(image)
+    span = float(np.ptp(a))
+    return (a - a.min()) / span if span > 0 else np.zeros_like(a)
 
 
 def blend_filter_result(image, filtered, strength):
@@ -67,9 +81,14 @@ def mgn_normalize(image, sigma=None, k=0.7, gamma=3.2, h=0.7,
         raise ValueError("MGN sigmas must be positive and finite")
     if not np.isfinite([k, gamma, h, truncate]).all() or gamma <= 0 or truncate <= 0:
         raise ValueError("Invalid MGN parameters")
-    data = np.array(image, copy=True)
+    data = np.array(image, dtype=np.float64, copy=True)
     if data.ndim != 2:
         raise ValueError("MGN requires a 2D image")
+    # Float32 squared residuals overflow/underflow at extreme intensity units.
+    # Local normalization and global gamma are invariant to positive scaling.
+    magnitude = np.max(np.abs(data))
+    if np.isfinite(magnitude) and magnitude > 0 and (magnitude < 1e-10 or magnitude > 1e10):
+        data /= magnitude
     if clip:
         data[data <= 0] = 1e-15
     data = data.astype(np.float32)
@@ -157,7 +176,8 @@ def rhef_normalize(image, radii, bin_edges, application_radius=0.0,
 def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
                     cutoff=0, application_radius=1.0, width_function="std",
                     mean_attenuation_range=(1.0, 0.0),
-                    std_attenuation_range=(1.0, 0.0), min_pixels=1):
+                    std_attenuation_range=(1.0, 0.0), min_pixels=1,
+                    width_floor_fraction=0.0):
     """Array FNRGF core following sunkit-image's Fourier coefficient convention.
 
     Includes its attenuation[1] convention for the constant terms. Empty
@@ -165,6 +185,8 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
     nonpositive reconstructed widths use 1 (reference only guards exact zero).
     MAD changes width only, never the mean. Unprocessed pixels are NaN.
     No display scaling, smoothing, original-image mix or limb mask is applied.
+    Optional width_floor_fraction bounds the reconstructed divisor relative to
+    the median positive sector width in each annulus, in input intensity units.
     """
     a = np.asarray(image, dtype=np.float64)
     r, theta = np.asarray(radii), np.asarray(angles) % (2*np.pi)
@@ -178,6 +200,8 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
         raise ValueError("Radial edges must be finite and strictly increasing")
     if width_function not in ("std", "mad") or min_pixels < 1:
         raise ValueError("Invalid width function or minimum sector population")
+    if not np.isfinite(width_floor_fraction) or not 0 <= width_floor_fraction <= 1:
+        raise ValueError("Width floor fraction must be between 0 and 1")
     attenuation = np.array([np.linspace(*mean_attenuation_range, order+1),
                             np.linspace(*std_attenuation_range, order+1)])
     if cutoff:
@@ -220,6 +244,14 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
                             ct @ ((2/segments)*(values @ cos)*atten[1:]) +
                             st @ ((2/segments)*(values @ sin)*atten[1:]))
         mean, width = profiles
+        if width_floor_fraction and cutoff < order + 1:
+            positive_widths = widths[widths > 0]
+            if not positive_widths.size:
+                # A constant or undersampled ring has no measured contrast.
+                # Leave it unprocessed instead of inventing a unit divisor.
+                return
+            floor = width_floor_fraction * np.median(positive_widths)
+            width = np.maximum(width, floor)
         width = np.where(width > 0, width, 1.0)
         out[target] = (flat[target]-mean)/width
 
@@ -300,7 +332,7 @@ class FilterWorker(QObject):
         pipeline_start = time.time()
         print(f"\n{'='*80}\n[PIPELINE] Execution start (Native Engine - {CPU_CORES} CPUs) - Shape: {raw_image.shape}\n{'='*80}")
 
-        img = raw_image.copy()
+        img = finite_image(raw_image).astype(np.float32)
         p = params
 
         # STEP 0: PRE-STRETCH (ASINH / LOGARITHMIC)
@@ -400,107 +432,77 @@ class FilterWorker(QObject):
             )
             print(f"[ACHF] Done in {time.time() - step_start:.3f}s")
 
+        finite_image(img)
         print(f"[PIPELINE] Complete. Total time: {time.time() - pipeline_start:.3f}s\n{'='*80}\n")
         self.finished.emit(img)
 
     def run_pre_asinh(self, img: np.ndarray, factor: float) -> np.ndarray:
         if factor <= 0:
             return img.copy()
-        try:
-            cleaned = np.nan_to_num(img, nan=0.0)
-            i_min, i_max = float(np.min(cleaned)), float(np.max(cleaned))
-            if i_max - i_min <= 1e-6:
-                return img.copy()
-            norm = (cleaned - i_min) / (i_max - i_min + 1e-5)
-            beta = float(factor)
-            stretched = np.arcsinh(norm * beta) / np.arcsinh(beta)
-            return (stretched * (i_max - i_min) + i_min).astype(np.float32)
-        except Exception as e:
-            print(f"Error in Pre-Asinh Stretch: {e}")
-            return img.copy()
+        a = finite_image(img)
+        norm = normalize_image(a)
+        stretched = np.arcsinh(norm * float(factor)) / np.arcsinh(float(factor))
+        return (stretched * np.ptp(a) + a.min()).astype(np.float32)
 
     def run_pre_log(self, img: np.ndarray, log_exp: float) -> np.ndarray:
-        if log_exp <= 0:
+        if log_exp < 0:
             return img.copy()
-        try:
-            cleaned = np.nan_to_num(img, nan=0.0)
-            i_min, i_max = float(np.min(cleaned)), float(np.max(cleaned))
-            if i_max - i_min <= 1e-6:
-                return img.copy()
-            norm = (cleaned - i_min) / (i_max - i_min + 1e-5)
-            k = 10.0 ** float(log_exp)
-            stretched = np.log1p(k * norm) / np.log1p(k)
-            return (stretched * (i_max - i_min) + i_min).astype(np.float32)
-        except Exception as e:
-            print(f"Error in Pre-Log Stretch: {e}")
-            return img.copy()
+        a = finite_image(img)
+        norm = normalize_image(a)
+        k = 10.0 ** float(log_exp)
+        stretched = np.log1p(k * norm) / np.log1p(k)
+        return (stretched * np.ptp(a) + a.min()).astype(np.float32)
 
     def run_radial_noise_gate(
-        self, img: np.ndarray, strength: float, threshold_param: float, sun_x: float, sun_y: float, sun_r: float
+        self, img: np.ndarray, strength: float, threshold_param: float,
+        sun_x: float, sun_y: float, sun_r: float, spatial_scale=1.0,
     ) -> np.ndarray:
+        """Dimensionless SNR gate; spatial_scale preserves export kernel sizes."""
         if strength == 0:
             return img.copy()
-        try:
-            h, w = img.shape[:2]
-            cx, cy = float(sun_x), float(sun_y)
-            r0 = float(sun_r if sun_r > 5 else 100.0)
-
-            y_indices, x_indices = np.indices((h, w), dtype=np.float32)
-            r_map = np.hypot(x_indices - cx, y_indices - cy) / (r0 + 1e-5)
-
-            local_mean = gaussian_filter(img, sigma=3.0)
-            local_var = gaussian_filter((img - local_mean) ** 2, sigma=3.0)
-            local_std = np.sqrt(local_var + 1e-8)
-
-            snr = np.abs(local_mean) / (local_std + 1e-8)
-            threshold_base = float(threshold_param / 100.0)
-            threshold_map = threshold_base * (1.0 + r_map * 2.0)
-
-            gate = np.clip((snr - threshold_map) / (threshold_map + 1e-8), 0.0, 1.0)
-            gate_smooth = gaussian_filter(gate, sigma=2.0)
-            denoised = img * gate_smooth
-
-            alpha = strength / 100.0
-            return cv2.addWeighted(denoised.astype(np.float32), alpha, img, 1.0 - alpha, 0)
-        except Exception as e:
-            print(f"Error in Radial Noise Gate: {e}")
+        a = finite_image(img)
+        if not np.isfinite([sun_r, spatial_scale, threshold_param]).all() or sun_r <= 0 or spatial_scale <= 0 or threshold_param < 0:
+            raise ValueError("Noise gate needs positive radius/scale and nonnegative threshold")
+        if threshold_param == 0:
             return img.copy()
+        magnitude = np.max(np.abs(a))
+        if magnitude == 0:
+            return img.copy()
+        unit = a / magnitude
+        y, x = np.indices(a.shape, dtype=float)
+        r_map = np.hypot(x - sun_x, y - sun_y) / sun_r
+        local_mean = gaussian_filter(unit, sigma=3.0 * spatial_scale)
+        local_std = np.sqrt(gaussian_filter((unit - local_mean) ** 2, sigma=3.0 * spatial_scale))
+        snr = np.full(a.shape, np.inf)
+        np.divide(np.abs(local_mean), local_std, out=snr, where=local_std > 0)
+        threshold_map = float(threshold_param) / 100 * (1 + 2 * r_map)
+        gate = np.clip((snr - threshold_map) / threshold_map, 0, 1)
+        gate_smooth = gaussian_filter(gate, sigma=2.0 * spatial_scale)
+        alpha = float(strength) / 100
+        return (a * ((1 - alpha) + alpha * gate_smooth)).astype(np.float32)
 
     def run_bilateral_denoise(
-        self, img: np.ndarray, strength: float, diameter_param: float, sigma_color_param: float, sigma_space_param: float
+        self, img: np.ndarray, strength: float, diameter_param: float,
+        sigma_color_param: float, sigma_space_param: float,
     ) -> np.ndarray:
+        """Gradient-weighted Gaussian smoothing (not an OpenCV bilateral filter)."""
         if strength == 0:
             return img.copy()
-        try:
-            img_clean = np.nan_to_num(img, nan=0.0)
-            img_min, img_max = float(np.min(img_clean)), float(np.max(img_clean))
-            if img_max - img_min < 1e-6:
-                return img.copy()
-
-            img_norm = (img_clean - img_min) / (img_max - img_min + 1e-8)
-            blur_radius = max(0.5, float(diameter_param / 10.0))
-
-            gy, gx = np.gradient(img_norm)
-            gradient_mag = np.sqrt(gx**2 + gy**2)
-            grad_min, grad_max = float(np.min(gradient_mag)), float(np.max(gradient_mag))
-
-            if grad_max - grad_min > 1e-6:
-                gradient_norm = (gradient_mag - grad_min) / (grad_max - grad_min)
-            else:
-                gradient_norm = np.zeros_like(gradient_mag)
-
-            edge_sensitivity = float(sigma_space_param / 100.0)
-            edge_weight = np.clip(1.0 - gradient_norm * edge_sensitivity, 0.1, 1.0)
-            smoothed = gaussian_filter(img_norm, sigma=blur_radius)
-
-            denoised_norm = img_norm * (1.0 - edge_weight) + smoothed * edge_weight
-            denoised = denoised_norm * (img_max - img_min) + img_min
-
-            alpha = strength / 100.0
-            return cv2.addWeighted(denoised.astype(np.float32), alpha, img, 1.0 - alpha, 0)
-        except Exception as e:
-            print(f"Error in Edge-Preserving Denoise: {e}")
+        a = finite_image(img)
+        if np.ptp(a) == 0:
             return img.copy()
+        norm = normalize_image(a)
+        blur_radius = max(0.5, float(diameter_param) / 10)
+        # A singleton axis has zero gradient rather than raising in np.gradient.
+        gy = np.gradient(norm, axis=0) if a.shape[0] > 1 else np.zeros_like(a)
+        gx = np.gradient(norm, axis=1) if a.shape[1] > 1 else np.zeros_like(a)
+        gradient = np.hypot(gx, gy)
+        gradient_norm = normalize_image(gradient)
+        edge_weight = np.clip(1 - gradient_norm * float(sigma_space_param) / 100, .1, 1)
+        smooth = gaussian_filter(norm, sigma=blur_radius)
+        denoised = (norm * (1 - edge_weight) + smooth * edge_weight) * np.ptp(a) + a.min()
+        alpha = float(strength) / 100
+        return ((1 - alpha) * a + alpha * denoised).astype(np.float32)
 
 
     def run_fnrgf_native(
@@ -512,12 +514,15 @@ class FilterWorker(QObject):
     ) -> np.ndarray:
         """Fourier Normalizing Radial Gradient Filter plus optional display mix.
 
-        Core output is dimensionless. Outside the application domain the input
+        Core output is dimensionless and mapped to input units before mixing.
+        Outside the application domain the input
         is preserved. clip_pct > 0 explicitly enables percentile display scaling.
+        The GUI uses a 5% annular width floor to prevent near-zero Fourier
+        divisors from producing isolated spikes and global display jumps.
         """
         if strength == 0:
             return img.copy()
-        a = np.asarray(img, dtype=np.float32)
+        a = finite_image(img)
         if sun_r <= 0 or not np.isfinite(sun_r):
             raise ValueError("FNRGF requires a positive disk radius")
         app_r, outer = float(app_radius_val)/10, float(rmax_val)/10
@@ -539,6 +544,7 @@ class FilterWorker(QObject):
             mean_attenuation_range=mean_attenuation_range,
             std_attenuation_range=std_attenuation_range,
             min_pixels=min_pixels_per_sector,
+            width_floor_fraction=0.05,
         )
         valid = np.isfinite(filtered)
         if clip_pct > 0 and np.any(valid):
@@ -549,28 +555,32 @@ class FilterWorker(QObject):
                 source = a[valid]
                 filtered[valid] = (np.clip((filtered[valid]-lo)/(hi-lo), 0, 1)
                                    * np.ptp(source)+source.min())
+        else:
+            filtered = blend_filter_result(a, filtered, 100)
         # Compact protection band: zero contribution outside 0.95..1.05 R_sun.
         protection = np.clip(1-np.abs(r-1.0)/.05, 0, 1)
         alpha = float(strength)/100 * (1-float(apply_mask)/100*protection)
         result = a.copy()
         result[valid] = ((1-alpha[valid])*a[valid]+alpha[valid]*filtered[valid])
-        return result
+        return result.astype(np.float32)
 
     def run_rhef_native(
         self, img, strength, app_radius_val, upsilon_val, sun_x, sun_y, sun_r,
         valid=None, upsilon_h_val=None, vignette_rsun=None, bin_px=1.0,
     ) -> np.ndarray:
-        """RHEF core plus external Strength blend; no percentile rescaling.
+        """RHEF ranks mapped to input units before the external Strength blend.
 
         UI radius is in tenths of disk radius and upsilon in hundredths.
         bin_px is the ring width in pixels of the supplied image.
         Outside application radius preserve input; vignette explicitly returns NaN.
+        Map the theoretical rank range [0, 1] to the finite input min/max;
+        do not renormalize individual annuli or include excluded pixels in ranks.
         """
         if strength == 0:
             return img.copy()
         if not np.isfinite([sun_r, bin_px]).all() or sun_r <= 0 or bin_px <= 0:
             raise ValueError("RHEF needs positive disk radius and bin width")
-        a = np.asarray(img, dtype=np.float32)
+        a = finite_image(img)
         yy, xx = np.indices(a.shape, dtype=float)
         r = np.hypot(xx-sun_x, yy-sun_y)
         edges = np.arange(int(np.floor(r.max()/bin_px))+2, dtype=float)*bin_px
@@ -583,12 +593,15 @@ class FilterWorker(QObject):
             vignette=None if vignette_rsun is None else float(vignette_rsun)*sun_r,
         )
         selected = np.isfinite(filtered)
+        finite = a[np.isfinite(a)]
+        if finite.size:
+            filtered[selected] = finite.min() + filtered[selected] * (float(finite.max()) - float(finite.min()))
         result = a.copy()
         alpha = float(strength)/100
         result[selected] = (1-alpha)*a[selected]+alpha*filtered[selected]
         if vignette_rsun is not None:
             result[r > float(vignette_rsun)*sun_r] = np.nan
-        return result
+        return result.astype(np.float32)
 
     def run_mgn_native(
         self, img, strength, gamma_val, k_val, h_val, trunc_val,
@@ -601,6 +614,7 @@ class FilterWorker(QObject):
         """
         if strength == 0:
             return img.copy()
+        finite_image(img)
         filtered = mgn_normalize(
             img, sigma=sigmas, gamma=float(gamma_val)/10,
             k=float(k_val)/100, h=float(h_val)/100,
@@ -656,19 +670,13 @@ class FilterWorker(QObject):
     ) -> np.ndarray:
         if strength == 0:
             return img.copy()
-        try:
-            radius = max(0.5, float(radius_param / 10.0))
-            sigma = max(0.1, float(sigma_param))
-
-            blurred = gaussian_filter(img, sigma=radius)
-            high_pass = img - blurred
-            sharpened = np.clip(img + high_pass * sigma, np.min(img), np.max(img))
-
-            alpha = strength / 100.0
-            return cv2.addWeighted(sharpened.astype(np.float32), alpha, img, 1.0 - alpha, 0)
-        except Exception as e:
-            print(f"Error in USM: {e}")
-            return img.copy()
+        a = finite_image(img)
+        radius = max(0.5, float(radius_param) / 10)
+        sigma = max(0.1, float(sigma_param))
+        blurred = gaussian_filter(a, sigma=radius)
+        sharpened = np.clip(a + (a - blurred) * sigma, a.min(), a.max())
+        alpha = float(strength) / 100
+        return ((1 - alpha) * a + alpha * sharpened).astype(np.float32)
 
     def run_achf(
         self, img, strength, base_kernel_param, boost_param,
@@ -681,7 +689,7 @@ class FilterWorker(QObject):
         """
         if strength == 0:
             return img.copy()
-        a = np.asarray(img, dtype=np.float32)
+        a = finite_image(img)
         yy, xx = np.ogrid[:a.shape[0], :a.shape[1]]
         regions = ((xx-float(sun_x))**2 + (yy-float(sun_y))**2 <= float(sun_r)**2)
         threshold = float(intensity_threshold)/100.0 * float(np.ptp(a))

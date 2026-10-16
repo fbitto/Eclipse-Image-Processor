@@ -21,6 +21,7 @@ class ClickableLabel(QLabel):
     """Interactive image viewer with dynamic geometric projection in real-time."""
 
     image_clicked = Signal(int, int)
+    circle_center_requested = Signal(int, int)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -65,7 +66,11 @@ class ClickableLabel(QLabel):
                 scale = w_pix / float(self.native_w)
                 orig_x = int((pos.x() - bx) / scale)
                 orig_y = int((pos.y() - by) / scale)
-                self.image_clicked.emit(orig_x, orig_y)
+                # Qt maps Command on macOS to ControlModifier by default.
+                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                    self.circle_center_requested.emit(orig_x, orig_y)
+                else:
+                    self.image_clicked.emit(orig_x, orig_y)
 
     def paintEvent(self, event):
         super().paintEvent(event)
