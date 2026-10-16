@@ -35,11 +35,11 @@ cv2.setNumThreads(CPU_CORES)
 cv2.setUseOptimized(True)
 
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from config import LIGHTROOM_QSS
 from gui.app import EclipseProcessorApp
-from utils.helpers import resource_path
+from utils.helpers import application_icon_path, resource_path
 
 
 def main():
@@ -49,14 +49,34 @@ def main():
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
     app = QApplication(sys.argv)
+    app.setApplicationName("Realce coronal")
+    app.setApplicationDisplayName("Realce coronal")
     app.setStyle("Fusion")
     app.setStyleSheet(LIGHTROOM_QSS)
 
-    icon_file = resource_path("icono.ico") if os.path.exists(resource_path("icono.ico")) else resource_path("icono.png")
-    if os.path.exists(icon_file):
-        app.setWindowIcon(QIcon(icon_file))
+    app.setWindowIcon(QIcon(application_icon_path()))
 
     window = EclipseProcessorApp()
+    if QSystemTrayIcon.isSystemTrayAvailable():
+        # The small PNG is also readable by the macOS menu bar icon renderer.
+        tray = QSystemTrayIcon(QIcon(resource_path("assets/icon-options/03-realce-coronal.png")), window)
+        tray.setToolTip("Realce coronal")
+        menu = QMenu(window)
+
+        def show_window():
+            if window.isMinimized():
+                window.showNormal()
+            else:
+                window.show()
+            window.raise_()
+            window.activateWindow()
+
+        menu.addAction("Mostrar ventana", show_window)
+        menu.addSeparator()
+        menu.addAction("Salir", window.close)
+        tray.setContextMenu(menu)
+        tray.show()
+
     window.show()
     sys.exit(app.exec())
 
