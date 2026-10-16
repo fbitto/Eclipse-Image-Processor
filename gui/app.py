@@ -35,7 +35,7 @@ from gui.factories import (
     create_stepper_input,
     create_dyadic_slider,
 )
-from utils.helpers import resource_path
+from utils.helpers import application_icon_path
 
 
 class EclipseProcessorApp(QMainWindow):
@@ -49,9 +49,7 @@ class EclipseProcessorApp(QMainWindow):
         self.resize(1180, 780)
         self.setMinimumSize(960, 600)
 
-        icon_file = resource_path("icono.ico") if os.path.exists(resource_path("icono.ico")) else resource_path("icono.png")
-        if os.path.exists(icon_file):
-            self.setWindowIcon(QIcon(icon_file))
+        self.setWindowIcon(QIcon(application_icon_path()))
 
         self.raw_image: Optional[np.ndarray] = None
         self.processed_image: Optional[np.ndarray] = None
