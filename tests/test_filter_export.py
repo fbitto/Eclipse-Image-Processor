@@ -10,6 +10,7 @@ import numpy as np
 import tifffile
 
 from core.filters import FilterWorker
+from core.pipeline import prepare_parameters
 from gui.app import EclipseProcessorApp
 
 
@@ -19,7 +20,12 @@ class FilterExportTests(unittest.TestCase):
         enabled = {"noise_gate", "fnrgf", "mgn"}
         window = SimpleNamespace(
             raw_image=image[::2, ::2], preview_image=image[::2, ::2],
-            full_raw_image=image, status_label=Mock(),
+            full_raw_image=image, status_label=Mock(), source_path="original.tif",
+            collect_display_parameters=lambda: dict(mode="asinh", strength=12, blend=.65),
+            colour_data=lambda: (None, None, None),
+            chk_export_layers=Mock(isChecked=lambda: True),
+            chk_export_linear=Mock(isChecked=lambda: False),
+            combo_input_state=Mock(currentData=lambda: "unknown"), full_source_rgb=None,
             txt_x=Mock(text=lambda: "80"), txt_y=Mock(text=lambda: "64"), txt_r=Mock(text=lambda: "16"),
         )
         for name in ("pre_stretch", "noise_gate", "bilateral", "fnrgf", "mgn", "wow", "rhef", "usm", "achf"):
@@ -32,6 +38,16 @@ class FilterExportTests(unittest.TestCase):
             setattr(window, f"sl_{name}", Mock(value=lambda v=value: v))
         window.combo_fnrgf_width = Mock(currentIndex=lambda: 0)
         window.combo_fnrgf_binning = Mock(currentIndex=lambda: 0)
+        recipe = dict(
+            noise_gate_enabled=True, noise_gate_str=10, noise_gate_thr=10,
+            fnrgf_enabled=True, fnrgf_str=32, fnrgf_ord=6, fnrgf_seg=16,
+            fnrgf_cut=0, fnrgf_rad=10, fnrgf_rmax=61, fnrgf_nbins=20,
+            mgn_enabled=True, mgn_str=10, mgn_gam=32, mgn_k=70, mgn_h=70, mgn_trunc=3,
+            rhef_enabled=True, rhef_str=20, rhef_rad=10, rhef_upsilon=35,
+            rhef_mode="continuous", rhef_bin_px=1, sx=80., sy=64., sr=16.,
+        )
+        window.collect_filter_parameters = lambda shape: prepare_parameters(
+            recipe, image.shape, window.preview_image.shape, shape)
         originals = {name: getattr(FilterWorker, name) for name in
                      ("run_radial_noise_gate", "run_mgn_native", "run_fnrgf_native")}
         with tempfile.TemporaryDirectory() as directory:
@@ -52,6 +68,18 @@ class FilterExportTests(unittest.TestCase):
             exported = tifffile.imread(path)
             self.assertEqual(exported.dtype, np.uint16)
             self.assertEqual(exported.shape, image.shape)
-            jpeg = cv2.imread(str(path.with_name("export_gamma2_2.jpg")), cv2.IMREAD_GRAYSCALE)
+            jpeg = cv2.imread(str(path.with_name("export_preview.jpg")), cv2.IMREAD_GRAYSCALE)
             self.assertIsNotNone(jpeg)
             self.assertEqual(jpeg.shape, image.shape)
+            import json
+            from core.presentation import render_presentation
+            from core.pipeline import execute_pipeline
+            parameters = window.collect_filter_parameters(image.shape)
+            expected = render_presentation(execute_pipeline(FilterWorker(), image, parameters),
+                                           image, window.collect_display_parameters())
+            np.testing.assert_array_equal(exported, (expected * 65535).astype(np.uint16))
+            package = path.with_name("export_PS_layers")
+            manifest = json.loads((package / "recipe.json").read_text())
+            self.assertEqual([r["filter"] for r in manifest["layers"]], ["base", "fnrgf", "mgn", "rhef"])
+            self.assertTrue(all(r["file"].startswith("original_") for r in manifest["layers"]))
+            self.assertTrue((package / "Cargar_capas_Photoshop.jsx").is_file())

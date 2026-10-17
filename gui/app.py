@@ -2,6 +2,7 @@
 
 import os
 import time
+from pathlib import Path
 from typing import Optional, Tuple
 
 import cv2
@@ -11,6 +12,7 @@ from PySide6.QtGui import QFontDatabase, QCloseEvent, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QCheckBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -26,7 +28,13 @@ from PySide6.QtWidgets import (
 import tifffile
 
 from config import LIGHTROOM_QSS, CPU_CORES
-from core.filters import FilterWorker, finite_image, normalize_image
+from core.filters import FilterWorker
+from core.pipeline import execute_pipeline, prepare_parameters
+from core.presentation import apply_ghs, render_presentation
+from core.layer_export import export_layer_package
+from core.linear_export import export_linear_sources, split_source_channels
+from core.colour import neutralize_tse, colour_layer, set_luminosity
+from core.image_data import resize_observed, recipe_parameters, normalize_observed
 from gui.components import ClickableLabel, CollapsibleSection
 from gui.factories import (
     create_filter_group,
@@ -45,7 +53,7 @@ class EclipseProcessorApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Solar Corona Enhancement Filters v0.4.0")
+        self.setWindowTitle("Corona Enhance Filters v0.4.0")
         self.resize(1180, 780)
         self.setMinimumSize(960, 600)
 
@@ -55,6 +63,10 @@ class EclipseProcessorApp(QMainWindow):
         self.processed_image: Optional[np.ndarray] = None
         self.full_raw_image: Optional[np.ndarray] = None
         self.preview_image: Optional[np.ndarray] = None
+        self.source_path: Optional[str] = None
+        self.full_source_rgb: Optional[np.ndarray] = None
+        self.source_rgb_white = 1.
+        self._colour_cache = None
         self.preview_scale: float = 1.0
         self.show_original_mode: bool = False
         self.auto_calculate: bool = True
@@ -398,6 +410,12 @@ class EclipseProcessorApp(QMainWindow):
 
         histogram_group = create_filter_group("📈 RADIAL HISTOGRAM EQUALIZATION", layout)
         self.sec_rhef = CollapsibleSection("RHEF", has_checkbox=True, is_expanded=False, is_active=False)
+        self.combo_rhef_mode = QComboBox()
+        self.combo_rhef_mode.addItem("Legacy / compatible", "legacy")
+        self.combo_rhef_mode.addItem("Continuous global", "continuous")
+        self.combo_rhef_mode.setToolTip("Continuous radial quantiles reduce ring boundaries; nonpositive or sparse samples preserve the input")
+        self.combo_rhef_mode.currentIndexChanged.connect(lambda _: self.dispatch_pipeline_request_if_auto())
+        self.sec_rhef.content_layout.addWidget(self.combo_rhef_mode)
         self.sl_rhef_str, _ = create_slider(
             "Strength (%)", 0, 100, 10, self.sec_rhef.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_rhef, self.sl_rhef_str),
@@ -483,8 +501,8 @@ class EclipseProcessorApp(QMainWindow):
         self.dispatch_pipeline_request_if_auto()
 
     def _build_stretch_section(self, layout: QVBoxLayout):
-        """Build the tonal stretch & display section (screen-only)."""
-        stretch_group = create_filter_group("🌟 TONAL STRETCH & DISPLAY (SCREEN ONLY)", layout)
+        """Build the presentation controls shared by screen and export."""
+        stretch_group = create_filter_group("🌟 FINAL STRETCH (DISPLAY & EXPORT)", layout)
 
         self.sec_stretch = CollapsibleSection("FINAL STRETCH MODE", has_checkbox=False, is_expanded=True)
         
@@ -582,6 +600,31 @@ class EclipseProcessorApp(QMainWindow):
 
         layout.addSpacing(8)
 
+        self.chk_export_layers = QCheckBox("Also export independent Photoshop layers")
+        self.chk_export_layers.setChecked(True)
+        self.chk_export_layers.setStyleSheet("QCheckBox { color: #dddddd; font-size: 11px; }")
+        self.chk_export_layers.setToolTip("Exports the loaded source, prepared input, stretched base, active filters and a separate PS composite with a recipe")
+        layout.addWidget(self.chk_export_layers)
+        self.chk_export_linear = QCheckBox("Also export linear images")
+        self.chk_export_linear.setStyleSheet("QCheckBox { color: #dddddd; font-size: 11px; }")
+        self.chk_export_linear.setToolTip("Save input RGB and luminance as float32 without filters or stretching. An already stretched image is not converted to linear.")
+        layout.addWidget(self.chk_export_linear)
+        self.combo_input_state = QComboBox()
+        self.combo_input_state.setStyleSheet("QComboBox { color: #dddddd; background: #333333; }")
+        self.combo_input_state.addItem("Input: linearity unspecified", "unknown")
+        self.combo_input_state.addItem("Input: linear", "linear")
+        self.combo_input_state.addItem("Input: already stretched / nonlinear", "nonlinear")
+        self.combo_input_state.setToolTip("Only input declared linear is labelled LINEAR; other inputs are saved as INPUT without changing their values.")
+        self.combo_input_state.setVisible(False)
+        self.chk_calibrate_colour = QCheckBox("Calibrate color")
+        self.chk_calibrate_colour.setStyleSheet("QCheckBox { color: #dddddd; font-size: 11px; }")
+        self.chk_calibrate_colour.setToolTip("Requires linear RGB. Assumes a neutral background and corona: subtracts P1 and balances P99 minus P1. This is not photometric or ICC calibration. Applies only when exporting color images; the screen preview stays monochrome. Preserves the original sources.")
+        self.chk_calibrate_colour.setEnabled(False)
+        self.chk_calibrate_colour.toggled.connect(self.on_colour_changed)
+        self.combo_input_state.currentIndexChanged.connect(self.on_input_state_changed)
+        layout.addWidget(self.chk_calibrate_colour)
+        self.chk_export_linear.toggled.connect(lambda _: self.combo_input_state.setVisible(self.chk_export_linear.isChecked() or self.full_source_rgb is not None))
+        layout.addWidget(self.combo_input_state)
         self.btn_export = QPushButton("💾 Export Final Image")
         self.btn_export.setStyleSheet("""
             QPushButton {
@@ -601,7 +644,7 @@ class EclipseProcessorApp(QMainWindow):
                 background-color: #0a58ca;
             }
         """)
-        self.btn_export.setToolTip("Save the full-resolution processed image to 16-bit TIFF with exact scale compensation")
+        self.btn_export.setToolTip("Save the full-resolution final with display stretch and Reveal opacity; optionally export independent Photoshop layers")
         self.btn_export.clicked.connect(self.export_image_action)
         layout.addWidget(self.btn_export)
 
@@ -658,25 +701,39 @@ class EclipseProcessorApp(QMainWindow):
             self.status_label.setText("Status: GHS Mode Active")
             self.status_label.setStyleSheet("color: #e5a00d; font-weight: bold;")
 
+    def on_input_state_changed(self, *_):
+        allowed = self.full_source_rgb is not None and self.combo_input_state.currentData() == "linear"
+        self.chk_calibrate_colour.setEnabled(allowed)
+        if not allowed:
+            self.chk_calibrate_colour.setChecked(False)
+
+    def on_colour_changed(self, *_):
+        """Invalidate export colour data without computing or updating preview."""
+        self._colour_cache = None
+
+    def colour_data(self, original=False):
+        """Prepare full-resolution colour lazily for export; no RGB preview."""
+        if self.full_source_rgb is None:
+            return None, None, None
+        if original:
+            return self.full_source_rgb, None, dict(method="none")
+        if self._colour_cache is None:
+            rgb = self.full_source_rgb
+            report = dict(method="none")
+            if self.chk_calibrate_colour.isChecked():
+                rgb, report = neutralize_tse(rgb, self.source_rgb_white)
+            self._colour_cache = (rgb, None, report)
+        return self._colour_cache
+
     def apply_ghs(self, mat: np.ndarray, D: float, SP: float, b: float, BP: float) -> np.ndarray:
-        """Apply Generalized Hyperbolic Stretch."""
-        D = max(0.01, float(D))
-        SP = float(np.clip(SP, 0.0, 0.999))
-        BP = float(np.clip(BP, 0.0, max(0.0, SP - 1e-4)))
-        b = max(0.0, float(b))
+        """Compatibility wrapper for the shared presentation transform."""
+        return apply_ghs(mat, D, SP, b, BP)
 
-        def evaluate_ghs(v):
-            delta = v - SP
-            scale = 1.0 + b * np.maximum(0.0, delta) if b > 0 else 1.0
-            return np.arcsinh((D * delta) / scale)
-
-        f_v = evaluate_ghs(mat)
-        f_bp = evaluate_ghs(BP)
-        f_1 = evaluate_ghs(1.0)
-        denom = f_1 - f_bp
-        if abs(denom) < 1e-7:
-            return np.clip(mat, 0.0, 1.0)
-        return np.clip((f_v - f_bp) / denom, 0.0, 1.0)
+    def collect_display_parameters(self):
+        mode = ("asinh", "log", "ghs")[self.combo_stretch_mode.currentIndex()]
+        return dict(mode=mode, strength=float(self.sl_stretch.value()),
+                    sp=self.sl_ghs_sp.value() / 2000., b=self.sl_ghs_b.value() / 10.,
+                    bp=self.sl_ghs_bp.value() / 1000., blend=self.sl_blend.value() / 100.)
 
     def on_image_canvas_clicked(self, x: int, y: int):
         """Ordinary clicks only sample shadows when the SP picker is active."""
@@ -686,7 +743,7 @@ class EclipseProcessorApp(QMainWindow):
                 h, w = proc_mat.shape[:2]
                 clamped_x = int(np.clip(x, 0, w - 1))
                 clamped_y = int(np.clip(y, 0, h - 1))
-                sample_norm = float(np.clip(normalize_image(proc_mat)[clamped_y, clamped_x], 0.0, 0.5))
+                sample_norm = float(np.clip(normalize_observed(proc_mat)[clamped_y, clamped_x], 0.0, 0.5))
                 self.sl_ghs_sp.setValue(int(round((sample_norm / 0.5) * 1000)))
                 self.lbl_ghs_sp.setText(f"{sample_norm:.3f}")
                 self.btn_pick_sp.setChecked(False)
@@ -780,11 +837,6 @@ class EclipseProcessorApp(QMainWindow):
         except ValueError:
             return
 
-        scale_factor = self.full_raw_image.shape[0] / float(self.preview_image.shape[0]) if self.preview_image is not None else 1.0
-        sx_preview = int(round(sx_full / scale_factor))
-        sy_preview = int(round(sy_full / scale_factor))
-        sr_preview = int(round(sr_full / scale_factor))
-
         if self.btn_compare.isChecked():
             self.btn_compare.setChecked(False)
             self.show_original_mode = False
@@ -794,6 +846,11 @@ class EclipseProcessorApp(QMainWindow):
         self.status_label.setText("Status: Processing Filters...")
         self.status_label.setStyleSheet("color: #e5a00d; font-weight: bold;")
 
+        params = self.collect_filter_parameters(self.raw_image.shape[:2])
+        self.request_processing_signal.emit(self.raw_image, params)
+
+    def collect_filter_parameters(self, target_shape):
+        """Snapshot UI once; prepare the same recipe for preview or export."""
         pre_mode = "log" if self.combo_pre_mode.currentIndex() == 1 else "asinh"
         pre_val = (self.sl_pre_stretch.value() / 10.0) if pre_mode == "log" else float(self.sl_pre_stretch.value())
 
@@ -826,6 +883,7 @@ class EclipseProcessorApp(QMainWindow):
             "mgn_k": self.sl_mgn_k.value(),
             "mgn_h": self.sl_mgn_h.value(),
             "mgn_trunc": self.sl_mgn_trunc.value(),
+            "rhef_mode": self.combo_rhef_mode.currentData(),
             "rhef_enabled": self.sec_rhef.is_filter_active(),
             "rhef_str": self.sl_rhef_str.value(),
             "rhef_rad": self.sl_rhef_rad.value(),
@@ -846,11 +904,15 @@ class EclipseProcessorApp(QMainWindow):
             "achf_boost": self.sl_achf_boost.value(),
             "achf_threshold": self.sl_achf_threshold.value(),
             "achf_background": self.sl_achf_background.value(),
-            "sx": sx_preview,
-            "sy": sy_preview,
-            "sr": sr_preview,
+            "sx": float(self.txt_x.text()),
+            "sy": float(self.txt_y.text()),
+            "sr": float(self.txt_r.text()),
         }
-        self.request_processing_signal.emit(self.raw_image, params)
+        params = prepare_parameters(params, self.full_raw_image.shape[:2],
+                                    self.preview_image.shape[:2], target_shape)
+        data = self.full_raw_image if tuple(target_shape) == self.full_raw_image.shape[:2] else self.preview_image
+        params["valid_mask"] = np.isfinite(data)
+        return params
 
     def on_processing_failed(self, message: str):
         self.is_processing = False
@@ -961,6 +1023,29 @@ class EclipseProcessorApp(QMainWindow):
             img_gray = raw_img
 
         h, w = img_gray.shape
+        # A calibrated stack can have an unobserved lunar disc instead of a
+        # black disc. Fit only a closed, nearly circular missing-data boundary;
+        # edge gaps and isolated defective pixels are not lunar candidates.
+        missing = (~np.isfinite(img_gray)).astype(np.uint8)
+        if missing.any():
+            contours, _ = cv2.findContours(missing, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            for contour in sorted(contours, key=cv2.contourArea, reverse=True):
+                if cv2.contourArea(contour) < np.pi * (min(h, w) * .02)**2:
+                    break
+                points = contour[:, 0].astype(float)
+                if (points[:, 0].min() <= 0 or points[:, 0].max() >= w-1
+                        or points[:, 1].min() <= 0 or points[:, 1].max() >= h-1):
+                    continue
+                origin = points.mean(axis=0)
+                offsets = points-origin
+                matrix = np.column_stack([2*offsets, np.ones(len(points))])
+                solution = np.linalg.lstsq(matrix, np.sum(offsets**2, axis=1), rcond=None)[0]
+                center = origin+solution[:2]
+                distances = np.linalg.norm(points-center, axis=1)
+                radius = float(np.mean(distances))
+                if radius > 0 and np.sqrt(np.mean((distances-radius)**2))/radius < .03:
+                    print("Lunar geometry estimated from circular missing-data boundary; check radius against the original limb")
+                    return int(round(center[0])), int(round(center[1])), int(round(radius))
         clean_img = np.nan_to_num(img_gray, nan=0.0, posinf=0.0, neginf=0.0)
         # Keep the full-resolution limb in floating point for subpixel sampling.
         norm = cv2.normalize(clean_img.astype(np.float32), None, 0, 255, cv2.NORM_MINMAX)
@@ -1084,6 +1169,8 @@ class EclipseProcessorApp(QMainWindow):
 
             if img is None:
                 img = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
+                if img is not None and img.ndim == 3 and img.shape[-1] in (3, 4):
+                    img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA if img.shape[-1] == 4 else cv2.COLOR_BGR2RGB)
 
             if img is None:
                 from PIL import Image
@@ -1093,24 +1180,26 @@ class EclipseProcessorApp(QMainWindow):
             if img is None:
                 raise ValueError("Could not decode image with any available decoder.")
 
-            if img.ndim == 3:
-                if img.dtype != np.float32:
-                    img = img.astype(np.float32)
-                if img.shape[2] in (3, 4):
-                    img = 0.299 * img[:, :, 0] + 0.587 * img[:, :, 1] + 0.114 * img[:, :, 2]
-                elif img.shape[0] in (3, 4):
-                    img = 0.299 * img[0, :, :] + 0.587 * img[1, :, :] + 0.114 * img[2, :, :]
-            elif img.ndim > 3:
-                img = np.squeeze(img)
-
-            self.full_raw_image = np.ascontiguousarray(finite_image(img), dtype=np.float32)
+            white = float(np.iinfo(img.dtype).max) if np.issubdtype(img.dtype, np.integer) else 1.
+            mono, source_rgb = split_source_channels(img)
+            self.full_raw_image = np.ascontiguousarray(mono, dtype=np.float32)
+            self.full_source_rgb = source_rgb
+            self.source_rgb_white = white
+            self._colour_cache = None
+            self.chk_calibrate_colour.blockSignals(True)
+            self.chk_calibrate_colour.setChecked(False)
+            self.chk_calibrate_colour.blockSignals(False)
+            self.combo_input_state.setCurrentIndex(0)
+            self.on_input_state_changed()
+            self.combo_input_state.setVisible(source_rgb is not None or self.chk_export_linear.isChecked())
+            self.source_path = file_path
             h_full, w_full = self.full_raw_image.shape[:2]
 
             max_dim = 1500
             if max(h_full, w_full) > max_dim:
                 self.preview_scale = max_dim / float(max(h_full, w_full))
                 new_w, new_h = int(w_full * self.preview_scale), int(h_full * self.preview_scale)
-                self.preview_image = cv2.resize(self.full_raw_image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                self.preview_image = resize_observed(self.full_raw_image, (new_w, new_h))
                 self.raw_image = self.preview_image.copy()
             else:
                 self.preview_scale = 1.0
@@ -1130,7 +1219,8 @@ class EclipseProcessorApp(QMainWindow):
             self.apply_recommended_parameters_to_gui(r_full, w_full, h_full)
 
             self.render_matrix_to_screen()
-            self.status_label.setText(f"Status: Loaded {os.path.basename(file_path)} (X:{cx_full}, Y:{cy_full}, R:{r_full})")
+            missing = np.count_nonzero(~np.isfinite(self.full_raw_image))
+            self.status_label.setText(f"Status: Loaded {os.path.basename(file_path)} (X:{cx_full}, Y:{cy_full}, R:{r_full}); {missing} missing pixels")
             self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
         except Exception as e:
             self.status_label.setText(f"❌ Error loading file: {str(e)[:40]}")
@@ -1166,129 +1256,76 @@ class EclipseProcessorApp(QMainWindow):
             print(f"\n{'='*80}\n[EXPORT] Full-resolution pipeline starting (Scale: {scale_factor:.2f}x | Multithreaded: {CPU_CORES} CPUs)\n{'='*80}")
             self.status_label.setText(f"Status: Exporting full resolution ({scale_factor:.2f}x)...")
             self.status_label.setStyleSheet("color: #e5a00d; font-weight: bold;")
+            parameters = self.collect_filter_parameters(self.full_raw_image.shape[:2])
+            display = self.collect_display_parameters()
+            export_layers = self.chk_export_layers.isChecked()
+            export_linear = self.chk_export_linear.isChecked()
+            input_state = self.combo_input_state.currentData()
+            source_rgb = self.full_source_rgb
+            colour_rgb, _, colour_report = self.colour_data()
+            original_path = self.source_path or file_path
+            source = self.full_raw_image.copy()
             QApplication.processEvents()
+            img = execute_pipeline(worker, source, parameters)
 
-            img = finite_image(self.full_raw_image).astype(np.float32)
-
-            # APPLY ALL ENABLED FILTERS (same as preview pipeline)
-            if self.sec_pre_stretch.is_filter_active():
-                t0 = time.time()
-                pre_mode = "log" if self.combo_pre_mode.currentIndex() == 1 else "asinh"
-                pre_val = (self.sl_pre_stretch.value() / 10.0) if pre_mode == "log" else float(self.sl_pre_stretch.value())
-                if pre_mode == "log":
-                    img = worker.run_pre_log(img, pre_val)
-                    print(f"[EXPORT: PRE-LOG] Done in {time.time() - t0:.3f}s (K=10^{pre_val:.1f})")
-                else:
-                    img = worker.run_pre_asinh(img, pre_val)
-                    print(f"[EXPORT: PRE-ASINH] Done in {time.time() - t0:.3f}s (Factor={pre_val})")
-
-            if self.sec_noise_gate.is_filter_active():
-                t0 = time.time()
-                img = worker.run_radial_noise_gate(
-                    img, self.sl_noise_gate_str.value(), self.sl_noise_gate_thr.value(), sx_full, sy_full, sr_full,
-                    spatial_scale=scale_factor,
-                )
-                print(f"[EXPORT: NOISE GATE] Done in {time.time() - t0:.3f}s")
-
-            if self.sec_bilateral.is_filter_active():
-                t0 = time.time()
-                d_scaled = max(1, int(round(self.sl_bilateral_d.value() * scale_factor)))
-                img = worker.run_bilateral_denoise(img, self.sl_bilateral_str.value(), d_scaled, 30, self.sl_bilateral_ss.value())
-                print(f"[EXPORT: BILATERAL] Done in {time.time() - t0:.3f}s (d={d_scaled})")
-
-            if self.sec_fnrgf.is_filter_active():
-                t0 = time.time()
-                # Keep approximately the same ring width in image pixels as
-                # the preview, increasing sampling at full export resolution.
-                export_nbins = max(1, int(round(self.sl_fnrgf_nbins.value() * scale_factor)))
-                img = worker.run_fnrgf_native(
-                    img,
-                    self.sl_fnrgf_str.value(),
-                    self.sl_fnrgf_ord.value(),
-                    2 ** self.sl_fnrgf_seg.value(),
-                    self.sl_fnrgf_cut.value(),
-                    self.sl_fnrgf_rad.value(),
-                    self.sl_fnrgf_rmax.value(),
-                    export_nbins,
-                    sx_full,
-                    sy_full,
-                    sr_full,
-                    width_function="mad" if self.combo_fnrgf_width.currentIndex() == 1 else "std",
-                    radial_binning="log" if self.combo_fnrgf_binning.currentIndex() == 1 else "linear",
-                    apply_mask=self.sl_fnrgf_mask.value(),
-                )
-                print(f"[EXPORT: FNRGF NATIVE] Done in {time.time() - t0:.3f}s (radial bins={export_nbins})")
-
-            if self.sec_mgn.is_filter_active():
-                t0 = time.time()
-                img = worker.run_mgn_native(
-                    img,
-                    self.sl_mgn_str.value(),
-                    self.sl_mgn_gam.value(),
-                    self.sl_mgn_k.value(),
-                    self.sl_mgn_h.value(),
-                    self.sl_mgn_trunc.value(),
-                    sigmas=tuple(s * scale_factor for s in (1.25, 2.5, 5, 10, 20, 40)),
-                )
-                print(f"[EXPORT: MGN NATIVE] Done in {time.time() - t0:.3f}s")
-
-            if self.sec_wow.is_filter_active():
-                t0 = time.time()
-                img = worker.run_wow_native(
-                    img, self.sl_wow_str.value(), self.sl_wow_scales.value(),
-                    denoise_coefficients=[slider.value() for slider in self.sl_wow_denoise],
-                    bilateral=1 if self.combo_wow_bilateral.currentIndex() else None,
-                )
-                print(f"[EXPORT: WOW NATIVE] Done in {time.time() - t0:.3f}s")
-
-            if self.sec_rhef.is_filter_active():
-                t0 = time.time()
-                img = worker.run_rhef_native(
-                    img, self.sl_rhef_str.value(), self.sl_rhef_rad.value(), self.sl_rhef_upsilon.value(), sx_full, sy_full, sr_full,
-                    bin_px=self.sl_rhef_bin.value()/10.0 * scale_factor,
-                )
-                print(f"[EXPORT: RHEF NATIVE] Done in {time.time() - t0:.3f}s")
-
-            if self.sec_usm.is_filter_active():
-                t0 = time.time()
-                usm_rad_scaled = self.sl_usm_radius.value() * scale_factor
-                usm_sigma_amount = self.sl_usm_amount.value() / 10.0
-                img = worker.run_usm(img, self.sl_usm_str.value(), usm_rad_scaled, usm_sigma_amount)
-                print(f"[EXPORT: USM] Done in {time.time() - t0:.3f}s (radius={usm_rad_scaled:.1f})")
-
-            if self.sec_achf.is_filter_active():
-                t0 = time.time()
-                achf_kernel_scaled = max(1, int(round(self.sl_achf_kernel.value() * scale_factor)))
-                img = worker.run_achf(
-                    img, self.sl_achf_str.value(), achf_kernel_scaled, self.sl_achf_boost.value(), sx_full, sy_full, sr_full,
-                    intensity_threshold=self.sl_achf_threshold.value(),
-                    background=self.sl_achf_background.value(),
-                )
-                print(f"[EXPORT: ACHF] Done in {time.time() - t0:.3f}s (kernel={achf_kernel_scaled})")
-
-            img_norm = normalize_image(img)
+            img_norm = render_presentation(img, source, display)
+            if colour_rgb is not None:
+                img_norm = set_luminosity(colour_layer(colour_rgb, source, display), img_norm)
 
             img_16bit = np.clip(img_norm * 65535.0, 0, 65535).astype(np.uint16)
 
             t0 = time.time()
-            tifffile.imwrite(file_path, img_16bit, compression="zlib", maxworkers=CPU_CORES, metadata={"scale_factor": scale_factor})
+            valid = np.isfinite(source)
+            if not valid.all():
+                if img_16bit.ndim == 3:
+                    img_16bit = np.concatenate([img_16bit, (valid.astype(np.uint16)*65535)[..., None]], axis=2)
+                else:
+                    img_16bit = np.stack([img_16bit, valid.astype(np.uint16)*65535], axis=-1)
+            tifffile.imwrite(file_path, img_16bit, photometric="rgb" if colour_rgb is not None else "minisblack",
+                             extrasamples=['unassalpha'] if not valid.all() else None,
+                             compression="zlib", maxworkers=CPU_CORES,
+                             metadata={"scale_factor": scale_factor, "source": original_path,
+                                       "parameters": recipe_parameters(parameters), "display": display,
+                                       "colour_calibration": colour_report,
+                                       "role": "Sequential pipeline presentation; not a linear master"})
             print(f"[EXPORT: DISK WRITE] Done in {time.time() - t0:.3f}s")
             
-            # Create JPEG copy with gamma 2.2 for easy viewing
+            # Presentation is already stretched: JPEG uses the same display values.
             t0 = time.time()
-            jpeg_path = file_path.rsplit('.', 1)[0] + "_gamma2_2.jpg"
+            jpeg_path = file_path.rsplit('.', 1)[0] + "_preview.jpg"
             
-            # Apply gamma 2.2 correction
-            img_gamma = np.power(img_norm, 1.0 / 2.2)
+            img_gamma = img_norm
             img_gamma = np.clip(img_gamma * 255.0, 0, 255).astype(np.uint8)
             
             # Save as JPEG with high quality
-            cv2.imwrite(jpeg_path, img_gamma, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            print(f"[EXPORT: JPEG GAMMA 2.2] Done in {time.time() - t0:.3f}s")
+            if not cv2.imwrite(jpeg_path, cv2.cvtColor(img_gamma, cv2.COLOR_RGB2BGR) if img_gamma.ndim == 3 else img_gamma, [cv2.IMWRITE_JPEG_QUALITY, 95]):
+                raise OSError("Could not write JPEG preview")
+            print(f"[EXPORT: JPEG PREVIEW] Done in {time.time() - t0:.3f}s")
             
+            layers_path = None
+            if export_layers:
+                candidate = Path(file_path).with_suffix("").with_name(Path(file_path).stem + "_PS_layers")
+                suffix = 2
+                while candidate.exists():
+                    candidate = Path(file_path).with_suffix("").with_name(Path(file_path).stem + f"_PS_layers_{suffix}")
+                    suffix += 1
+                layers_path = export_layer_package(worker, source, parameters, display,
+                                                   original_path, candidate, rgb=colour_rgb, colour_report=colour_report)
+
+            linear_path = None
+            if export_linear:
+                candidate = Path(file_path).with_suffix("").with_name(Path(file_path).stem + "_sources")
+                suffix = 2
+                while candidate.exists():
+                    candidate = Path(file_path).with_suffix("").with_name(Path(file_path).stem + f"_sources_{suffix}")
+                    suffix += 1
+                linear_path = export_linear_sources(source, source_rgb, original_path, candidate, input_state)
+
             print(f"[EXPORT] Finished successfully in {time.time() - export_start:.3f}s\n{'='*80}\n")
 
-            self.status_label.setText(f"Status: Exported to {os.path.basename(file_path)} + {os.path.basename(jpeg_path)}")
+            self.status_label.setText(f"Status: Exported {os.path.basename(file_path)} + preview"
+                                      + (f" + {layers_path.name}" if layers_path else "")
+                                      + (f" + {linear_path.name}" if linear_path else ""))
             self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
         except Exception as e:
             print(f"Export failed with exception: {e}")
@@ -1303,32 +1340,10 @@ class EclipseProcessorApp(QMainWindow):
         proc_mat = self.processed_image if self.processed_image is not None else self.raw_image
         orig_mat = self.raw_image
 
-        p_norm = normalize_image(proc_mat).astype(np.float32)
-        o_norm = normalize_image(orig_mat).astype(np.float32)
-
-        mode_idx = self.combo_stretch_mode.currentIndex()
-
-        if mode_idx == 1:
-            log_exp = self.sl_stretch.value() / 10.0
-            k = 10.0 ** log_exp
-            denom = float(np.log1p(k))
-            p_stretch = np.log1p(k * p_norm) / denom
-            o_stretch = np.log1p(k * o_norm) / denom
-        elif mode_idx == 2:
-            stretch_val = float(self.sl_stretch.value())
-            sp_val = (self.sl_ghs_sp.value() / 1000.0) * 0.5
-            b_val = self.sl_ghs_b.value() / 10.0
-            bp_val = self.sl_ghs_bp.value() / 1000.0
-            p_stretch = self.apply_ghs(p_norm, stretch_val, sp_val, b_val, bp_val)
-            o_stretch = self.apply_ghs(o_norm, stretch_val, sp_val, b_val, bp_val)
-        else:
-            stretch_val = float(self.sl_stretch.value())
-            p_stretch = np.arcsinh(p_norm * stretch_val) / np.arcsinh(stretch_val)
-            o_stretch = np.arcsinh(o_norm * stretch_val) / np.arcsinh(stretch_val)
-
-        final_norm = o_stretch if self.show_original_mode else cv2.addWeighted(
-            p_stretch, float(self.sl_blend.value()) / 100.0, o_stretch, 1.0 - float(self.sl_blend.value()) / 100.0, 0
-        )
+        display = self.collect_display_parameters()
+        if self.show_original_mode:
+            display = dict(display, blend=0.)
+        final_norm = render_presentation(proc_mat, orig_mat, display)
 
         display_img = np.clip(final_norm * 255.0, 0, 255).astype(np.uint8)
         h, w = display_img.shape

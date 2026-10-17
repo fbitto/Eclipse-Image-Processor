@@ -36,6 +36,38 @@ class GuiInteractionTests(unittest.TestCase):
     def tearDown(self):
         self.window.close()
 
+    def test_colour_calibration_requires_declared_linear_rgb_and_is_reversible(self):
+        self.assertFalse(self.window.chk_calibrate_colour.isEnabled())
+        t = np.linspace(.01, .9, 64*64).reshape(64, 64)
+        rgb = np.stack([.1+.6*t, .05+.3*t, .025+.15*t], axis=-1).astype(np.float32)
+        self.window.full_source_rgb = rgb
+        self.window.combo_input_state.setCurrentIndex(0)
+        self.window.on_input_state_changed()
+        self.assertFalse(self.window.chk_calibrate_colour.isEnabled())
+        self.window.combo_input_state.setCurrentIndex(1)
+        self.assertTrue(self.window.chk_calibrate_colour.isEnabled())
+        from unittest.mock import patch
+        with patch("gui.app.neutralize_tse") as calibrate, patch("gui.app.set_luminosity") as colorize:
+            self.window.chk_calibrate_colour.setChecked(True)
+            self.window.render_matrix_to_screen()
+            self.window.show_original_mode = True
+            self.window.render_matrix_to_screen()
+            self.window.show_original_mode = False
+            calibrate.assert_not_called()
+            colorize.assert_not_called()
+            self.assertTrue(self.window.image_label.pixmap().toImage().isGrayscale())
+        calibrated, _, report = self.window.colour_data()
+        self.assertIn("tse-tools", report["method"])
+        np.testing.assert_allclose(calibrated[..., 0], calibrated[..., 1], atol=1e-6)
+        original, _, original_report = self.window.colour_data(original=True)
+        np.testing.assert_array_equal(original, rgb)
+        self.assertEqual(original_report["method"], "none")
+        self.window.combo_input_state.setCurrentIndex(2)
+        self.assertFalse(self.window.chk_calibrate_colour.isChecked())
+        restored, _, report = self.window.colour_data()
+        np.testing.assert_array_equal(restored, rgb)
+        self.assertEqual(report["method"], "none")
+
     def test_only_modified_click_requests_recentering(self):
         label = ClickableLabel()
         label.resize(100, 100)
@@ -62,6 +94,13 @@ class GuiInteractionTests(unittest.TestCase):
             self.assertEqual(self.requests, [])
         finally:
             label.close()
+
+    def test_rhef_mode_is_part_of_preview_and_export_recipe(self):
+        self.assertEqual(self.window.combo_rhef_mode.currentData(), "legacy")
+        self.window.combo_rhef_mode.setCurrentIndex(1)
+        for shape in (self.window.raw_image.shape, self.window.full_raw_image.shape):
+            params = self.window.collect_filter_parameters(shape)
+            self.assertEqual(params["rhef_mode"], "continuous")
 
     def test_geometry_edits_restart_one_debounce_timer(self):
         self.window.txt_x.setText("20")

@@ -1,0 +1,142 @@
+"""Missing eclipse samples stay missing through loading, filters and export."""
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import numpy as np
+import tifffile
+
+from core.filters import FilterWorker
+from core.image_data import observed_image, resize_observed
+from core.layer_export import export_layer_package
+from core.masked_filters import MaskedWorker
+from core.pipeline import execute_pipeline
+from core.presentation import render_presentation
+from gui.app import EclipseProcessorApp
+
+
+def parameters(valid):
+    return dict(valid_mask=valid, sx=40., sy=32., sr=8.,
+                pre_stretch_enabled=True, pre_stretch_mode='log', pre_stretch_val=1,
+                noise_gate_enabled=True, noise_gate_str=10, noise_gate_thr=10,
+                bilateral_enabled=True, bilateral_str=10, bilateral_d=10, bilateral_sc=30, bilateral_ss=50,
+                fnrgf_enabled=True, fnrgf_str=20, fnrgf_ord=3, fnrgf_seg=16, fnrgf_cut=0,
+                fnrgf_rad=10, fnrgf_rmax=61, fnrgf_nbins=15,
+                mgn_enabled=True, mgn_str=10, mgn_gam=32,
+                rhef_enabled=True, rhef_str=10, rhef_rad=10, rhef_upsilon=35, rhef_mode='continuous',
+                wow_enabled=True, wow_str=10, wow_scales=3, wow_denoise=[1, 2, 3], wow_bilateral=1,
+                usm_enabled=True, usm_str=10, usm_radius=10, usm_sigma=2,
+                achf_enabled=True, achf_str=10, achf_kernel=10, achf_boost=20)
+
+
+class MaskedImageTests(unittest.TestCase):
+    def setUp(self):
+        yy, xx = np.mgrid[:64, :80]
+        self.valid = (xx-40)**2 + (yy-32)**2 > 8**2
+        self.image = np.random.default_rng(48).uniform(.1, 1, (64, 80)).astype(np.float32)
+        self.image[~self.valid] = np.nan
+
+    def test_explicit_mask_excludes_values_and_preserves_missing_through_every_stage(self):
+        p = parameters(self.valid)
+        for bilateral in (None, 1):
+            for mode in ('legacy', 'continuous'):
+                p.update(wow_bilateral=bilateral, rhef_mode=mode)
+                expected = execute_pipeline(FilterWorker(), self.image, p)
+                contaminated = np.where(self.valid, self.image, 1e20)
+                actual = execute_pipeline(FilterWorker(), contaminated, p)
+                np.testing.assert_array_equal(actual, expected)
+                np.testing.assert_array_equal(np.isfinite(actual), self.valid)
+        self.assertTrue(np.isnan(self.image[~self.valid]).all())
+        with self.assertRaises(ValueError):
+            execute_pipeline(FilterWorker(), self.image, {})
+
+    def test_constant_has_no_missing_boundary_contrast(self):
+        worker = MaskedWorker(FilterWorker(), self.valid)
+        image = np.where(self.valid, 7., 0)
+        blur = worker.blur(image, 5)
+        np.testing.assert_allclose(blur[self.valid], 7., atol=1e-12)
+        for bilateral in (None, 1):
+            smooth = worker.starlet_blur(image, 4, bilateral)
+            np.testing.assert_allclose(smooth[self.valid], 7., atol=1e-12)
+        for name in ('mgn', 'wow', 'usm', 'achf', 'fnrgf', 'rhef'):
+            p = parameters(self.valid)
+            for other in ('pre_stretch', 'noise_gate', 'bilateral', 'mgn', 'wow', 'usm', 'achf', 'fnrgf', 'rhef'):
+                p[other+'_enabled'] = other == name
+            result = execute_pipeline(FilterWorker(), np.where(self.valid, 7., np.nan), p)
+            self.assertTrue(np.isfinite(result[self.valid]).all())
+            self.assertLess(float(np.ptp(result[self.valid])), 1e-5, name)
+
+    def test_area_preview_ignores_missing_and_retains_holes(self):
+        image = np.ones((8, 8), np.float32)*5
+        image[:3, :3] = np.nan
+        resized = resize_observed(image, (4, 4))
+        self.assertTrue(np.isnan(resized[:2, :2]).all())
+        np.testing.assert_array_equal(resized[np.isfinite(resized)], 5)
+        with self.assertRaises(ValueError):
+            observed_image(np.full((4, 4), np.nan))
+        with self.assertRaises(ValueError):
+            observed_image(image, np.ones((4, 4), bool))
+
+    def test_layer_package_preserves_nan_source_and_transparent_base_and_combined(self):
+        p = parameters(self.valid)
+        display = dict(mode='asinh', strength=10, blend=.8)
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'layers'
+            export_layer_package(FilterWorker(), self.image, p, display, 'masked.tif', output)
+            manifest = json.loads((output/'recipe.json').read_text())
+            self.assertNotIn('valid_mask', manifest['parameters'])
+            self.assertEqual(manifest['missing_pixels'], int((~self.valid).sum()))
+            source = tifffile.imread(output/'masked_SOURCE_float32.tif')
+            np.testing.assert_array_equal(source, self.image)
+            for filename in [r['file'] for r in manifest['layers']] + [manifest['combined']]:
+                layer = tifffile.imread(output/filename)
+                self.assertEqual(layer.shape, (64, 80, 4))
+                self.assertTrue(np.all(layer[~self.valid, 3] == 0))
+                self.assertTrue(np.isfinite(layer).all())
+            presentation = render_presentation(self.image, self.image, display)
+            self.assertTrue(np.isfinite(presentation).all())
+            self.assertTrue(np.all(presentation[~self.valid] == 0))
+
+    def test_load_float_rgb_with_missing_moon_and_export_actual_gui_action(self):
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication([])
+        window = EclipseProcessorApp()
+        window.auto_calculate = False
+        yy, xx = np.mgrid[:160, :240]
+        radius = np.hypot(xx-140, yy-90)
+        image = np.where(radius > 23, 1+np.exp(-radius/40), np.nan).astype(np.float32)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp)/'realistic.tif'
+                tifffile.imwrite(path, np.repeat(image[..., None], 3, axis=2), photometric='rgb')
+                with patch('gui.app.QFileDialog.getOpenFileName', return_value=(str(path), '')):
+                    window.load_image_action()
+                self.assertEqual(window.source_path, str(path), window.status_label.text())
+                np.testing.assert_allclose(window.full_raw_image, image, rtol=2e-7, equal_nan=True)
+                np.testing.assert_array_equal(np.isfinite(window.full_raw_image), np.isfinite(image))
+                np.testing.assert_allclose([int(window.txt_x.text()), int(window.txt_y.text()), int(window.txt_r.text())], (140,90,23), atol=1)
+                self.assertFalse(window.chk_export_linear.isChecked())
+                self.assertFalse(window.combo_input_state.isHidden())  # RGB needs transfer-state control.
+                window.chk_export_linear.setChecked(True)
+                self.assertFalse(window.combo_input_state.isHidden())
+                window.combo_input_state.setCurrentIndex(1)
+                window.chk_export_layers.setChecked(True)
+                result = Path(tmp)/'final.tif'
+                with patch('gui.app.QFileDialog.getSaveFileName', return_value=(str(result), '')):
+                    window.export_image_action()
+                self.assertTrue(result.is_file(), window.status_label.text())
+                final = tifffile.imread(result)
+                self.assertEqual(final.dtype, np.uint16)
+                self.assertEqual(final.shape, (160, 240, 4))
+                np.testing.assert_array_equal(final[..., 3] > 0, np.isfinite(image))
+                self.assertTrue((Path(tmp)/'final_PS_layers'/'recipe.json').is_file())
+                sources = Path(tmp)/'final_sources'
+                np.testing.assert_array_equal(
+                    tifffile.imread(sources/'realistic_LINEAR_RGB_float32.tif'),
+                    np.repeat(image[..., None], 3, axis=2))
+                np.testing.assert_array_equal(
+                    tifffile.imread(sources/'realistic_LINEAR_L_float32.tif'), window.full_raw_image)
+        finally:
+            window.close()

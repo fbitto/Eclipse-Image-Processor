@@ -325,116 +325,8 @@ class FilterWorker(QObject):
             self.failed.emit(str(error))
 
     def _process_pipeline(self, raw_image: np.ndarray, params: dict):
-        """Sequentially applies enabled scientific filters."""
-        if raw_image is None:
-            return
-
-        pipeline_start = time.time()
-        print(f"\n{'='*80}\n[PIPELINE] Execution start (Native Engine - {CPU_CORES} CPUs) - Shape: {raw_image.shape}\n{'='*80}")
-
-        img = finite_image(raw_image).astype(np.float32)
-        p = params
-
-        # STEP 0: PRE-STRETCH (ASINH / LOGARITHMIC)
-        if p.get("pre_stretch_enabled", False):
-            mode = p.get("pre_stretch_mode", "asinh")
-            val = p.get("pre_stretch_val", 10.0)
-            step_start = time.time()
-            if mode == "log":
-                img = self.run_pre_log(img, val)
-                print(f"[PRE-STRETCH: LOG] Done in {time.time() - step_start:.3f}s (K=10^{val:.1f})")
-            else:
-                img = self.run_pre_asinh(img, val)
-                print(f"[PRE-STRETCH: ASINH] Done in {time.time() - step_start:.3f}s (Factor={val})")
-
-        # STEP 0B: RADIAL NOISE GATE
-        if p.get("noise_gate_enabled", False):
-            step_start = time.time()
-            img = self.run_radial_noise_gate(
-                img, p["noise_gate_str"], p["noise_gate_thr"], p["sx"], p["sy"], p["sr"]
-            )
-            print(f"[NOISE GATE] Done in {time.time() - step_start:.3f}s")
-
-        # STEP 0C: BILATERAL DENOISE
-        if p.get("bilateral_enabled", False):
-            step_start = time.time()
-            img = self.run_bilateral_denoise(
-                img, p["bilateral_str"], p["bilateral_d"], p["bilateral_sc"], p["bilateral_ss"]
-            )
-            print(f"[BILATERAL] Done in {time.time() - step_start:.3f}s")
-
-        # STEP 1A: NATIVE FNRGF ENGINE (MULTI-THREADED)
-        if p.get("fnrgf_enabled", False):
-            step_start = time.time()
-            img = self.run_fnrgf_native(
-                img,
-                p["fnrgf_str"],
-                p["fnrgf_ord"],
-                p["fnrgf_seg"],
-                p["fnrgf_cut"],
-                p["fnrgf_rad"],
-                p.get("fnrgf_rmax", 30),
-                p.get("fnrgf_nbins", 100),
-                p["sx"],
-                p["sy"],
-                p["sr"],
-                width_function=p.get("fnrgf_width_func", "std"),
-                radial_binning=p.get("fnrgf_radial_binning", "linear"),
-                apply_mask=p.get("fnrgf_apply_mask", 0),
-            )
-            print(f"[FNRGF NATIVE] Done in {time.time() - step_start:.3f}s")
-
-        # STEP 2A: NATIVE MGN ENGINE (MULTI-SCALE GAUSSIAN NORMALIZATION)
-        if p.get("mgn_enabled", False):
-            step_start = time.time()
-            img = self.run_mgn_native(
-                img,
-                p["mgn_str"],
-                p["mgn_gam"],
-                p.get("mgn_k", 70),
-                p.get("mgn_h", 70),
-                p.get("mgn_trunc", 3),
-            )
-            print(f"[MGN NATIVE] Done in {time.time() - step_start:.3f}s")
-
-        # STEP 2B: NATIVE WOW ENGINE (A TROUS WAVELETS WHITENING)
-        if p.get("wow_enabled", False):
-            step_start = time.time()
-            img = self.run_wow_native(
-                img, p["wow_str"], p.get("wow_scales"),
-                denoise_coefficients=p.get("wow_denoise", []),
-                bilateral=p.get("wow_bilateral"),
-            )
-            print(f"[WOW NATIVE] Done in {time.time() - step_start:.3f}s")
-
-        # STEP 2C: NATIVE RHEF ENGINE
-        if p.get("rhef_enabled", False):
-            step_start = time.time()
-            img = self.run_rhef_native(
-                img, p["rhef_str"], p["rhef_rad"], p["rhef_upsilon"], p["sx"], p["sy"], p["sr"],
-                bin_px=p.get("rhef_bin_px", 1.0),
-            )
-            print(f"[RHEF NATIVE] Done in {time.time() - step_start:.3f}s")
-
-        # STEP 3: UNSHARP MASK
-        if p.get("usm_enabled", False):
-            step_start = time.time()
-            img = self.run_usm(img, p["usm_str"], p["usm_radius"], p["usm_sigma"])
-            print(f"[USM] Done in {time.time() - step_start:.3f}s")
-
-        # STEP 4: ACHF (SYMMETRIC VARIABLE KERNEL)
-        if p.get("achf_enabled", False):
-            step_start = time.time()
-            img = self.run_achf(
-                img, p["achf_str"], p["achf_kernel"], p["achf_boost"], p["sx"], p["sy"], p["sr"],
-                intensity_threshold=p.get("achf_threshold", 10),
-                background=p.get("achf_background", 10),
-            )
-            print(f"[ACHF] Done in {time.time() - step_start:.3f}s")
-
-        finite_image(img)
-        print(f"[PIPELINE] Complete. Total time: {time.time() - pipeline_start:.3f}s\n{'='*80}\n")
-        self.finished.emit(img)
+        from .pipeline import execute_pipeline
+        self.finished.emit(execute_pipeline(self, raw_image, params))
 
     def run_pre_asinh(self, img: np.ndarray, factor: float) -> np.ndarray:
         if factor <= 0:
@@ -511,6 +403,7 @@ class FilterWorker(QObject):
         width_function="std", radial_binning="linear", apply_mask=0,
         min_pixels_per_sector=1, clip_pct=0.0,
         mean_attenuation_range=(1.0, 0.0), std_attenuation_range=(1.0, 0.0),
+        valid=None,
     ) -> np.ndarray:
         """Fourier Normalizing Radial Gradient Filter plus optional display mix.
 
@@ -522,7 +415,11 @@ class FilterWorker(QObject):
         """
         if strength == 0:
             return img.copy()
-        a = finite_image(img)
+        if valid is None:
+            a = finite_image(img)
+        else:
+            from .image_data import observed_image
+            a, valid = observed_image(img, valid)
         if sun_r <= 0 or not np.isfinite(sun_r):
             raise ValueError("FNRGF requires a positive disk radius")
         app_r, outer = float(app_radius_val)/10, float(rmax_val)/10
@@ -566,7 +463,7 @@ class FilterWorker(QObject):
 
     def run_rhef_native(
         self, img, strength, app_radius_val, upsilon_val, sun_x, sun_y, sun_r,
-        valid=None, upsilon_h_val=None, vignette_rsun=None, bin_px=1.0,
+        valid=None, upsilon_h_val=None, vignette_rsun=None, bin_px=1.0, mode="legacy",
     ) -> np.ndarray:
         """RHEF ranks mapped to input units before the external Strength blend.
 
@@ -580,18 +477,37 @@ class FilterWorker(QObject):
             return img.copy()
         if not np.isfinite([sun_r, bin_px]).all() or sun_r <= 0 or bin_px <= 0:
             raise ValueError("RHEF needs positive disk radius and bin width")
-        a = finite_image(img)
+        if valid is None:
+            a = finite_image(img)
+        else:
+            from .image_data import observed_image
+            a, valid = observed_image(img, valid)
         yy, xx = np.indices(a.shape, dtype=float)
         r = np.hypot(xx-sun_x, yy-sun_y)
         edges = np.arange(int(np.floor(r.max()/bin_px))+2, dtype=float)*bin_px
         upsilon = None if upsilon_val is None else (
             float(upsilon_val)/100,
             float(upsilon_val if upsilon_h_val is None else upsilon_h_val)/100)
-        filtered = rhef_normalize(
-            a, r, edges, application_radius=float(app_radius_val)/10*sun_r,
-            upsilon=upsilon, valid=valid,
-            vignette=None if vignette_rsun is None else float(vignette_rsun)*sun_r,
-        )
+        if upsilon is not None and (not np.isfinite(upsilon).all() or min(upsilon) <= 0):
+            raise ValueError("Upsilon exponents must be finite and positive")
+        if mode == "legacy":
+            filtered = rhef_normalize(
+                a, r, edges, application_radius=float(app_radius_val)/10*sun_r,
+                upsilon=upsilon, valid=valid,
+                vignette=None if vignette_rsun is None else float(vignette_rsun)*sun_r,
+            )
+        elif mode == "continuous":
+            from .radial_continuous import rhef_continuous_normalize
+            filtered = rhef_continuous_normalize(
+                a, r, bin_px=bin_px, application_radius=float(app_radius_val)/10*sun_r,
+                valid=valid,
+            )
+            if upsilon is not None:
+                low = filtered < .5
+                filtered = np.where(low, .5 * (2 * filtered) ** upsilon[0],
+                                    1 - .5 * (2 - 2 * filtered) ** upsilon[1])
+        else:
+            raise ValueError("Unknown RHEF mode")
         selected = np.isfinite(filtered)
         finite = a[np.isfinite(a)]
         if finite.size:

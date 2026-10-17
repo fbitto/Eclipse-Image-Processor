@@ -61,18 +61,107 @@ python main.py
 
 The file dialog accepts TIFF (`.tif`, `.tiff`), FITS (`.fits`, `.fit`, `.fts`), XISF (`.xisf`), PNG, JPEG and BMP. Loading tries the astronomical readers where applicable, then TIFF, OpenCV and Pillow. Successful decoding depends on the installed reader and the file layout.
 
-Color images are converted to grayscale. Processing uses `float32` arrays, so the application does not preserve the original data type, color channels or all source metadata. Eight-bit inputs are also accepted, although higher-bit-depth sources provide more intensity information.
+Color images are retained as float32 RGB for optional source export, with a derived grayscale image for processing. The original data type and all source metadata are not preserved. Eight-bit inputs are also accepted, although higher-bit-depth sources provide more intensity information.
 
 ### Preview and export
 
 The preview buffer has a maximum dimension of 1500 pixels. A persistent Qt worker thread processes enabled preview filters. CPU thread counts are initialized from the detected logical CPU count, and selected filters use additional thread pools.
 
-Export recalculates the enabled filters on the full-resolution image, scaling selected spatial parameters. It writes:
+Export recalculates the enabled filters at full resolution, scaling spatial parameters.
+The final 16-bit TIFF (RGB for colour input, grayscale otherwise) includes the selected Asinh, Logarithmic or GHS
+presentation stretch and **Reveal Opacity**. The comparison button is transient and
+is not saved. The companion `<name>_preview.jpg` uses the same display values,
+without a second gamma transformation. Fine structure can differ from a reduced preview.
 
-- A grayscale 16-bit TIFF, normalized to the output minimum and maximum, with zlib compression and a `scale_factor` metadata field.
-- A companion JPEG named `<name>_gamma2_2.jpg`, with an exponent of `1 / 2.2` and quality 95.
+**Also export independent Photoshop layers** is enabled by default. It creates a
+new `<destination>_PS_layers` folder (a numbered folder if one already exists):
 
-The display stretch (Asinh, Logarithmic or GHS) and the original/processed display blend are preview controls; the export path does not apply them. Consequently, exported brightness can differ from the preview. The current export action runs in the GUI thread and can temporarily make the interface unresponsive.
+- `<original>_SOURCE_float32.tif`: the loaded monochrome input, before any processing;
+  this is not a copy preserving the original RGB/metadata or a declaration of linearity.
+- `<original>_PREPARED_float32.tif`: shared optional pre-stretch/noise-gate/bilateral preparation.
+- `<original>_01_BASE_Normal.tif`: a nonlinearly stretched presentation base.
+- `<original>_02_<FILTER>_Overlay.tif`, etc.: active nonzero enhancement filters,
+  each calculated independently from the shared preparation, with straight alpha.
+- `<original>_PS_COMBINED.tif`: the composition reconstructed from those TIFF layers.
+- `recipe.json`, `CAPAS.md` and `Cargar_capas_Photoshop.jsx`: effective parameters,
+  normalizations, layer order, blend modes, opacities and a Photoshop import script.
+
+In Photoshop use **File > Scripts > Browse** and select the generated JSX. It creates
+a new unsaved document, preserves the TIFF alpha and sets the layer names and settings.
+The number gives the order from bottom to top. The script does not run automatically.
+
+The independent PS composition is distinct from the sequential pipeline final.
+Contrast layers use a median-centred tanh mapping to neutral grey and Overlay;
+USM and ACHF use their signed detail residuals (their base terms are removed).
+Their recommended opacity is capped at 35% and
+multiplied by Reveal, quantized to Photoshop's 1/255 steps. These are starting
+recommendations, not a translation of sequential Strength into identical pixels.
+Only the base receives the display stretch: stretching the grey layers would
+move their neutral value, and stretching the combined image again would break
+reconstruction. No forced pre-stretch is introduced at the start of the pipeline.
+
+The detail layers are monochrome equal-channel RGB, with an additional top Color layer for RGB input, without calibrated ICC.
+NaN/Inf samples are retained as missing data. Preview reduction averages only
+observed samples and keeps partially missing pixels excluded. Floating source and
+preparation TIFFs retain NaN; display TIFFs use alpha zero there. A separate VALID
+TIFF accompanies the layer package. Images without missing data keep the original
+filter backends. With an explicit validity mask, radial statistics ignore missing
+samples and Gaussian/spatial operators normalize by observed support. WOW uses a
+mask-aware normalized-starlet variant on these inputs, recorded in the recipe;
+it is not byte-equivalent to watroo, and its noise thresholds are approximate.
+Finite lunar observations are not automatically excluded from filter input.
+If a closed circular missing region is used for lunar detection, its fitted radius
+is the data boundary and should be checked against the original physical limb.
+Native Photoshop rendering and colour-management settings still require verification.
+Export runs in the GUI thread and may temporarily make the interface unresponsive.
+
+### Optional sources for PixInsight
+
+**Exportar también imágenes lineales** is off by default and independent of the
+Photoshop layers option. Checking it reveals the input transfer-state selector.
+Declare a linear input explicitly to use `LINEAR` filenames; unspecified or
+already stretched inputs use `INPUT` filenames. This option never undoes an
+existing stretch or infers linearity from float32 storage.
+
+A new `<destination>_sources` folder contains the original loaded RGB (when present),
+the derived luminance, a VALID mask and metadata. Both image files use float32,
+without filters, pre-stretch, presentation stretch or min/max normalization.
+Pixel units and missing-data NaN are retained. RGB is retained during loading. Filters operate on the derived monochrome
+image; the screen preview stays monochrome. Colour is restored only in final
+export and Photoshop as described below.
+Source exports retain original values even when optional neutralization is enabled. The original input file is not modified.
+
+### Colour and optional tse-tools neutralization
+
+RGB inputs produce a monochrome screen preview, a colour final TIFF/JPEG and a top
+`<original>_<order>_RGB_Color.tif` layer in the Photoshop package. The base and
+independent filter layers remain monochrome; the top layer uses **Color, 100%**
+to preserve their luminosity. The generated JSX sets this mode automatically.
+The reference composite uses nonseparable SetLum/ClipColor blending in display
+values. Native Photoshop colour-management settings can change its rendering.
+
+The RGB colour layer receives one luminance-guided stretch, using equal R/G/B
+multipliers and a shared highlight limit. Filter layers remain at neutral grey.
+No camera matrix, photometric colour calibration or ICC assignment is inferred.
+
+**Calibrar color (tse-tools)** is off by default and enabled only for RGB declared
+linear in the input selector. It assumes neutral sky/corona: sample every tenth
+pixel, select joint RGB values strictly between zero and one, subtract per-channel
+P1 and balance the P99−P1 spans relative to green. It then uses tse-tools's shared
+negative shift and [0,1] clipping. Integer inputs use their original dtype maximum
+as white; float inputs use white=1, matching tse-tools's normalized-float assumption.
+NaN/Inf are excluded explicitly. Insufficient samples or constant channels produce
+an explanatory error and leave neutralization off.
+
+This is a neutralization assumption, not a measured colour calibration. It affects
+only exported presentation colour, is computed lazily at export, leaves the
+monochrome preview and numerical luminance filters unchanged, and
+never overwrites the original RGB/L source exports. The Photoshop folder includes
+the colour working input in float32 and the recipe records backgrounds, gains,
+negative shift, sampling and input white. Uncheck the option to restore source colour.
+
+Reference: [tse-tools color_calibrate](https://github.com/naavis/eclipsetools/blob/14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391/src/eclipsetools/commands/utils.py).
+Adapted under MIT; see [the retained notice](docs/third-party/eclipsetools-MIT.txt).
 
 ## Filter pipeline
 

@@ -49,8 +49,8 @@ def main():
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Realce coronal")
-    app.setApplicationDisplayName("Realce coronal")
+    app.setApplicationName("Corona Enhance Filters")
+    app.setApplicationDisplayName("Corona Enhance Filters")
     app.setStyle("Fusion")
     app.setStyleSheet(LIGHTROOM_QSS)
 
@@ -60,7 +60,7 @@ def main():
     if QSystemTrayIcon.isSystemTrayAvailable():
         # The small PNG is also readable by the macOS menu bar icon renderer.
         tray = QSystemTrayIcon(QIcon(resource_path("assets/icon-options/03-realce-coronal.png")), window)
-        tray.setToolTip("Realce coronal")
+        tray.setToolTip("Corona Enhance Filters")
         menu = QMenu(window)
 
         def show_window():
