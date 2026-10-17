@@ -13,7 +13,7 @@
 # ]
 # ///
 """
-FiltrosEclipse v0.4.0 - Entry Point
+Corona Enhance Filters v0.4.0 - Application entry point
 Modular structure for token-efficient development.
 """
 
@@ -34,8 +34,8 @@ import cv2
 cv2.setNumThreads(CPU_CORES)
 cv2.setUseOptimized(True)
 
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PySide6.QtGui import QColor, QIcon, QPalette
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QToolTip
 
 from config import LIGHTROOM_QSS
 from gui.app import EclipseProcessorApp
@@ -53,6 +53,13 @@ def main():
     app.setApplicationDisplayName("Corona Enhance Filters")
     app.setStyle("Fusion")
     app.setStyleSheet(LIGHTROOM_QSS)
+    # Tooltips use the inactive palette on some platforms. Set every group so
+    # native tooltip painting also keeps the same opaque, high-contrast colours.
+    tooltip_palette = QToolTip.palette()
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive, QPalette.ColorGroup.Disabled):
+        tooltip_palette.setColor(group, QPalette.ColorRole.ToolTipBase, QColor("#151a21"))
+        tooltip_palette.setColor(group, QPalette.ColorRole.ToolTipText, QColor("#f5f7fa"))
+    QToolTip.setPalette(tooltip_palette)
 
     app.setWindowIcon(QIcon(application_icon_path()))
 
@@ -71,9 +78,11 @@ def main():
             window.raise_()
             window.activateWindow()
 
-        menu.addAction("Mostrar ventana", show_window)
+        show_action = menu.addAction("Show window", show_window)
+        show_action.setToolTip("Show or restore the main application window")
         menu.addSeparator()
-        menu.addAction("Salir", window.close)
+        quit_action = menu.addAction("Quit", window.close)
+        quit_action.setToolTip("Close the application after the current worker finishes")
         tray.setContextMenu(menu)
         tray.show()
 

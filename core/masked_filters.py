@@ -16,6 +16,7 @@ class MaskedWorker:
         self.valid = valid
 
     def span(self, a):
+        """Observed intensity range; transport-buffer zeros do not set limits."""
         return float(np.ptp(a[self.valid]))
 
     def norm(self, a):
@@ -26,11 +27,17 @@ class MaskedWorker:
         return result
 
     def mix(self, a, filtered, strength):
+        """Map observed filter output to input units before the Strength blend."""
         original = np.where(self.valid, a, np.nan)
         output = blend_filter_result(original, np.where(self.valid, filtered, np.nan), strength)
         return np.where(self.valid, output, 0).astype(np.float32)
 
     def blur(self, a, sigma, truncate=4, mode='reflect'):
+        """Normalize Gaussian sums by observed support, without filling holes.
+
+        This excludes missing samples but does not remove the radial-slope bias
+        of a one-sided kernel near the lunar boundary.
+        """
         weights = gaussian_filter(self.valid.astype(float), sigma, truncate=truncate, mode=mode)
         signal = gaussian_filter(np.where(self.valid, a, 0), sigma, truncate=truncate, mode=mode)
         return np.divide(signal, weights, out=np.zeros_like(signal), where=weights > 0)
@@ -112,14 +119,15 @@ class MaskedWorker:
         gate = np.clip((snr-limit)/limit, 0, 1)
         return np.where(self.valid, a*(1-strength/100.+strength/100.*self.blur(gate, 2*spatial_scale)), 0).astype(np.float32)
 
-    def run_achf(self, a, strength, kernel, boost, sx, sy, sr, intensity_threshold=10, background=10):
+    def run_achf(self, a, strength, kernel, boost, sx, sy, sr, intensity_threshold=10, background=10, spatial_scale=1.0):
         if strength == 0:
             return a.copy()
         yy, xx = np.ogrid[:a.shape[0], :a.shape[1]]
         regions = ((xx-sx)**2+(yy-sy)**2 <= sr**2).astype(np.uint8)
         regions[~self.valid] = 2
         filtered = adaptive_circular_highpass(a, kernel/10., intensity_threshold/100.*self.span(a),
-                                             gain=boost/10., background=background/100., regions=regions)
+                                             gain=boost/10., background=background/100., regions=regions,
+                                             spatial_scale=spatial_scale)
         return np.where(self.valid, (1-strength/100.)*a+strength/100.*filtered, 0).astype(np.float32)
 
     def starlet_blur(self, a, step, bilateral):
@@ -161,6 +169,8 @@ class MaskedWorker:
             raise ValueError('Image too small or invalid WOW scale count')
         levels = list(denoise_coefficients or [])
         from watroo import B3spline
+        # Reference noise factors are approximate for masked or resampled HDR
+        # data; they are not a measured per-pixel detector-noise calibration.
         factors = B3spline(2).sigma_e(bilateral=bilateral)
         result, coarse = np.zeros_like(a, dtype=float), a.copy()
         noise = None

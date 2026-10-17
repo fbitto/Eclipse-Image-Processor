@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
+    QStyledItemDelegate,
     QMainWindow,
     QPushButton,
     QScrollArea,
@@ -35,7 +37,7 @@ from core.layer_export import export_layer_package
 from core.linear_export import export_linear_sources, split_source_channels
 from core.colour import neutralize_tse, colour_layer, set_luminosity
 from core.image_data import resize_observed, recipe_parameters, normalize_observed
-from gui.components import ClickableLabel, CollapsibleSection
+from gui.components import ClickableLabel, CollapsibleSection, FullRowCheckBox, InWindowTooltips
 from gui.factories import (
     create_filter_group,
     create_slider,
@@ -72,6 +74,12 @@ class EclipseProcessorApp(QMainWindow):
         self.auto_calculate: bool = True
         self.is_processing: bool = False
         self.has_pending_request: bool = False
+        # Only one worker job runs at a time; revisions reject obsolete results
+        # without interrupting numerical work or losing the latest UI settings.
+        self._preview_revision = 0
+        self._running_revision = None
+        self._running_image = None
+        self._pending_manual = False
         self.sp_picker_active: bool = False
         self.recalculation_timer = QTimer(self)
         self.recalculation_timer.setSingleShot(True)
@@ -87,6 +95,7 @@ class EclipseProcessorApp(QMainWindow):
         self.persistent_thread.start()
 
         self._build_ui()
+        self.in_window_tooltips = InWindowTooltips(self)
 
     def _build_ui(self):
         """Build the main user interface."""
@@ -102,7 +111,7 @@ class EclipseProcessorApp(QMainWindow):
         self.image_label.setStyleSheet("QLabel { background-color: #1c1c1c; border: 1px solid #333333; border-radius: 4px; }")
         self.image_label.image_clicked.connect(self.on_image_canvas_clicked)
         self.image_label.circle_center_requested.connect(self.on_circle_center_requested)
-        self.image_label.setToolTip("Ctrl-click (Command-click on macOS) to move the lunar circle")
+        self.image_label.setToolTip("Monochrome preview. Ctrl-click (Command-click on macOS) to move the disk center. With the shadow picker enabled, click to sample the processed intensity before display stretching.")
         main_layout.addWidget(self.image_label, stretch=3)
 
         right_container = QWidget()
@@ -119,20 +128,21 @@ class EclipseProcessorApp(QMainWindow):
         top_header_layout.setSpacing(6)
 
         self.status_label = QLabel(f"Status: Ready ({CPU_CORES} CPU cores available)")
+        self.status_label.setToolTip("Processing, pending changes and export status. Pipeline Ready means the latest requested preview has completed.")
         self.status_label.setStyleSheet("color: #9cdcfe; font-weight: bold; font-size: 11px;")
         top_header_layout.addWidget(self.status_label)
 
         btn_row = QHBoxLayout()
         self.btn_load = QPushButton("📁 Open Image")
         self.btn_load.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
-        self.btn_load.setToolTip("Load a 16-bit or 32-bit TIFF, FITS, or XISF solar master frame")
+        self.btn_load.setToolTip("Open TIFF, FITS, XISF, PNG, JPEG or BMP. Filters use monochrome intensity; source RGB is retained for export. Missing samples remain excluded.")
         self.btn_load.clicked.connect(self.load_image_action)
         btn_row.addWidget(self.btn_load)
 
         self.btn_compare = QPushButton("👁️ View Original")
         self.btn_compare.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
         self.btn_compare.setCheckable(True)
-        self.btn_compare.setToolTip("Toggle between filtered and original image for quick comparison")
+        self.btn_compare.setToolTip("Temporarily compare processed and original monochrome intensity with the selected display stretch. This comparison does not change the exported Reveal blend.")
         self.btn_compare.clicked.connect(self.toggle_compare_mode)
         btn_row.addWidget(self.btn_compare)
 
@@ -146,7 +156,7 @@ class EclipseProcessorApp(QMainWindow):
 
         self.btn_recalc = QPushButton("🔄")
         self.btn_recalc.setFixedSize(32, 26)
-        self.btn_recalc.setToolTip("Manually trigger full filter pipeline recalculation")
+        self.btn_recalc.setToolTip("Recalculate all enabled preview stages with the current settings. If processing is busy, queue the latest settings.")
         self.btn_recalc.clicked.connect(self.dispatch_pipeline_request)
         self.btn_recalc.setVisible(False)
         btn_row.addWidget(self.btn_recalc)
@@ -177,6 +187,23 @@ class EclipseProcessorApp(QMainWindow):
                 slider.valueChanged.connect(
                     lambda value, section=section: self.on_filter_slider_released(section, None))
         self._build_stretch_section(control_layout)
+        section_help = {
+            self.sec_geo: "Set the disk center and reference radius in native image pixels for radial filtering and the circle overlay.",
+            self.sec_pre_stretch: "Optional nonlinear input compression before the enhancement stages.",
+            self.sec_noise_gate: "Attenuate low local contrast with a radius-dependent SNR gate.",
+            self.sec_bilateral: "Smooth noise using gradient-weighted Gaussian averaging.",
+            self.sec_fnrgf: "Fourier Normalizing Radial Gradient Filter: model annular brightness and spread as functions of angle.",
+            self.sec_mgn: "Multi-scale Gaussian Normalization: combine local contrast at several scales with a global gamma image.",
+            self.sec_wow: "Wavelets Optimized Whitening: normalize multiscale contrast with optional noise suppression.",
+            self.sec_rhef: "Radial Histogram Equalization: map intensities to ranks within radial distributions.",
+            self.sec_usm: "Unsharp Mask: amplify the difference between the input and a Gaussian blur.",
+            self.sec_achf: "Adaptive Circular High-Pass Filter: use symmetric accepted neighbor pairs to extract signed detail.",
+            self.sec_stretch: "Presentation stretching after the sequential filters; the numerical source remains separate.",
+        }
+        for section, description in section_help.items():
+            section.toggle_btn.setToolTip(description + " Click to expand or collapse controls; this does not enable the stage.")
+            if section.chk_active is not None:
+                section.chk_active.setToolTip(description + " Enable or bypass this stage without resetting its controls.")
 
     def _build_geometry_section(self, layout: QVBoxLayout):
         """Build the solar disk geometry section."""
@@ -197,6 +224,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sec_geo.content_layout.addLayout(coord_layout)
 
         self.lbl_scale_info = QLabel("Scale: 1.0x (100% resolution)")
+        self.lbl_scale_info.setToolTip("Pipeline scale compares native image pixels with preview pixels; display scale compares native pixels with the fitted on-screen image. Geometry is entered in native pixels.")
         self.lbl_scale_info.setStyleSheet("color: #e5a00d; font-size: 10px; font-weight: bold;")
         self.sec_geo.content_layout.addWidget(self.lbl_scale_info)
 
@@ -208,7 +236,7 @@ class EclipseProcessorApp(QMainWindow):
 
         self.btn_auto_moon = QPushButton("🎯 Auto-detect Lunar Disk")
         self.btn_auto_moon.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
-        self.btn_auto_moon.setToolTip("Automatically detect the lunar disk center and radius using Hough Circle Transform")
+        self.btn_auto_moon.setToolTip("Estimate disk geometry from a closed circular missing-data boundary, or use robust contrast normalization, Hough detection and limb refinement. A missing-data boundary is not necessarily the physical lunar limb.")
         self.btn_auto_moon.clicked.connect(self.auto_detect_moon_action)
         self.sec_geo.content_layout.addWidget(self.btn_auto_moon)
         layout.addWidget(self.sec_geo)
@@ -222,8 +250,9 @@ class EclipseProcessorApp(QMainWindow):
         mode_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
         self.combo_pre_mode = QComboBox()
         self.combo_pre_mode.addItems(["Asinh (Smooth Shadows)", "Logarithmic: ln(1 + Kx)"])
-        self.combo_pre_mode.setToolTip("Asinh preserves darker background; Logarithmic aggressively compresses dynamic range up to 10^6")
+        self.combo_pre_mode.setToolTip("Choose optional Asinh or logarithmic compression before noise reduction and enhancement. This changes filter input and is separate from the final display stretch.")
         self.combo_pre_mode.currentIndexChanged.connect(self._on_pre_stretch_mode_changed)
+        mode_lbl.setToolTip(self.combo_pre_mode.toolTip())
         mode_row.addWidget(mode_lbl)
         mode_row.addWidget(self.combo_pre_mode)
         self.sec_pre_stretch.content_layout.addLayout(mode_row)
@@ -231,7 +260,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_pre_stretch, self.lbl_pre_stretch = create_slider(
             "Factor (Asinh / Log Exp)", 1, 100, 10, self.sec_pre_stretch.content_layout,
             on_release_callback=self.dispatch_pipeline_request_if_auto,
-            tooltip="Compression intensity factor (Asinh: 1–100 | Log: 10^0.0 to 10^6.0 exponent)"
+            tooltip="Asinh uses the displayed factor (1–100). Log uses K = 10^(value/10), from 1 to 10^6. Applied only when this stage is active."
         )
         self.sec_pre_stretch.toggled_active.connect(self.on_filter_toggled)
         layout.addWidget(self.sec_pre_stretch)
@@ -241,12 +270,12 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_noise_gate_str, _ = create_slider(
             "Gate Strength (%)", 0, 100, 10, self.sec_noise_gate.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_noise_gate, self.sl_noise_gate_str),
-            tooltip="Noise suppression strength in outer corona (Recommended: 50–70% for noisy images)"
+            tooltip="Blend the radial low-SNR attenuation with the input: 0 bypasses it; 100 applies the full gate. Check faint structures before increasing strength."
         )
         self.sl_noise_gate_thr, _ = create_slider(
             "SNR Threshold (×100)", 1, 50, 10, self.sec_noise_gate.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_noise_gate, self.sl_noise_gate_str),
-            tooltip="Signal-to-noise ratio threshold (Recommended: 15–25 for outer corona, higher = more aggressive)"
+            tooltip="Base SNR threshold = value/100, multiplied by (1 + 2r/R) at each pixel. Higher values attenuate more low-SNR signal; this is a local contrast estimate, not calibrated detector SNR."
         )
         self.sec_noise_gate.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_noise_gate_str))
         denoising_group.addWidget(self.sec_noise_gate)
@@ -255,17 +284,17 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_bilateral_str, _ = create_slider(
             "Strength (%)", 0, 100, 10, self.sec_bilateral.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_bilateral, self.sl_bilateral_str),
-            tooltip="Denoising strength (Recommended: 40–60% for smooth noise reduction without posterization)"
+            tooltip="Blend gradient-weighted Gaussian smoothing with the input: 0 bypasses it; 100 applies the full smoothing result."
         )
         self.sl_bilateral_d, _ = create_slider(
             "Blur Radius (×10)", 3, 50, 5, self.sec_bilateral.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_bilateral, self.sl_bilateral_str),
-            tooltip="Gaussian blur radius in pixels (Recommended: 5–8 for 0.5–0.8 px, higher = more smoothing)"
+            tooltip="Gaussian sigma = max(0.5, value/10) in preview pixels, scaled for full-resolution export. Higher values smooth a wider area."
         )
         self.sl_bilateral_ss, _ = create_slider(
             "Edge Sensitivity (×100)", 5, 100, 50, self.sec_bilateral.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_bilateral, self.sl_bilateral_str),
-            tooltip="Edge preservation strength (Recommended: 40–60, higher = preserve more filament edges, lower = more aggressive smoothing)"
+            tooltip="Reduce smoothing near strong intensity gradients. Higher values preserve edges more strongly; the displayed sensitivity is divided by 100."
         )
         self.sec_bilateral.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_bilateral_str))
         denoising_group.addWidget(self.sec_bilateral)
@@ -280,7 +309,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_ord, _ = create_slider(
             "Fourier Order", 1, 50, 6, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
-            tooltip="Maximum azimuthal Fourier harmonics to retain for fine filament detail"
+            tooltip="Highest angular Fourier harmonic in the annular brightness and spread models. Higher orders follow finer angular variations; they do not guarantee additional real detail."
         )
         self.sl_fnrgf_seg, _ = create_dyadic_slider(
             "Angular Segments", 4, 8, 4, self.sec_fnrgf.content_layout,
@@ -290,7 +319,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_cut, _ = create_slider(
             "Coefficients to Remove", 0, 7, 0, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
-            tooltip="Number of final Fourier coefficients set to zero, as in sunkit-image"
+            tooltip="Remove this many highest-order model coefficients. Zero retains them all; the maximum is Fourier order + 1."
         )
         def sync_fnrgf_limits(_=None):
             order = self.sl_fnrgf_ord.value()
@@ -309,15 +338,15 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_rmax, _ = create_slider(
             "Outer Radius R_max (×10)", 15, 60, 30, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
-            tooltip="Outer boundary in tenths of solar radius; maximum is half the image diagonal divided by the lunar radius"
+            tooltip="Outer boundary = value/10 disk radii. The load-time upper limit is estimated from half the image diagonal; verify coverage when the disk is off-center."
         )
         self.sl_fnrgf_rmax.setMinimum(self.sl_fnrgf_rad.value() + 1)
         self.sl_fnrgf_rad.valueChanged.connect(
             lambda value: self.sl_fnrgf_rmax.setMinimum(value + 1))
-        self.sl_fnrgf_nbins, _ = create_slider(
-            "Radial Bin Count", 1, 2000, 80, self.sec_fnrgf.content_layout,
+        self.sl_fnrgf_bin_px, _ = create_slider(
+            "Ring Width (pixels)", 1, 32, 4, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
-            tooltip="Preview radial bins; defaults to approximately 4-pixel rings. Export increases the count with image resolution."
+            tooltip="Ring width in pixels at each processing resolution (default 4). Export increases the ring count to retain this width. For logarithmic spacing this is the inner-ring width; outer rings are wider."
         )
 
         w_row = QHBoxLayout()
@@ -325,8 +354,9 @@ class EclipseProcessorApp(QMainWindow):
         w_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
         self.combo_fnrgf_width = QComboBox()
         self.combo_fnrgf_width.addItems(["Standard Deviation (STD)", "Median Absolute Deviation (MAD)"])
-        self.combo_fnrgf_width.setToolTip("STD = original, MAD = robust to cosmic rays and sharp artifacts (Recommended: MAD)")
+        self.combo_fnrgf_width.setToolTip("Estimate sector spread using standard deviation or 1.4826 times median absolute deviation. MAD makes the spread less sensitive to outliers; the brightness model still uses sector means.")
         self.combo_fnrgf_width.currentIndexChanged.connect(lambda _: self.dispatch_pipeline_request_if_auto())
+        w_lbl.setToolTip(self.combo_fnrgf_width.toolTip())
         w_row.addWidget(w_lbl)
         w_row.addWidget(self.combo_fnrgf_width)
         self.sec_fnrgf.content_layout.addLayout(w_row)
@@ -336,8 +366,9 @@ class EclipseProcessorApp(QMainWindow):
         b_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
         self.combo_fnrgf_binning = QComboBox()
         self.combo_fnrgf_binning.addItems(["Linear", "Log-spaced (Corona Optimized)"])
-        self.combo_fnrgf_binning.setToolTip("Log-spaced = optimal for solar corona inverse-square intensity falloff (Recommended: Log-spaced)")
+        self.combo_fnrgf_binning.setToolTip("Linear bins have equal radial widths. Log-spaced bins are finer near the inner boundary and wider farther out.")
         self.combo_fnrgf_binning.currentIndexChanged.connect(lambda _: self.dispatch_pipeline_request_if_auto())
+        b_lbl.setToolTip(self.combo_fnrgf_binning.toolTip())
         b_row.addWidget(b_lbl)
         b_row.addWidget(self.combo_fnrgf_binning)
         self.sec_fnrgf.content_layout.addLayout(b_row)
@@ -345,7 +376,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_mask, _ = create_slider(
             "Apply Mask (%)", 0, 100, 0, self.sec_fnrgf.content_layout,
             on_release_callback=self.dispatch_pipeline_request_if_auto,
-            tooltip="Optional original-image blend confined to 0.95–1.05 solar radii"
+            tooltip="Protect the original input near r/R = 1 with a triangular band from 0.95 to 1.05. Zero disables protection; 100 removes FNRGF at the band center. This is not the missing-data mask."
         )
         self.sec_fnrgf.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_fnrgf_str))
         radial_group.addWidget(self.sec_fnrgf)
@@ -370,7 +401,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_mgn_h, _ = create_slider(
             "Global Weight h (×100)", 0, 100, 70, self.sec_mgn.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn, self.sl_mgn_str),
-            tooltip="Global blending weight for multi-scale combination"
+            tooltip="Global gamma-image weight = value/100. At 0, use local multiscale normalization; at 100, use the global gamma image. Filter Strength is applied separately."
         )
         self.sl_mgn_trunc, _ = create_slider(
             "Kernel Truncation (Sigmas)", 1, 6, 3, self.sec_mgn.content_layout,
@@ -389,7 +420,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_wow_scales, _ = create_slider(
             "Wavelet Scales (0 = Auto)", 0, 10, 0, self.sec_wow.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow, self.sl_wow_str),
-            tooltip="0 selects the maximum compatible with image dimensions; larger requests are capped"
+            tooltip="0 selects the preview maximum. Export adjusts the count to the nearest power-of-two spatial scale, capped by image dimensions."
         )
         self.sl_wow_denoise = []
         for scale in range(3):
@@ -397,11 +428,12 @@ class EclipseProcessorApp(QMainWindow):
                 f"Denoise Scale {scale+1} (sigma)", 0, 10, 0,
                 self.sec_wow.content_layout,
                 on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow, self.sl_wow_str),
-                tooltip="0 disables denoising at this scale; noise is estimated from current input"
+                tooltip="Noise-significance threshold for this preview wavelet scale; export shifts thresholds with the spatial bands. Zero disables thresholding; higher values suppress more weak detail. Noise is estimated from the current input, with approximate thresholds on masked inputs."
             )
             self.sl_wow_denoise.append(slider)
         self.combo_wow_bilateral = QComboBox()
         self.combo_wow_bilateral.addItems(["Standard WOW", "Edge-aware WOW (bilateral = 1)"])
+        self.combo_wow_bilateral.setToolTip("Choose standard or edge-aware wavelet averaging. Masked images use the observed-support starlet variant recorded in the export recipe.")
         self.combo_wow_bilateral.setCurrentIndex(1)
         self.combo_wow_bilateral.currentIndexChanged.connect(self.dispatch_pipeline_request_if_auto)
         self.sec_wow.content_layout.addWidget(self.combo_wow_bilateral)
@@ -413,7 +445,7 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_rhef_mode = QComboBox()
         self.combo_rhef_mode.addItem("Legacy / compatible", "legacy")
         self.combo_rhef_mode.addItem("Continuous global", "continuous")
-        self.combo_rhef_mode.setToolTip("Continuous radial quantiles reduce ring boundaries; nonpositive or sparse samples preserve the input")
+        self.combo_rhef_mode.setToolTip("Legacy ranks samples independently within rings. Continuous global interpolates positive log-intensity quantiles across populated neighboring rings; nonpositive and sparse samples retain their input values.")
         self.combo_rhef_mode.currentIndexChanged.connect(lambda _: self.dispatch_pipeline_request_if_auto())
         self.sec_rhef.content_layout.addWidget(self.combo_rhef_mode)
         self.sl_rhef_str, _ = create_slider(
@@ -429,7 +461,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_rhef_upsilon, _ = create_slider(
             "Upsilon Parameter (×100)", 1, 100, 35, self.sec_rhef.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_rhef, self.sl_rhef_str),
-            tooltip="Double-sided upsilon exponent (0.01–1.00); 1 leaves ranks unchanged"
+            tooltip="Exponent = value/100, applied to both rank-distribution tails. Values below 1 compress the tails toward mid-grey; 100 leaves the rank curve unchanged."
         )
         self.sl_rhef_bin, _ = create_slider(
             "Ring Width (×10 preview px)", 5, 100, 10, self.sec_rhef.content_layout,
@@ -449,12 +481,12 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_usm_radius, _ = create_slider(
             "Blur Radius (×10)", 5, 200, 10, self.sec_usm.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_usm, self.sl_usm_str),
-            tooltip="Radius of blur for high-pass extraction (0.5–20 px)"
+            tooltip="Gaussian sigma = value/10 in preview pixels (0.5–20), scaled for full-resolution export. The high-pass residual is input minus this blur."
         )
         self.sl_usm_amount, _ = create_slider(
             "Sharpening Amount (×10)", 5, 50, 20, self.sec_usm.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_usm, self.sl_usm_str),
-            tooltip="Amplification factor for high-pass component (0.5–5.0×)"
+            tooltip="High-pass multiplier = value/10 (0.5–5). Strength blends the sharpened result with the input separately."
         )
         self.sec_usm.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_usm_str))
         sharpening_group.addWidget(self.sec_usm)
@@ -468,12 +500,12 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_achf_kernel, _ = create_slider(
             "Support Radius (×10)", 5, 200, 20, self.sec_achf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf, self.sl_achf_str),
-            tooltip="Circular support radius in tenths of pixels; large radii are expensive"
+            tooltip="Circular kernel radius = value/10 in preview pixels, scaled for full-resolution export. Larger supports increase processing cost."
         )
         self.sl_achf_boost, _ = create_slider(
             "Contrast Gain (×10)", 10, 50, 20, self.sec_achf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf, self.sl_achf_str),
-            tooltip="High-pass amplification factor for filament microcontrast (1.0–5.0×)"
+            tooltip="Signed high-pass gain = value/10 (1–5). Background Retention controls the input component; Strength controls the final blend."
         )
         self.sl_achf_threshold, _ = create_slider(
             "Intensity Threshold (%)", 0, 100, 10, self.sec_achf.content_layout,
@@ -483,7 +515,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_achf_background, _ = create_slider(
             "Background Retention (%)", 0, 99, 10, self.sec_achf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf, self.sl_achf_str),
-            tooltip="Low-frequency retention at full strength; display stretch is applied separately"
+            tooltip="Input-image coefficient at full ACHF strength = value/100. The Photoshop ACHF detail layer removes this base component before normalization."
         )
         self.sec_achf.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_achf_str))
         sharpening_group.addWidget(self.sec_achf)
@@ -511,8 +543,9 @@ class EclipseProcessorApp(QMainWindow):
         mode_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
         self.combo_stretch_mode = QComboBox()
         self.combo_stretch_mode.addItems(["Asinh (Smooth)", "Logarithmic: ln(1 + Kx)", "GHS (Hyperbolic Precision)"])
-        self.combo_stretch_mode.setToolTip("Select final display curve: Smooth Asinh, fast outer corona Logarithmic, or professional GHS")
+        self.combo_stretch_mode.setToolTip("Choose Asinh, logarithmic or GHS presentation stretching after filtering. Applied to the monochrome preview and final export, and to the Photoshop base, not its neutral-grey detail layers.")
         self.combo_stretch_mode.currentIndexChanged.connect(self._on_stretch_mode_changed)
+        mode_lbl.setToolTip(self.combo_stretch_mode.toolTip())
         mode_row.addWidget(mode_lbl)
         mode_row.addWidget(self.combo_stretch_mode)
         self.sec_stretch.content_layout.addLayout(mode_row)
@@ -520,7 +553,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_stretch, self.lbl_stretch = create_slider(
             "Stretch Intensity", 1, 100, 10, self.sec_stretch.content_layout, connect_pipeline=False,
             on_release_callback=self.render_matrix_to_screen,
-            tooltip="Stretch compression intensity factor"
+            tooltip="Asinh and GHS use the displayed intensity. Log uses K = 10^(value/10). This changes presentation stretching, not the numerical filter input."
         )
 
         self.ghs_container = QWidget()
@@ -533,6 +566,7 @@ class EclipseProcessorApp(QMainWindow):
         sp_title.setToolTip("Brightness level where maximum contrast enhancement occurs (typically shadow region)")
         sp_header.addWidget(sp_title)
         self.lbl_ghs_sp = QLabel("0.050")
+        self.lbl_ghs_sp.setToolTip("GHS symmetry point in normalized processed intensity, from 0 to 0.5. Set it with the slider or shadow picker.")
         self.lbl_ghs_sp.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.lbl_ghs_sp.setStyleSheet("color: #e5a00d; font-size: 11px; font-weight: bold;")
         sp_header.addStretch()
@@ -549,7 +583,7 @@ class EclipseProcessorApp(QMainWindow):
 
         self.btn_pick_sp = QPushButton("🎯 Set SP by Shadow Click")
         self.btn_pick_sp.setCheckable(True)
-        self.btn_pick_sp.setToolTip("Click on shadow areas of the corona to automatically set the symmetry point")
+        self.btn_pick_sp.setToolTip("Enable the picker, then click the preview to sample normalized processed intensity before display stretching. The symmetry point is limited to 0–0.5.")
         self.btn_pick_sp.setStyleSheet("""
             QPushButton {
                 background-color: #3c3c3c;
@@ -579,13 +613,13 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_ghs_b, _ = create_slider_float(
             "Highlight Protection (b)", 0, 100, 20, 10.0, ghs_layout,
             on_release_callback=self.render_matrix_to_screen,
-            tooltip="Slope reduction for bright areas to prevent blown-out highlights"
+            tooltip="GHS highlight-protection parameter b, shown directly from 0 to 10. Higher values compress intensity differences above the symmetry point."
         )
 
         self.sl_ghs_bp, _ = create_slider_float(
             "Black Point (BP Shadows)", 0, 100, 0, 1000.0, ghs_layout,
             on_release_callback=self.render_matrix_to_screen,
-            tooltip="Darkest level to preserve (clips darker values to black)"
+            tooltip="Black point in normalized intensity. Values below it are clipped for display; the effective black point is limited to below the GHS symmetry point."
         )
 
         self.sec_stretch.content_layout.addWidget(self.ghs_container)
@@ -595,7 +629,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_blend, _ = create_slider(
             "Reveal Opacity (%)", 0, 100, 100, stretch_group, connect_pipeline=False,
             on_release_callback=self.render_matrix_to_screen,
-            tooltip="Opacity of processed result over original image (0=full original, 100=full processed)"
+            tooltip="Mix the stretched processed and original images: 0 shows the original; 100 shows the processed result. Also scales the recommended Photoshop detail-layer opacities, which are capped at 35% before Reveal is applied."
         )
 
         layout.addSpacing(8)
@@ -603,26 +637,68 @@ class EclipseProcessorApp(QMainWindow):
         self.chk_export_layers = QCheckBox("Also export independent Photoshop layers")
         self.chk_export_layers.setChecked(True)
         self.chk_export_layers.setStyleSheet("QCheckBox { color: #dddddd; font-size: 11px; }")
-        self.chk_export_layers.setToolTip("Exports the loaded source, prepared input, stretched base, active filters and a separate PS composite with a recipe")
+        self.chk_export_layers.setToolTip("Export a Photoshop package with a stretched base, independent active nonzero filter layers, optional RGB Color layer, import script and recipe. Its composite differs from the sequential pipeline final.")
         layout.addWidget(self.chk_export_layers)
         self.chk_export_linear = QCheckBox("Also export linear images")
         self.chk_export_linear.setStyleSheet("QCheckBox { color: #dddddd; font-size: 11px; }")
         self.chk_export_linear.setToolTip("Save input RGB and luminance as float32 without filters or stretching. An already stretched image is not converted to linear.")
         layout.addWidget(self.chk_export_linear)
         self.combo_input_state = QComboBox()
-        self.combo_input_state.setStyleSheet("QComboBox { color: #dddddd; background: #333333; }")
+        # Use a Qt list rather than the native macOS popup, whose light item
+        # background can conflict with our inherited dark-theme text colours.
+        self.combo_input_state.setStyleSheet("""
+            QComboBox {
+                combobox-popup: 0;
+                color: #eeeeee;
+                background-color: #333333;
+                border: 1px solid #555555;
+                border-radius: 3px;
+                padding: 5px 8px;
+            }
+        """)
+        input_view = QListView(self.combo_input_state)
+        input_view.setItemDelegate(QStyledItemDelegate(input_view))
+        input_view.setUniformItemSizes(True)
+        input_view.setStyleSheet("""
+            QListView {
+                background-color: #282828;
+                color: #eeeeee;
+                border: 1px solid #606060;
+                border-radius: 0;
+                outline: 0;
+                selection-background-color: #086eae;
+                selection-color: #ffffff;
+            }
+            QListView::item {
+                background-color: #282828;
+                color: #eeeeee;
+                padding: 7px 10px;
+                border: none;
+            }
+            QListView::item:selected, QListView::item:hover {
+                background-color: #086eae;
+                color: #ffffff;
+            }
+        """)
+        input_view.viewport().setStyleSheet("background-color: #282828; border-radius: 0;")
+        self.combo_input_state.setView(input_view)
         self.combo_input_state.addItem("Input: linearity unspecified", "unknown")
         self.combo_input_state.addItem("Input: linear", "linear")
         self.combo_input_state.addItem("Input: already stretched / nonlinear", "nonlinear")
-        self.combo_input_state.setToolTip("Only input declared linear is labelled LINEAR; other inputs are saved as INPUT without changing their values.")
+        self.combo_input_state.setToolTip("Declare input linearity for source-file labels and color-calibration availability. LINEAR requires a declared linear input; otherwise sources use INPUT. This does not undo or bypass stretching.")
         self.combo_input_state.setVisible(False)
-        self.chk_calibrate_colour = QCheckBox("Calibrate color")
+        self.chk_calibrate_colour = FullRowCheckBox("Calibrate color")
         self.chk_calibrate_colour.setStyleSheet("QCheckBox { color: #dddddd; font-size: 11px; }")
         self.chk_calibrate_colour.setToolTip("Requires linear RGB. Assumes a neutral background and corona: subtracts P1 and balances P99 minus P1. This is not photometric or ICC calibration. Applies only when exporting color images; the screen preview stays monochrome. Preserves the original sources.")
         self.chk_calibrate_colour.setEnabled(False)
         self.chk_calibrate_colour.toggled.connect(self.on_colour_changed)
         self.combo_input_state.currentIndexChanged.connect(self.on_input_state_changed)
         layout.addWidget(self.chk_calibrate_colour)
+        self.lbl_colour_hint = QLabel("Color calibration requires an RGB image.")
+        self.lbl_colour_hint.setToolTip("Color calibration is available only for RGB input explicitly declared linear. It is calculated on export and does not change the monochrome preview.")
+        self.lbl_colour_hint.setWordWrap(True)
+        self.lbl_colour_hint.setStyleSheet("color: #aaaaaa; font-size: 10px;")
+        layout.addWidget(self.lbl_colour_hint)
         self.chk_export_linear.toggled.connect(lambda _: self.combo_input_state.setVisible(self.chk_export_linear.isChecked() or self.full_source_rgb is not None))
         layout.addWidget(self.combo_input_state)
         self.btn_export = QPushButton("💾 Export Final Image")
@@ -644,7 +720,7 @@ class EclipseProcessorApp(QMainWindow):
                 background-color: #0a58ca;
             }
         """)
-        self.btn_export.setToolTip("Save the full-resolution final with display stretch and Reveal opacity; optionally export independent Photoshop layers")
+        self.btn_export.setToolTip("Save the full-resolution final TIFF with presentation stretch and Reveal blend, plus a matching JPEG preview. Color and optional calibration are applied only on export; checked options add separate source/layer packages.")
         self.btn_export.clicked.connect(self.export_image_action)
         layout.addWidget(self.btn_export)
 
@@ -675,7 +751,8 @@ class EclipseProcessorApp(QMainWindow):
             self.sl_stretch.setValue(10)
             self.lbl_stretch.setText("10")
             self.status_label.setText("Status: Asinh Mode Active")
-            self.status_label.setStyleSheet("color: #9cdcfe; font-weight: bold;")
+            self.status_label.setToolTip("Processing, pending changes and export status. Pipeline Ready means the latest requested preview has completed.")
+        self.status_label.setStyleSheet("color: #9cdcfe; font-weight: bold;")
 
         self.render_matrix_to_screen()
 
@@ -704,6 +781,10 @@ class EclipseProcessorApp(QMainWindow):
     def on_input_state_changed(self, *_):
         allowed = self.full_source_rgb is not None and self.combo_input_state.currentData() == "linear"
         self.chk_calibrate_colour.setEnabled(allowed)
+        self.lbl_colour_hint.setText(
+            "Color calibration requires an RGB image." if self.full_source_rgb is None else
+            "Color calibration is applied on export only." if allowed else
+            "Select 'Input: linear' below to enable color calibration.")
         if not allowed:
             self.chk_calibrate_colour.setChecked(False)
 
@@ -799,6 +880,7 @@ class EclipseProcessorApp(QMainWindow):
         self.auto_calculate = checked
         self.recalculation_timer.stop()
         self.has_pending_request = False
+        self._pending_manual = False
         self.btn_auto_calc.setText("Auto Calculate" if checked else "Man Calc")
         self.btn_recalc.setVisible(not checked)
         self.status_label.setText("Status: Auto Calculate" if checked else "Status: Manual Calculate")
@@ -815,38 +897,39 @@ class EclipseProcessorApp(QMainWindow):
             self.dispatch_pipeline_request_if_auto()
 
     def dispatch_pipeline_request_if_auto(self):
-        """Debounce edits, including edits made while a filter is running."""
+        """Record edits immediately, dispatch only after the user pauses."""
+        self._preview_revision += 1
         if self.auto_calculate and self.raw_image is not None:
-            self.has_pending_request = False
+            self.has_pending_request = True
             self.recalculation_timer.start()
 
     def dispatch_pipeline_request(self):
-        """Dispatch a new filter pipeline execution."""
+        """Run the latest complete recipe; snapshot errors never lock the worker."""
         self.recalculation_timer.stop()
         if self.raw_image is None or self.full_raw_image is None:
             return
-
         if self.is_processing:
             self.has_pending_request = True
+            self._pending_manual = not self.auto_calculate
             return
-
+        self.has_pending_request = False
+        self._pending_manual = False
         try:
-            sx_full = int(self.txt_x.text())
-            sy_full = int(self.txt_y.text())
-            sr_full = int(self.txt_r.text())
-        except ValueError:
+            params = self.collect_filter_parameters(self.raw_image.shape[:2])
+            if not np.isfinite([params['sx'], params['sy'], params['sr']]).all() or params['sr'] <= 0:
+                raise ValueError("Sun center must be finite and radius must be positive")
+        except (ValueError, TypeError, OverflowError) as error:
+            self.status_label.setText(f"Status: Invalid parameters — {error}")
+            self.status_label.setStyleSheet("color: #ff3333; font-weight: bold;")
             return
-
         if self.btn_compare.isChecked():
             self.btn_compare.setChecked(False)
             self.show_original_mode = False
-
+        self._running_revision = self._preview_revision
+        self._running_image = self.raw_image
         self.is_processing = True
-        self.has_pending_request = False
         self.status_label.setText("Status: Processing Filters...")
         self.status_label.setStyleSheet("color: #e5a00d; font-weight: bold;")
-
-        params = self.collect_filter_parameters(self.raw_image.shape[:2])
         self.request_processing_signal.emit(self.raw_image, params)
 
     def collect_filter_parameters(self, target_shape):
@@ -873,7 +956,7 @@ class EclipseProcessorApp(QMainWindow):
             "fnrgf_cut": self.sl_fnrgf_cut.value(),
             "fnrgf_rad": self.sl_fnrgf_rad.value(),
             "fnrgf_rmax": self.sl_fnrgf_rmax.value(),
-            "fnrgf_nbins": self.sl_fnrgf_nbins.value(),
+            "fnrgf_bin_px": self.sl_fnrgf_bin_px.value(),
             "fnrgf_width_func": "mad" if self.combo_fnrgf_width.currentIndex() == 1 else "std",
             "fnrgf_radial_binning": "log" if self.combo_fnrgf_binning.currentIndex() == 1 else "linear",
             "fnrgf_apply_mask": self.sl_fnrgf_mask.value(),
@@ -914,25 +997,40 @@ class EclipseProcessorApp(QMainWindow):
         params["valid_mask"] = np.isfinite(data)
         return params
 
+    def _dispatch_pending_preview(self):
+        # An edit restarted the debounce timer: don't execute early or lose it.
+        if self.recalculation_timer.isActive():
+            return
+        if self.has_pending_request and (self.auto_calculate or self._pending_manual):
+            self.dispatch_pipeline_request()
+
     def on_processing_failed(self, message: str):
         self.is_processing = False
+        self._running_revision = None
+        self._running_image = None
         self.status_label.setText(f"Status: Processing failed — {message}")
         self.status_label.setStyleSheet("color: #ff3333; font-weight: bold;")
-        if self.has_pending_request:
-            self.has_pending_request = False
-            self.dispatch_pipeline_request()
+        self._dispatch_pending_preview()
 
     def on_processing_finished(self, output_matrix: np.ndarray):
-        """Handle filter pipeline completion."""
-        self.processed_image = output_matrix
+        """Never publish an obsolete image or recipe as the finished preview."""
+        current = (self._running_revision is None or
+                   (self._running_revision == self._preview_revision
+                    and self._running_image is self.raw_image))
         self.is_processing = False
-        self.status_label.setText("Status: Pipeline Ready")
-        self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
-        self.render_matrix_to_screen()
-
-        if self.has_pending_request:
-            self.has_pending_request = False
-            self.dispatch_pipeline_request()
+        self._running_revision = None
+        self._running_image = None
+        if current and not self.recalculation_timer.isActive():
+            self.processed_image = output_matrix
+            self.status_label.setText("Status: Pipeline Ready")
+            self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
+            self.render_matrix_to_screen()
+        else:
+            self.status_label.setText("Status: Updated settings pending..." if
+                                      (self.auto_calculate or self._pending_manual) else
+                                      "Status: Settings changed — recalculate")
+            self.status_label.setStyleSheet("color: #e5a00d; font-weight: bold;")
+        self._dispatch_pending_preview()
 
     def apply_recommended_parameters_to_gui(self, r_full: float, w_full: int, h_full: int):
         """Auto-populate sliders based on image resolution."""
@@ -952,14 +1050,12 @@ class EclipseProcessorApp(QMainWindow):
         rmax_slider = int(np.ceil(10 * np.hypot(w_full, h_full) / (2 * r_full)))
         self.sl_fnrgf_rmax.setMaximum(max(self.sl_fnrgf_rmax.minimum(), rmax_slider))
         rec_fnrgf_rmax = self.sl_fnrgf_rmax.maximum() / 10.0
-        preview_ratio = (self.raw_image.shape[0] / float(h_full)
-                         if self.raw_image is not None else 1.0)
         rec_fnrgf_nbins = recommended_radial_bins(
-            self.sl_fnrgf_rad.value() / 10.0 * r_full * preview_ratio,
-            rec_fnrgf_rmax * r_full * preview_ratio,
+            self.sl_fnrgf_rad.value() / 10.0 * r_full,
+            rec_fnrgf_rmax * r_full,
             logarithmic=self.combo_fnrgf_binning.currentIndex() == 1,
+            width_px=4,
         )
-        self.sl_fnrgf_nbins.setMaximum(max(2000, rec_fnrgf_nbins))
         rec_wow_scales = int(np.clip(np.log2(r_full / 8.0), 3, 8))
 
         print(f"\n{'='*80}")
@@ -983,7 +1079,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_bilateral_d.setValue(int(round(rec_bilateral_px * 10.0)))
         self.sl_fnrgf_ord.setValue(rec_fnrgf_ord)
         self.sl_fnrgf_seg.setValue((2 * rec_fnrgf_ord).bit_length())
-        self.sl_fnrgf_nbins.setValue(rec_fnrgf_nbins)
+        self.sl_fnrgf_bin_px.setValue(4)
         self.sl_fnrgf_rmax.setValue(int(round(rec_fnrgf_rmax * 10.0)))
         self.sl_wow_scales.setValue(0)  # automatic, dimension-dependent scales
         self.sl_usm_radius.setValue(int(round(rec_usm_radius_px * 10.0)))
@@ -1008,7 +1104,11 @@ class EclipseProcessorApp(QMainWindow):
         self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
 
     def detect_lunar_limb(self, raw_img: np.ndarray) -> Tuple[int, int, int]:
-        """Detect lunar disk center and radius using Hough Circle Transform."""
+        """Estimate a circular data boundary or a contrast-normalized lunar limb.
+
+        The robust stretch below is a detection-only working image: it never
+        modifies the linear source, filter input or display stretch settings.
+        """
         if raw_img is None:
             return 0, 0, 100
 
@@ -1047,8 +1147,18 @@ class EclipseProcessorApp(QMainWindow):
                     print("Lunar geometry estimated from circular missing-data boundary; check radius against the original limb")
                     return int(round(center[0])), int(round(center[1])), int(round(radius))
         clean_img = np.nan_to_num(img_gray, nan=0.0, posinf=0.0, neginf=0.0)
-        # Keep the full-resolution limb in floating point for subpixel sampling.
-        norm = cv2.normalize(clean_img.astype(np.float32), None, 0, 255, cv2.NORM_MINMAX)
+        # A saturated star or prominence can dominate min/max scaling and leave
+        # the actual limb below Hough's edge threshold. Ignore extreme tails and
+        # compress the detection image before quantizing it to eight bits.
+        observed = clean_img[np.isfinite(img_gray)]
+        if not observed.size:
+            return w // 2, h // 2, min(w, h) // 4
+        lower, upper = np.percentile(observed, [1, 99.8])
+        if upper <= lower:
+            return w // 2, h // 2, min(w, h) // 4
+        contrast = np.clip((clean_img.astype(np.float64)-lower)/(upper-lower), 0, 1)
+        # Retain floating-point samples for full-resolution radial refinement.
+        norm = (255*np.arcsinh(10*contrast)/np.arcsinh(10)).astype(np.float32)
 
         scale = min(1.0, 800.0 / max(h, w))
         sw, sh = max(1, int(w * scale)), max(1, int(h * scale))
@@ -1219,6 +1329,7 @@ class EclipseProcessorApp(QMainWindow):
             self.apply_recommended_parameters_to_gui(r_full, w_full, h_full)
 
             self.render_matrix_to_screen()
+            self.dispatch_pipeline_request_if_auto()
             missing = np.count_nonzero(~np.isfinite(self.full_raw_image))
             self.status_label.setText(f"Status: Loaded {os.path.basename(file_path)} (X:{cx_full}, Y:{cy_full}, R:{r_full}); {missing} missing pixels")
             self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
@@ -1375,6 +1486,7 @@ class EclipseProcessorApp(QMainWindow):
     def closeEvent(self, event: QCloseEvent):
         """Handle window close."""
         self.recalculation_timer.stop()
+        self.in_window_tooltips.detach()
         if self.persistent_thread is not None and self.persistent_thread.isRunning():
             self.persistent_thread.quit()
             self.persistent_thread.wait()

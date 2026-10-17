@@ -9,7 +9,7 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
 
     Scale X/Y independently using OpenCV's pixel-centre convention. Circular
     radii and kernels use the geometric mean scale for rounded aspect ratios.
-    FNRGF retains the requested native-pixel ring-count scaling on export.
+    FNRGF ring widths are target-image pixels, independent of preview resizing.
     """
     shapes = (full_shape, preview_shape, target_shape)
     if any(len(shape) != 2 or not np.isfinite(shape).all() or min(shape) <= 0 for shape in shapes):
@@ -23,9 +23,34 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
     p["spatial_scale"] = scale
     for key in ("bilateral_d", "usm_radius", "achf_kernel", "rhef_bin_px"):
         if key in p:
-            p[key] *= scale
-    if "fnrgf_nbins" in p:
+            # Apply pixel floors before resizing, preserving the preview footprint.
+            value = max(5.0, p[key]) if key in ("bilateral_d", "usm_radius") else p[key]
+            p[key] = value * scale
+    if "fnrgf_bin_px" in p:
+        from utils.helpers import recommended_radial_bins
+        p["fnrgf_nbins"] = recommended_radial_bins(
+            p.get("fnrgf_rad", 10) / 10.0 * p["sr"],
+            p.get("fnrgf_rmax", 30) / 10.0 * p["sr"],
+            logarithmic=p.get("fnrgf_radial_binning", "linear") == "log",
+            width_px=p["fnrgf_bin_px"],
+        )
+    elif "fnrgf_nbins" in p:
+        # Compatibility with callers supplying the former preview-count control.
         p["fnrgf_nbins"] = max(1, int(round(p["fnrgf_nbins"] * scale)))
+    if "wow_scales" in p or p.get("wow_enabled", False):
+        # Starlet supports are dyadic: choose the nearest available footprint.
+        preview_max = max(1, int(np.round(np.log2(min(preview_shape) / 5.0))))
+        target_max = max(1, int(np.round(np.log2(min(target_shape) / 5.0))))
+        requested = p.get("wow_scales")
+        count = preview_max if requested in (None, 0) else min(int(requested), preview_max)
+        offset = int(np.floor(np.log2(scale) + 0.5))
+        p["wow_scales"] = int(np.clip(count + offset, 1, target_max))
+        levels = list(p.get("wow_denoise", []))
+        if levels:
+            # Keep thresholds attached to the same physical bands. Newly added
+            # fine bands inherit the finest threshold instead of disabling noise control.
+            levels = [levels[0]] * offset + levels if offset >= 0 else levels[-offset:]
+            p["wow_denoise"] = levels[:p["wow_scales"]]
     p["mgn_sigmas"] = tuple(s * scale for s in p.get("mgn_sigmas", (1.25, 2.5, 5, 10, 20, 40)))
     return p
 
@@ -43,6 +68,8 @@ def execute_pipeline(worker, raw_image, params):
     if valid is not None:
         from .image_data import observed_image
         observed, valid = observed_image(raw_image, valid)
+        # Zero is only a finite transport buffer. MaskedWorker excludes these
+        # positions from statistics/support; restore NaN before returning data.
         img = np.where(valid, observed, 0).astype(np.float32)
         if not valid.all():
             from .masked_filters import MaskedWorker
@@ -146,6 +173,7 @@ def execute_pipeline(worker, raw_image, params):
             img, p["achf_str"], p["achf_kernel"], p["achf_boost"], p["sx"], p["sy"], p["sr"],
             intensity_threshold=p.get("achf_threshold", 10),
             background=p.get("achf_background", 10),
+            spatial_scale=p.get("spatial_scale", 1.0),
         )
         print(f"[ACHF] Done in {time.time() - step_start:.3f}s")
 

@@ -3,9 +3,11 @@
 from typing import Optional
 
 import numpy as np
-from PySide6.QtCore import QPoint, Qt, Signal
+from shiboken6 import isValid
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QFrame,
     QHBoxLayout,
@@ -14,7 +16,88 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QVBoxLayout,
     QWidget,
+    QToolTip,
 )
+
+
+class InWindowTooltips(QObject):
+    """Opaque child overlay: no native tooltip window or cross-app overlap."""
+
+    class Panel(QWidget):
+        def paintEvent(self, event):
+            painter = QPainter(self)
+            painter.fillRect(self.rect(), QColor("#151a21"))
+            painter.setPen(QColor("#8796a8"))
+            painter.drawRect(self.rect().adjusted(0, 0, -1, -1))
+
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+        self.panel = self.Panel(window)
+        self.panel.setObjectName("inWindowTooltip")
+        self.panel.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.panel.setAutoFillBackground(False)
+        self.label = QLabel(self.panel)
+        self.label.setTextFormat(Qt.TextFormat.PlainText)
+        self.label.setWordWrap(True)
+        self.label.setStyleSheet("QLabel { color: #f5f7fa; background: transparent; border: none; font-size: 12px; font-weight: normal; }")
+        self.panel.hide()
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.panel.hide)
+        QApplication.instance().installEventFilter(self)
+
+    def show_text(self, widget, position):
+        text = widget.toolTip()
+        if not text:
+            return
+        width = min(420, max(1, self.window.width()-24))
+        self.label.setFixedWidth(max(1, width-22))
+        self.label.setText(text)
+        height = min(self.window.height()-24,
+                     self.label.heightForWidth(self.label.width())+18)
+        self.panel.resize(width, max(24, height))
+        self.label.setGeometry(11, 9, width-22, self.panel.height()-18)
+        point = widget.mapTo(self.window, position)
+        x = min(max(12, point.x()+12), self.window.width()-width-12)
+        y = point.y()+20
+        if y+self.panel.height() > self.window.height()-12:
+            y = point.y()-self.panel.height()-16
+        y = min(max(12, y), self.window.height()-self.panel.height()-12)
+        self.panel.move(x, y)
+        self.panel.raise_()
+        self.panel.show()
+        self.timer.start(10000)
+
+    def detach(self):
+        self.timer.stop()
+        self.panel.hide()
+        QApplication.instance().removeEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if not isValid(self.window) or not isValid(self.panel):
+            return False
+        belongs = isinstance(watched, QWidget) and (watched is self.window or self.window.isAncestorOf(watched))
+        kind = event.type()
+        if kind == QEvent.Type.ToolTip and belongs:
+            QToolTip.hideText()
+            self.show_text(watched, event.pos())
+            event.accept()
+            return True
+        if kind in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress, QEvent.Type.Wheel,
+                    QEvent.Type.Leave, QEvent.Type.ApplicationDeactivate):
+            self.panel.hide()
+        if watched is self.window and kind in (QEvent.Type.Hide, QEvent.Type.Resize,
+                                               QEvent.Type.Move, QEvent.Type.WindowDeactivate):
+            self.panel.hide()
+        return False
+
+
+class FullRowCheckBox(QCheckBox):
+    """Make label and trailing row whitespace one consistent click target."""
+
+    def hitButton(self, position):
+        return self.rect().contains(position)
 
 
 class ClickableLabel(QLabel):
@@ -138,6 +221,7 @@ class CollapsibleSection(QWidget):
         header_layout.setSpacing(6)
 
         self.toggle_btn = QPushButton()
+        self.toggle_btn.setToolTip(f"Expand or collapse {title} controls.")
         self.toggle_btn.setFlat(True)
         self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.toggle_btn.setStyleSheet("""
@@ -160,6 +244,7 @@ class CollapsibleSection(QWidget):
 
         if self.has_checkbox:
             self.chk_active = QCheckBox("Active")
+            self.chk_active.setToolTip(f"Enable or bypass {title} without resetting its controls.")
             self.chk_active.setChecked(is_active)
             self.chk_active.setCursor(Qt.CursorShape.PointingHandCursor)
             self.chk_active.setStyleSheet("""

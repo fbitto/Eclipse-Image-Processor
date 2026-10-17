@@ -1,4 +1,4 @@
-# config.py - Global Configuration & Styling for FiltrosEclipse v0.4.0
+# config.py - Global configuration and styling for Corona Enhance Filters v0.4.0
 
 import os
 
@@ -344,10 +344,14 @@ LIGHTROOM_QSS = '''
     }
     
     QToolTip {
-        background-color: #444444;
-        color: #ffffff;
-        border: 1px solid #0082c9;
-        padding: 2px;
+        background-color: #151a21;
+        color: #f5f7fa;
+        border: 1px solid #8796a8;
+        border-radius: 4px;
+        padding: 7px 10px;
+        font-size: 12px;
+        font-weight: normal;
+        opacity: 255;
     }
     
     QMessageBox QLabel {

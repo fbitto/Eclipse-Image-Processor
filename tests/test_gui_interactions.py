@@ -68,6 +68,123 @@ class GuiInteractionTests(unittest.TestCase):
         np.testing.assert_array_equal(restored, rgb)
         self.assertEqual(report["method"], "none")
 
+    def test_calibration_row_whitespace_toggles_once_per_click(self):
+        self.window.full_source_rgb = np.ones((64, 64, 3), np.float32)
+        self.window.combo_input_state.setCurrentIndex(1)
+        checkbox = self.window.chk_calibrate_colour
+        checkbox.resize(350, 30)
+        self.assertTrue(checkbox.isEnabled())
+        point = QPoint(checkbox.width()-3, checkbox.height()//2)
+        for expected in (True, False, True):
+            QTest.mouseClick(checkbox, Qt.MouseButton.LeftButton, pos=point)
+            self.assertEqual(checkbox.isChecked(), expected)
+
+    def test_invalid_recipe_does_not_leave_pipeline_busy(self):
+        from unittest.mock import patch
+        with patch.object(self.window, "collect_filter_parameters", side_effect=ValueError("invalid control")):
+            self.window.dispatch_pipeline_request()
+        self.assertFalse(self.window.is_processing)
+        self.assertEqual(self.requests, [])
+        self.window.dispatch_pipeline_request()
+        self.assertEqual(len(self.requests), 1)
+
+    def test_edits_during_worker_run_publish_only_the_latest_recipe(self):
+        original = self.window.processed_image.copy()
+        self.window.dispatch_pipeline_request()
+        self.window.txt_x.setText("25")
+        # Debounce expires while worker is still running: queue exactly one run.
+        self.window.recalculation_timer.stop()
+        self.window.dispatch_pipeline_request()
+        self.window.txt_y.setText("26")
+        self.window.on_processing_finished(np.zeros_like(original))
+        np.testing.assert_array_equal(self.window.processed_image, original)
+        self.assertEqual(len(self.requests), 1)
+        QTest.qWait(400)
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual((self.requests[-1]["sx"], self.requests[-1]["sy"]), (25, 26))
+        result = np.full_like(original, 3)
+        self.window.on_processing_finished(result)
+        np.testing.assert_array_equal(self.window.processed_image, result)
+        self.assertFalse(self.window.is_processing)
+
+    def test_manual_recalculate_during_worker_run_is_not_lost(self):
+        self.window.toggle_auto_calc_mode(False)
+        self.window.dispatch_pipeline_request()
+        self.window.txt_x.setText("24")
+        self.window.dispatch_pipeline_request()
+        self.window.on_processing_finished(np.zeros_like(self.window.raw_image))
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(self.requests[-1]["sx"], 24)
+
+    def test_old_image_result_is_ignored_after_loading_another_image(self):
+        self.window.dispatch_pipeline_request()
+        replacement = self.window.raw_image.copy()*7
+        self.window.raw_image = replacement
+        self.window.preview_image = replacement
+        self.window.processed_image = replacement
+        self.window.dispatch_pipeline_request_if_auto()
+        self.window.on_processing_finished(np.zeros_like(replacement))
+        np.testing.assert_array_equal(self.window.processed_image, replacement)
+        QTest.qWait(400)
+        self.assertEqual(len(self.requests), 2)
+
+    def test_real_worker_finishes_with_latest_slider_values(self):
+        from core.filters import FilterWorker
+        from core.pipeline import execute_pipeline
+        image = np.random.default_rng(51).uniform(.1, 1, (128, 160)).astype(np.float32)
+        self.window.raw_image = image
+        self.window.preview_image = image
+        self.window.full_raw_image = image
+        self.window.processed_image = image.copy()
+        self.window.request_processing_signal.connect(self.window.filter_worker.process_pipeline)
+        self.window.sec_mgn.chk_active.setChecked(True)
+        self.window.dispatch_pipeline_request()
+        self.window.sl_mgn_gam.setValue(45)
+        self.window.sl_mgn_str.setValue(27)
+        # Let queued Qt completion and debounce events run, with a bounded wait.
+        import time
+        for _ in range(300):
+            self.application.processEvents()
+            time.sleep(.01)  # Release the GIL so the Python Qt worker can progress.
+            if len(self.requests) >= 2 and not self.window.is_processing and not self.window.recalculation_timer.isActive():
+                break
+        self.assertGreaterEqual(len(self.requests), 2)
+        self.assertFalse(self.window.is_processing)
+        self.assertFalse(self.window.recalculation_timer.isActive())
+        expected = execute_pipeline(FilterWorker(), image, self.window.collect_filter_parameters(image.shape))
+        np.testing.assert_array_equal(self.window.processed_image, expected)
+
+    def test_all_user_controls_have_english_tooltips(self):
+        import re
+        from PySide6.QtWidgets import QWidget, QSlider, QComboBox, QPushButton, QLineEdit, QCheckBox
+        controls = [widget for widget in self.window.findChildren(QWidget)
+                    if isinstance(widget, (QSlider, QComboBox, QPushButton, QLineEdit, QCheckBox))]
+        self.assertGreater(len(controls), 80)
+        for control in controls:
+            with self.subTest(control=control.objectName() or type(control).__name__, text=getattr(control, "text", lambda: "")()):
+                help_text = control.toolTip().strip()
+                self.assertTrue(help_text, "User control has no tooltip")
+                self.assertIsNone(re.search(r"[áéíóúñ¿¡]|\b(entrada|imagen|calibrar|exportar|guardar|filtro|seleccionar)\b", help_text, re.I))
+                self.assertNotIn("tse-tools", help_text)
+
+    def test_tooltip_is_opaque_wrapped_and_contained_in_main_window(self):
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QHelpEvent
+        self.window.show()
+        self.application.processEvents()
+        button = self.window.btn_export
+        point = QPoint(button.width()-2, button.height()-2)
+        help_event = QHelpEvent(QEvent.Type.ToolTip, point, button.mapToGlobal(point))
+        self.application.sendEvent(button, help_event)
+        panel = self.window.in_window_tooltips.panel
+        self.assertTrue(panel.isVisible())
+        self.assertFalse(panel.isWindow())
+        self.assertTrue(self.window.rect().contains(panel.geometry()))
+        self.assertTrue(self.window.in_window_tooltips.label.wordWrap())
+        self.assertEqual(panel.grab().toImage().pixelColor(3, 3).name(), "#151a21")
+        self.application.sendEvent(button, QEvent(QEvent.Type.Leave))
+        self.assertFalse(panel.isVisible())
+
     def test_only_modified_click_requests_recentering(self):
         label = ClickableLabel()
         label.resize(100, 100)

@@ -5,13 +5,15 @@ import sys
 import math
 
 
-def recommended_radial_bins(inner_px: float, outer_px: float, logarithmic=False) -> int:
-    """Choose ~4-pixel rings (at the inner radius for logarithmic spacing)."""
+def recommended_radial_bins(inner_px: float, outer_px: float, logarithmic=False, width_px=4.0) -> int:
+    """Choose rings no wider than width_px (inner ring for log spacing)."""
+    if not math.isfinite(width_px) or width_px <= 0:
+        raise ValueError("Ring width must be positive and finite")
     if not 0 < inner_px < outer_px:
         raise ValueError("Radial bounds must satisfy 0 < inner < outer")
     if logarithmic:
-        return max(1, math.ceil(math.log(outer_px / inner_px) / math.log1p(4 / inner_px)))
-    return max(1, math.ceil((outer_px - inner_px) / 4))
+        return max(1, math.ceil(math.log(outer_px / inner_px) / math.log1p(width_px / inner_px)))
+    return max(1, math.ceil((outer_px - inner_px) / width_px))
 
 
 def resource_path(relative_path: str) -> str:

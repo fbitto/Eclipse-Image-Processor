@@ -261,7 +261,7 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
 
 
 def adaptive_circular_highpass(image, radius, intensity_threshold, gain=2.0,
-                               background=0.1, regions=None):
+                               background=0.1, regions=None, spatial_scale=1.0):
     """Own variable-kernel implementation of Druckmuller et al. (2006), §4.2.
 
     Threshold is absolute in input intensity units. Opposite neighbors are
@@ -273,15 +273,16 @@ def adaptive_circular_highpass(image, radius, intensity_threshold, gain=2.0,
     a = np.asarray(image, dtype=np.float64)
     if a.ndim != 2 or not np.isfinite(a).all():
         raise ValueError("ACHF requires a finite 2D image")
-    if not np.isfinite([radius, intensity_threshold, gain, background]).all():
+    if not np.isfinite([radius, intensity_threshold, gain, background, spatial_scale]).all():
         raise ValueError("ACHF parameters must be finite")
-    if radius <= 0 or intensity_threshold < 0 or gain < 0 or not 0 <= background < 1:
+    if radius <= 0 or spatial_scale <= 0 or intensity_threshold < 0 or gain < 0 or not 0 <= background < 1:
         raise ValueError("Invalid ACHF radius, threshold, gain or background")
     labels = np.zeros(a.shape, dtype=np.uint8) if regions is None else np.asarray(regions)
     if labels.shape != a.shape:
         raise ValueError("Region labels must match image dimensions")
     h, w = a.shape
-    sigma = max(radius / 3.0, 0.25)
+    # The minimum width is defined in preview pixels, just like the support.
+    sigma = max(radius / 3.0, 0.25 * spatial_scale)
     numerator = np.zeros_like(a)
     denominator = np.ones_like(a)  # central Gaussian weight
     # Enumerate one half of the circular support; never wrap image borders.
@@ -596,7 +597,7 @@ class FilterWorker(QObject):
 
     def run_achf(
         self, img, strength, base_kernel_param, boost_param,
-        sun_x, sun_y, sun_r, intensity_threshold=10.0, background=10.0,
+        sun_x, sun_y, sun_r, intensity_threshold=10.0, background=10.0, spatial_scale=1.0,
     ) -> np.ndarray:
         """Adaptive symmetric circular filter; UI threshold/background are percent.
 
@@ -612,7 +613,7 @@ class FilterWorker(QObject):
         filtered = adaptive_circular_highpass(
             a, float(base_kernel_param)/10.0, threshold,
             gain=float(boost_param)/10.0, background=float(background)/100.0,
-            regions=regions,
+            regions=regions, spatial_scale=spatial_scale,
         )
         alpha = float(strength)/100.0
         return ((1-alpha)*a + alpha*filtered).astype(np.float32)

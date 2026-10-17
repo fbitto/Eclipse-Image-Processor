@@ -130,6 +130,7 @@ def create_stepper_input(
     row.setSpacing(3)
 
     btn_minus = QPushButton("−")
+    btn_minus.setToolTip(f"Decrease {label_text.rstrip(':')} by 1. {tooltip or ''}".strip())
     btn_minus.setFixedSize(24, 24)
     btn_minus.setAutoRepeat(True)
     btn_minus.setAutoRepeatInterval(40)
@@ -142,6 +143,7 @@ def create_stepper_input(
         txt.setToolTip(tooltip)
 
     btn_plus = QPushButton("+")
+    btn_plus.setToolTip(f"Increase {label_text.rstrip(':')} by 1. {tooltip or ''}".strip())
     btn_plus.setFixedSize(24, 24)
     btn_plus.setAutoRepeat(True)
     btn_plus.setAutoRepeatInterval(40)

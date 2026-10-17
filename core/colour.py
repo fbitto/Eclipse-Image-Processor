@@ -28,6 +28,8 @@ def neutralize_tse(rgb, white=1.):
     ratios = span/span[1]
     ratios /= ratios.max()
     corrected = (a-background)/ratios
+    # Match the reference shared pedestal shift across all channels. This is
+    # a presentation neutralization; never replace the original linear source.
     minimum = min(float(corrected[valid].min()), 0.)
     corrected = np.where(valid[..., None], np.clip((corrected-minimum)/(1-minimum), 0, 1), np.nan)
     report = dict(method='tse-tools P1/P99 neutralization', reference_revision='14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391',
