@@ -40,4 +40,4 @@ def resize_observed(image, size):
 
 def recipe_parameters(params):
     """Masks are image data, stored separately, never embedded in JSON metadata."""
-    return {k: v for k, v in params.items() if k != 'valid_mask'}
+    return {k: v for k, v in params.items() if k not in ('valid_mask', 'statistics_mask')}

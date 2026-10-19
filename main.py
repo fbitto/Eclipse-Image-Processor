@@ -13,7 +13,7 @@
 # ]
 # ///
 """
-Corona Enhance Filters v0.4.0 - Application entry point
+Corona Enhance Filters v0.5.0 - Application entry point
 Modular structure for token-efficient development.
 """
 

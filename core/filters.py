@@ -1,16 +1,18 @@
 """
 FilterWorker: Native NumPy/SciPy coronal enhancement engine.
 
-Contains all 10 scientific filters:
+Numerical enhancement operators (plus historical USM compatibility):
   - PRE-STRETCH: Asinh & Logarithmic
   - DENOISING: Radial Noise Gate, Bilateral
   - RADIAL: FNRGF, RHEF
   - MULTI-SCALE: MGN, WOW
-  - SHARPENING: USM, ACHF
+  - DETAIL: Tangential angular residual, ACHF; legacy USM API
 """
 
 import os
 import time
+from threading import Event
+from .cancellation import ProcessingCancelled, cancellation_scope, check_cancelled, cancellation_check
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
 
@@ -95,7 +97,9 @@ def mgn_normalize(image, sigma=None, k=0.7, gamma=3.2, h=0.7,
     result = np.zeros_like(data)
     with np.errstate(all="ignore"):
         for scale, weight in zip(scales, scale_weights):
+            check_cancelled()
             residual = data-gaussian_filter(data, scale, truncate=truncate, mode="nearest")
+            check_cancelled()
             deviation = np.sqrt(gaussian_filter(residual**2, scale,
                                                truncate=truncate, mode="nearest"))
             deviation = np.where(deviation == 0, 1.0, deviation)
@@ -155,6 +159,7 @@ def rhef_normalize(image, radii, bin_edges, application_radius=0.0,
     boundaries = np.r_[0, np.flatnonzero(np.diff(bin_ids))+1, indices.size]
     out = np.full(a.size, np.nan)
     for start, stop in zip(boundaries[:-1], boundaries[1:]):
+        check_cancelled()
         target = indices[start:stop]
         if not target.size:
             continue
@@ -223,9 +228,13 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
     offsets = np.r_[0, np.cumsum(counts)]
     out = np.full(flat.shape, np.nan)
 
+    check_bin_cancelled = cancellation_check()
+
     def process_bin(b):
+        check_bin_cancelled()
         means, widths = np.zeros(segments), np.zeros(segments)
         for j in range(segments):
+            check_bin_cancelled()
             key = b*segments+j
             values = flat[pix[offsets[key]:offsets[key+1]]]
             if values.size < min_pixels:
@@ -275,7 +284,7 @@ def adaptive_circular_highpass(image, radius, intensity_threshold, gain=2.0,
         raise ValueError("ACHF requires a finite 2D image")
     if not np.isfinite([radius, intensity_threshold, gain, background, spatial_scale]).all():
         raise ValueError("ACHF parameters must be finite")
-    if radius <= 0 or spatial_scale <= 0 or intensity_threshold < 0 or gain < 0 or not 0 <= background < 1:
+    if radius <= 0 or spatial_scale <= 0 or intensity_threshold < 0 or gain < 0 or not 0 <= background <= 1:
         raise ValueError("Invalid ACHF radius, threshold, gain or background")
     labels = np.zeros(a.shape, dtype=np.uint8) if regions is None else np.asarray(regions)
     if labels.shape != a.shape:
@@ -287,8 +296,10 @@ def adaptive_circular_highpass(image, radius, intensity_threshold, gain=2.0,
     denominator = np.ones_like(a)  # central Gaussian weight
     # Enumerate one half of the circular support; never wrap image borders.
     for dy in range(0, min(int(np.ceil(radius)), (h - 1) // 2) + 1):
+        check_cancelled()
         for dx in range(-min(int(np.ceil(radius)), (w - 1) // 2),
                         min(int(np.ceil(radius)), (w - 1) // 2) + 1):
+            check_cancelled()
             if (dy == 0 and dx <= 0) or dx*dx + dy*dy > radius*radius:
                 continue
             y0, y1, x0, x1 = dy, h-dy, abs(dx), w-abs(dx)
@@ -312,6 +323,19 @@ class FilterWorker(QObject):
 
     finished = Signal(np.ndarray)
     failed = Signal(str)
+    cancelled = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._cancel_event = Event()
+
+    def prepare_job(self):
+        """Called before dispatch, never reset a token from inside a running job."""
+        self._cancel_event = Event()
+
+    def cancel(self):
+        """Thread-safe direct request; a queued Qt slot cannot interrupt a busy slot."""
+        self._cancel_event.set()
 
     @Slot(np.ndarray, dict)
     def process_pipeline(self, raw_image: np.ndarray, params: dict):
@@ -319,7 +343,12 @@ class FilterWorker(QObject):
         try:
             if raw_image is None:
                 raise ValueError("No image supplied")
-            self._process_pipeline(raw_image, params)
+            with cancellation_scope(self._cancel_event):
+                result = self._process_pipeline(raw_image, params)
+            self.finished.emit(result)
+        except ProcessingCancelled:
+            print('[PREVIEW] Cancelled obsolete calculation')
+            self.cancelled.emit()
         except Exception as error:
             import traceback
             traceback.print_exc()
@@ -327,7 +356,7 @@ class FilterWorker(QObject):
 
     def _process_pipeline(self, raw_image: np.ndarray, params: dict):
         from .pipeline import execute_pipeline
-        self.finished.emit(execute_pipeline(self, raw_image, params))
+        return execute_pipeline(self, raw_image, params)
 
     def run_pre_asinh(self, img: np.ndarray, factor: float) -> np.ndarray:
         if factor <= 0:
@@ -349,6 +378,7 @@ class FilterWorker(QObject):
     def run_radial_noise_gate(
         self, img: np.ndarray, strength: float, threshold_param: float,
         sun_x: float, sun_y: float, sun_r: float, spatial_scale=1.0,
+        local_sigma=3., gate_sigma=2.,
     ) -> np.ndarray:
         """Dimensionless SNR gate; spatial_scale preserves export kernel sizes."""
         if strength == 0:
@@ -364,13 +394,13 @@ class FilterWorker(QObject):
         unit = a / magnitude
         y, x = np.indices(a.shape, dtype=float)
         r_map = np.hypot(x - sun_x, y - sun_y) / sun_r
-        local_mean = gaussian_filter(unit, sigma=3.0 * spatial_scale)
-        local_std = np.sqrt(gaussian_filter((unit - local_mean) ** 2, sigma=3.0 * spatial_scale))
+        local_mean = gaussian_filter(unit, sigma=local_sigma * spatial_scale)
+        local_std = np.sqrt(gaussian_filter((unit - local_mean) ** 2, sigma=local_sigma * spatial_scale))
         snr = np.full(a.shape, np.inf)
         np.divide(np.abs(local_mean), local_std, out=snr, where=local_std > 0)
         threshold_map = float(threshold_param) / 100 * (1 + 2 * r_map)
         gate = np.clip((snr - threshold_map) / threshold_map, 0, 1)
-        gate_smooth = gaussian_filter(gate, sigma=2.0 * spatial_scale)
+        gate_smooth = gaussian_filter(gate, sigma=gate_sigma * spatial_scale)
         alpha = float(strength) / 100
         return (a * ((1 - alpha) + alpha * gate_smooth)).astype(np.float32)
 
@@ -404,7 +434,8 @@ class FilterWorker(QObject):
         width_function="std", radial_binning="linear", apply_mask=0,
         min_pixels_per_sector=1, clip_pct=0.0,
         mean_attenuation_range=(1.0, 0.0), std_attenuation_range=(1.0, 0.0),
-        valid=None,
+        valid=None, mode='legacy', radial_smooth=8., ridge=.01,
+        width_floor=.05, robust_iterations=2, boundary_fade=0.,
     ) -> np.ndarray:
         """Fourier Normalizing Radial Gradient Filter plus optional display mix.
 
@@ -435,15 +466,27 @@ class FilterWorker(QObject):
             edges = np.linspace(app_r, outer, int(nbins_val)+1)
         else:
             raise ValueError("Unknown radial binning")
-        filtered = fnrgf_normalize(
-            a, r, theta, edges, order=int(order_fourier),
-            segments=int(angular_segments), cutoff=int(cutoff_val),
-            application_radius=app_r, width_function=width_function,
-            mean_attenuation_range=mean_attenuation_range,
-            std_attenuation_range=std_attenuation_range,
-            min_pixels=min_pixels_per_sector,
-            width_floor_fraction=0.05,
-        )
+        if mode not in ('legacy', 'continuous'):
+            raise ValueError('Unknown FNRGF mode')
+        if mode == 'continuous':
+            from .continuous_fnrgf import continuous_fnrgf
+            filtered = continuous_fnrgf(
+                a, r*sun_r, theta, edges*sun_r, order=int(order_fourier),
+                segments=int(angular_segments), cutoff=int(cutoff_val),
+                width_function=width_function, valid=valid,
+                smooth_px=radial_smooth, ridge=ridge, width_floor=width_floor,
+                robust_iterations=robust_iterations, min_pixels=min_pixels_per_sector,
+                mean_tail=mean_attenuation_range[1], width_tail=std_attenuation_range[1])
+        else:
+            filtered = fnrgf_normalize(
+                a, r, theta, edges, order=int(order_fourier),
+                segments=int(angular_segments), cutoff=int(cutoff_val),
+                application_radius=app_r, width_function=width_function,
+                mean_attenuation_range=mean_attenuation_range,
+                std_attenuation_range=std_attenuation_range,
+                min_pixels=min_pixels_per_sector,
+                width_floor_fraction=width_floor,
+            )
         valid = np.isfinite(filtered)
         if clip_pct > 0 and np.any(valid):
             if not 0 < clip_pct < 50:
@@ -458,6 +501,9 @@ class FilterWorker(QObject):
         # Compact protection band: zero contribution outside 0.95..1.05 R_sun.
         protection = np.clip(1-np.abs(r-1.0)/.05, 0, 1)
         alpha = float(strength)/100 * (1-float(apply_mask)/100*protection)
+        if mode == 'continuous' and boundary_fade > 0:
+            ramp = np.clip(np.minimum((r-app_r)*sun_r, (outer-r)*sun_r)/boundary_fade, 0, 1)
+            alpha *= ramp*ramp*(3-2*ramp)
         result = a.copy()
         result[valid] = ((1-alpha[valid])*a[valid]+alpha[valid]*filtered[valid])
         return result.astype(np.float32)
@@ -465,6 +511,7 @@ class FilterWorker(QObject):
     def run_rhef_native(
         self, img, strength, app_radius_val, upsilon_val, sun_x, sun_y, sun_r,
         valid=None, upsilon_h_val=None, vignette_rsun=None, bin_px=1.0, mode="legacy",
+        min_count=12, quantile_count=257, noise_confidence=0.,
     ) -> np.ndarray:
         """RHEF ranks mapped to input units before the external Strength blend.
 
@@ -501,7 +548,7 @@ class FilterWorker(QObject):
             from .radial_continuous import rhef_continuous_normalize
             filtered = rhef_continuous_normalize(
                 a, r, bin_px=bin_px, application_radius=float(app_radius_val)/10*sun_r,
-                valid=valid,
+                valid=valid, min_count=min_count, quantile_count=quantile_count,
             )
             if upsilon is not None:
                 low = filtered < .5
@@ -515,6 +562,10 @@ class FilterWorker(QObject):
             filtered[selected] = finite.min() + filtered[selected] * (float(finite.max()) - float(finite.min()))
         result = a.copy()
         alpha = float(strength)/100
+        if noise_confidence > 0:
+            from .statistics_support import radial_confidence
+            confidence = radial_confidence(a, r, bin_px, valid, noise_confidence)
+            alpha = alpha*confidence[selected]
         result[selected] = (1-alpha)*a[selected]+alpha*filtered[selected]
         if vignette_rsun is not None:
             result[r > float(vignette_rsun)*sun_r] = np.nan
@@ -594,6 +645,25 @@ class FilterWorker(QObject):
         sharpened = np.clip(a + (a - blurred) * sigma, a.min(), a.max())
         alpha = float(strength) / 100
         return ((1 - alpha) * a + alpha * sharpened).astype(np.float32)
+
+    def run_tangential(self, img, strength, sun_x, sun_y, sun_r,
+                       arc_sigma=3., gain=1., denoise=0., inner_radius=1.,
+                       outer_radius=0., fade_px=8., valid=None):
+        if strength == 0:
+            return img.copy()
+        from .tangential import tangential_detail
+        if valid is None:
+            original = finite_image(img)
+        else:
+            from .image_data import observed_image
+            original, valid = observed_image(img, valid)
+        filtered = tangential_detail(original, sun_x, sun_y, sun_r, arc_sigma, gain,
+                                     denoise, inner_radius, outer_radius, fade_px, valid)
+        selected = np.isfinite(original) & np.isfinite(filtered)
+        result = original.copy()
+        alpha = float(strength)/100
+        result[selected] = (1-alpha)*original[selected]+alpha*filtered[selected]
+        return result.astype(np.float32)
 
     def run_achf(
         self, img, strength, base_kernel_param, boost_param,

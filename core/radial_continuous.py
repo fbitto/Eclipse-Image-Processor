@@ -4,6 +4,7 @@ Quantile distributions are interpolated, not image pixels. Inspired by AEL's
 continuous radial statistics (Pere Guerra Serra, MIT); implemented independently
 for the global case. Output units are ranks [0, 1]; undefined pixels are NaN.
 """
+from .cancellation import check_cancelled
 import numpy as np
 
 
@@ -38,11 +39,13 @@ def rhef_continuous_normalize(image, radii, bin_px=2., application_radius=0.,
     values = np.log(a.ravel()[ids])
     probabilities = np.linspace(0, 1, quantile_count)
     for k in np.flatnonzero(counts >= min_count):
+        check_cancelled()
         table[k] = np.quantile(values[order[cuts[k]:cuts[k + 1]]], probabilities)
     # Interpolate immediate neighbours only. An empty/sparse ring stays undefined;
     # a neighbour never validates it and no interpolation bridges a gap.
     eligible = counts[bins] >= min_count
     for start in range(0, ids.size, 16384):
+        check_cancelled()
         use = np.arange(start, min(start + 16384, ids.size))
         use = use[eligible[use]]
         if not use.size:
@@ -65,6 +68,7 @@ def rhef_continuous_normalize(image, radii, bin_px=2., application_radius=0.,
             lo = np.zeros(len(use), dtype=int)
             hi = np.full(len(use), quantile_count, dtype=int)
             for _ in range(int(quantile_count).bit_length()):
+                check_cancelled()
                 mid = (lo + hi) // 2
                 value = threshold(np.minimum(mid, quantile_count - 1))
                 active = lo < hi

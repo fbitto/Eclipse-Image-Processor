@@ -5,6 +5,7 @@ by observed support; invalid numerical buffers are never used as observations.
 WOW on masked inputs uses an explicitly recorded normalized-starlet variant,
 not an assertion of byte equivalence to watroo's unmasked implementation.
 """
+from .cancellation import check_cancelled
 import numpy as np
 from scipy.ndimage import gaussian_filter, convolve1d
 from .filters import adaptive_circular_highpass, blend_filter_result
@@ -61,15 +62,18 @@ class MaskedWorker:
     def run_rhef_native(self, a, *args, **kwargs):
         return np.where(self.valid, self.worker.run_rhef_native(a, *args, valid=self.valid, **kwargs), 0)
 
-    def run_mgn_native(self, a, strength, gamma, k, h, truncate, sigmas):
+    def run_mgn_native(self, a, strength, gamma, k, h, truncate, sigmas, weights=None):
         if strength == 0 or self.span(a) == 0:
             return a.copy()
         data = np.where(self.valid, np.maximum(a, 1e-15), 0).astype(float)
         result = np.zeros_like(a, dtype=float)
-        for sigma in sigmas:
+        weights = np.ones(len(sigmas)) if weights is None else weights
+        for sigma, weight in zip(sigmas, weights):
+            check_cancelled()
             residual = data - self.blur(data, sigma, truncate=truncate, mode='nearest')
+            check_cancelled()
             deviation = np.sqrt(np.maximum(self.blur(residual**2, sigma, truncate=truncate, mode='nearest'), 0))
-            result += np.arctan(np.divide(residual, deviation, out=np.zeros_like(residual), where=deviation > 0) * k / 100.)
+            result += weight*np.arctan(np.divide(residual, deviation, out=np.zeros_like(residual), where=deviation > 0) * k / 100.)
         lower, upper = data[self.valid].min(), data[self.valid].max()
         global_image = (data-lower)/(upper-lower) if upper > lower else np.zeros_like(data)
         global_image = np.maximum(global_image, 0) ** (10. / gamma)
@@ -90,6 +94,7 @@ class MaskedWorker:
         gradients = []
         # Use only observed pairs: a missing neighbour does not create an edge.
         for axis in (0, 1):
+            check_cancelled()
             gradient = np.zeros_like(a, dtype=float)
             left = [slice(None), slice(None)]; right = left.copy()
             left[axis], right[axis] = slice(None, -1), slice(1, None)
@@ -104,20 +109,23 @@ class MaskedWorker:
         result = (norm*(1-edge)+smooth*edge)*self.span(a)+a[self.valid].min()
         return np.where(self.valid, (1-strength/100.)*a+strength/100.*result, 0).astype(np.float32)
 
-    def run_radial_noise_gate(self, a, strength, threshold, sx, sy, sr, spatial_scale=1):
+    def run_radial_noise_gate(self, a, strength, threshold, sx, sy, sr, spatial_scale=1, local_sigma=3., gate_sigma=2.):
         if strength == 0 or threshold == 0:
             return a.copy()
         magnitude = np.max(np.abs(a[self.valid]))
         if magnitude == 0:
             return a.copy()
         unit = a/magnitude
-        mean = self.blur(unit, 3*spatial_scale)
-        std = np.sqrt(np.maximum(self.blur((unit-mean)**2, 3*spatial_scale), 0))
+        mean = self.blur(unit, local_sigma*spatial_scale)
+        std = np.sqrt(np.maximum(self.blur((unit-mean)**2, local_sigma*spatial_scale), 0))
         snr = np.divide(np.abs(mean), std, out=np.full_like(mean, np.inf), where=std > 0)
         yy, xx = np.ogrid[:a.shape[0], :a.shape[1]]
         limit = threshold/100. * (1+2*np.hypot(xx-sx, yy-sy)/sr)
         gate = np.clip((snr-limit)/limit, 0, 1)
-        return np.where(self.valid, a*(1-strength/100.+strength/100.*self.blur(gate, 2*spatial_scale)), 0).astype(np.float32)
+        return np.where(self.valid, a*(1-strength/100.+strength/100.*self.blur(gate, gate_sigma*spatial_scale)), 0).astype(np.float32)
+
+    def run_tangential(self, a, *args, **kwargs):
+        return np.where(self.valid, self.worker.run_tangential(a, *args, valid=self.valid, **kwargs), 0)
 
     def run_achf(self, a, strength, kernel, boost, sx, sy, sr, intensity_threshold=10, background=10, spatial_scale=1.0):
         if strength == 0:
@@ -138,6 +146,7 @@ class MaskedWorker:
             signal = np.where(self.valid, a, 0)
             support = self.valid.astype(float)
             for axis in (0, 1):
+                check_cancelled()
                 signal = convolve1d(signal, kernel, axis=axis, mode='reflect')
                 support = convolve1d(support, kernel, axis=axis, mode='reflect')
             return np.divide(signal, support, out=np.zeros_like(signal), where=support > 0)
@@ -147,7 +156,9 @@ class MaskedWorker:
         denominator = np.zeros_like(a, dtype=float)
         sigma = max(float(np.std(a[self.valid]))*float(bilateral), np.finfo(float).tiny)
         for iy, cy in enumerate(coefficients):
+            check_cancelled()
             for ix, cx in enumerate(coefficients):
+                check_cancelled()
                 dy, dx = (iy-2)*step, (ix-2)*step
                 y0, y1 = max(0, -dy), min(height, height-dy)
                 x0, x1 = max(0, -dx), min(width, width-dx)
@@ -155,8 +166,17 @@ class MaskedWorker:
                     continue
                 target = np.s_[y0:y1, x0:x1]
                 tap = np.s_[y0+dy:y1+dy, x0+dx:x1+dx]
-                weight = cy*cx * self.valid[tap] * np.exp(-.5*((a[tap]-a[target])/sigma)**2)
-                numerator[target] += weight*a[tap]
+                # Missing transport values are not bilateral observations. Bound
+                # the difference before division: a constant observed image has
+                # sigma=tiny, so even a finite missing-buffer value can overflow.
+                # At 40 sigma the Gaussian weight is already zero in float64.
+                pair = self.valid[tap] & self.valid[target]
+                difference = np.subtract(a[tap], a[target],
+                                         out=np.zeros(pair.shape, dtype=float), where=pair)
+                distance = np.clip(difference, -40*sigma, 40*sigma)/sigma
+                weight = cy*cx * pair * np.exp(-.5*distance**2)
+                numerator[target] += np.multiply(weight, a[tap],
+                                                 out=np.zeros(pair.shape, dtype=float), where=pair)
                 denominator[target] += weight
         return np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator > 0)
 
@@ -175,6 +195,7 @@ class MaskedWorker:
         result, coarse = np.zeros_like(a, dtype=float), a.copy()
         noise = None
         for j in range(scales):
+            check_cancelled()
             smooth = self.starlet_blur(coarse, 2**j, bilateral)
             detail = coarse-smooth
             if noise is None:

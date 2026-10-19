@@ -4,10 +4,13 @@ from typing import Optional
 
 import numpy as np
 from shiboken6 import isValid
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QAbstractScrollArea,
+    QComboBox,
+    QSlider,
     QCheckBox,
     QFrame,
     QHBoxLayout,
@@ -18,6 +21,39 @@ from PySide6.QtWidgets import (
     QWidget,
     QToolTip,
 )
+
+
+def _scroll_sidebar(widget, event):
+    """Forward wheel/trackpad motion without editing a parameter, even with focus."""
+    parent = widget.parentWidget()
+    while parent is not None:
+        if isinstance(parent, QAbstractScrollArea):
+            viewport = parent.viewport()
+            forwarded = QWheelEvent(
+                QPointF(viewport.mapFromGlobal(event.globalPosition().toPoint())),
+                event.globalPosition(), event.pixelDelta(), event.angleDelta(),
+                event.buttons(), event.modifiers(), event.phase(), event.inverted(),
+                event.source(),
+            )
+            QApplication.sendEvent(viewport, forwarded)
+            event.accept()
+            return
+        parent = parent.parentWidget()
+    event.ignore()
+
+
+class ScrollSafeSlider(QSlider):
+    """A slider edited by dragging or keyboard; the wheel scrolls its panel."""
+
+    def wheelEvent(self, event):
+        _scroll_sidebar(self, event)
+
+
+class ScrollSafeComboBox(QComboBox):
+    """Keep sidebar scrolling from changing the selected algorithm."""
+
+    def wheelEvent(self, event):
+        _scroll_sidebar(self, event)
 
 
 class InWindowTooltips(QObject):

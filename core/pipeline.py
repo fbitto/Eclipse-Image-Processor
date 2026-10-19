@@ -1,5 +1,6 @@
 """Single synchronous filter pipeline, shared by Qt preview and export."""
 import time
+from .cancellation import check_cancelled
 from copy import deepcopy
 import numpy as np
 
@@ -21,7 +22,8 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
     p["sr"] *= float(np.sqrt(sx * sy))
     scale = float(np.sqrt(target_shape[0] / preview_shape[0] * target_shape[1] / preview_shape[1]))
     p["spatial_scale"] = scale
-    for key in ("bilateral_d", "usm_radius", "achf_kernel", "rhef_bin_px"):
+    for key in ("bilateral_d", "usm_radius", "achf_kernel", "rhef_bin_px",
+                "fnrgf_smooth", "fnrgf_fade", "tangential_fade", "statistics_guard_px"):
         if key in p:
             # Apply pixel floors before resizing, preserving the preview footprint.
             value = max(5.0, p[key]) if key in ("bilateral_d", "usm_radius") else p[key]
@@ -39,11 +41,13 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
         p["fnrgf_nbins"] = max(1, int(round(p["fnrgf_nbins"] * scale)))
     if "wow_scales" in p or p.get("wow_enabled", False):
         # Starlet supports are dyadic: choose the nearest available footprint.
-        preview_max = max(1, int(np.round(np.log2(min(preview_shape) / 5.0))))
+        reference_shape = full_shape if p.get('wow_native_scales', False) else preview_shape
+        preview_max = max(1, int(np.round(np.log2(min(reference_shape) / 5.0))))
         target_max = max(1, int(np.round(np.log2(min(target_shape) / 5.0))))
         requested = p.get("wow_scales")
         count = preview_max if requested in (None, 0) else min(int(requested), preview_max)
-        offset = int(np.floor(np.log2(scale) + 0.5))
+        wavelet_scale = float(np.sqrt(target_shape[0]/reference_shape[0]*target_shape[1]/reference_shape[1]))
+        offset = int(np.floor(np.log2(wavelet_scale) + 0.5))
         p["wow_scales"] = int(np.clip(count + offset, 1, target_max))
         levels = list(p.get("wow_denoise", []))
         if levels:
@@ -57,6 +61,7 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
 
 def execute_pipeline(worker, raw_image, params):
     from .filters import finite_image, CPU_CORES
+    check_cancelled()
     if raw_image is None:
         raise ValueError("No image supplied")
 
@@ -77,6 +82,16 @@ def execute_pipeline(worker, raw_image, params):
     else:
         img = finite_image(raw_image).astype(np.float32)
 
+    if p.get('statistics_exclude_lunar', False) or p.get('statistics_exclude_bright', False) or p.get('statistics_mask') is not None:
+        from .statistics_support import statistics_support, StatisticsWorker
+        support = statistics_support(raw_image, p, valid) if p.get('statistics_mask') is None else np.asarray(p['statistics_mask'], dtype=bool) & np.isfinite(raw_image) & (valid if valid is not None else True)
+        if support.shape != raw_image.shape or not support.any():
+            raise ValueError('Statistics mask must match image and contain observations')
+        from .masked_filters import MaskedWorker
+        base_worker = worker.worker if isinstance(worker, MaskedWorker) else worker
+        worker = StatisticsWorker(base_worker, support)
+
+    check_cancelled()
     # STEP 0: PRE-STRETCH (ASINH / LOGARITHMIC)
     if p.get("pre_stretch_enabled", False):
         mode = p.get("pre_stretch_mode", "asinh")
@@ -89,14 +104,17 @@ def execute_pipeline(worker, raw_image, params):
             img = worker.run_pre_asinh(img, val)
             print(f"[PRE-STRETCH: ASINH] Done in {time.time() - step_start:.3f}s (Factor={val})")
 
+    check_cancelled()
     # STEP 0B: RADIAL NOISE GATE
     if p.get("noise_gate_enabled", False):
         step_start = time.time()
         img = worker.run_radial_noise_gate(
-            img, p["noise_gate_str"], p["noise_gate_thr"], p["sx"], p["sy"], p["sr"], spatial_scale=p.get("spatial_scale", 1.0)
+            img, p["noise_gate_str"], p["noise_gate_thr"], p["sx"], p["sy"], p["sr"], spatial_scale=p.get("spatial_scale", 1.0),
+            local_sigma=p.get('noise_gate_sigma', 3.), gate_sigma=p.get('noise_gate_smooth', 2.)
         )
         print(f"[NOISE GATE] Done in {time.time() - step_start:.3f}s")
 
+    check_cancelled()
     # STEP 0C: BILATERAL DENOISE
     if p.get("bilateral_enabled", False):
         step_start = time.time()
@@ -105,6 +123,7 @@ def execute_pipeline(worker, raw_image, params):
         )
         print(f"[BILATERAL] Done in {time.time() - step_start:.3f}s")
 
+    check_cancelled()
     # STEP 1A: NATIVE FNRGF ENGINE (MULTI-THREADED)
     if p.get("fnrgf_enabled", False):
         step_start = time.time()
@@ -123,9 +142,15 @@ def execute_pipeline(worker, raw_image, params):
             width_function=p.get("fnrgf_width_func", "std"),
             radial_binning=p.get("fnrgf_radial_binning", "linear"),
             apply_mask=p.get("fnrgf_apply_mask", 0),
+            mode=p.get('fnrgf_mode', 'legacy'), radial_smooth=p.get('fnrgf_smooth', 8.), boundary_fade=p.get('fnrgf_fade', 0.),
+            ridge=p.get('fnrgf_ridge', .01), width_floor=p.get('fnrgf_floor', .05),
+            robust_iterations=p.get('fnrgf_robust', 2), min_pixels_per_sector=p.get('fnrgf_min_pixels', 1),
+            mean_attenuation_range=(1., p.get('fnrgf_mean_tail', 0.)),
+            std_attenuation_range=(1., p.get('fnrgf_width_tail', 0.)),
         )
         print(f"[FNRGF NATIVE] Done in {time.time() - step_start:.3f}s")
 
+    check_cancelled()
     # STEP 2A: NATIVE MGN ENGINE (MULTI-SCALE GAUSSIAN NORMALIZATION)
     if p.get("mgn_enabled", False):
         step_start = time.time()
@@ -137,9 +162,11 @@ def execute_pipeline(worker, raw_image, params):
             p.get("mgn_h", 70),
             p.get("mgn_trunc", 3),
             sigmas=p.get("mgn_sigmas", (1.25, 2.5, 5, 10, 20, 40)),
+            weights=p.get('mgn_weights'),
         )
         print(f"[MGN NATIVE] Done in {time.time() - step_start:.3f}s")
 
+    check_cancelled()
     # STEP 2B: NATIVE WOW ENGINE (A TROUS WAVELETS WHITENING)
     if p.get("wow_enabled", False):
         step_start = time.time()
@@ -150,22 +177,36 @@ def execute_pipeline(worker, raw_image, params):
         )
         print(f"[WOW NATIVE] Done in {time.time() - step_start:.3f}s")
 
+    check_cancelled()
     # STEP 2C: NATIVE RHEF ENGINE
     if p.get("rhef_enabled", False):
         step_start = time.time()
         img = worker.run_rhef_native(
             img, p["rhef_str"], p["rhef_rad"], p["rhef_upsilon"], p["sx"], p["sy"], p["sr"],
             bin_px=p.get("rhef_bin_px", 1.0),
-            mode=p.get("rhef_mode", "legacy"),
+            mode=p.get("rhef_mode", "legacy"), upsilon_h_val=p.get('rhef_upsilon_high'),
+            min_count=p.get('rhef_min_count', 12), quantile_count=p.get('rhef_quantiles', 257),
+            noise_confidence=p.get('rhef_noise_confidence', 0.),
         )
         print(f"[RHEF NATIVE] Done in {time.time() - step_start:.3f}s")
 
+    check_cancelled()
     # STEP 3: UNSHARP MASK
+    # Compatibility for older API recipes; the UI exposes tangential detail.
     if p.get("usm_enabled", False):
         step_start = time.time()
         img = worker.run_usm(img, p["usm_str"], p["usm_radius"], p["usm_sigma"])
         print(f"[USM] Done in {time.time() - step_start:.3f}s")
 
+    check_cancelled()
+    if p.get('tangential_enabled', False):
+        img = worker.run_tangential(
+            img, p['tangential_str'], p['sx'], p['sy'], p['sr'],
+            arc_sigma=p.get('tangential_arc', 3.), gain=p.get('tangential_gain', 1.),
+            denoise=p.get('tangential_denoise', 0.), inner_radius=p.get('tangential_inner', 1.),
+            outer_radius=p.get('tangential_outer', 0.), fade_px=p.get('tangential_fade', 8.))
+
+    check_cancelled()
     # STEP 4: ACHF (SYMMETRIC VARIABLE KERNEL)
     if p.get("achf_enabled", False):
         step_start = time.time()
@@ -177,6 +218,7 @@ def execute_pipeline(worker, raw_image, params):
         )
         print(f"[ACHF] Done in {time.time() - step_start:.3f}s")
 
+    check_cancelled()
     finite_image(img)
     print(f"[PIPELINE] Complete. Total time: {time.time() - pipeline_start:.3f}s\n{'='*80}\n")
     if valid is not None and not valid.all():

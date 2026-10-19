@@ -3,21 +3,17 @@ import numpy as np
 from .image_data import normalize_observed
 
 
-def apply_ghs(mat, D, SP, b, BP):
-    D = max(0.01, float(D))
-    SP = float(np.clip(SP, 0, .999))
-    BP = float(np.clip(BP, 0, max(0, SP - 1e-4)))
-    b = max(0, float(b))
+def apply_ghs(mat, D, SP, b, BP=0., LP=0., HP=1., WP=1.):
+    """Reference GHS followed by an optional, separate linear BP/WP adjustment.
 
-    def evaluate(v):
-        delta = v - SP
-        scale = 1 + b * np.maximum(0, delta) if b > 0 else 1
-        return np.arcsinh(D * delta / scale)
-
-    denominator = evaluate(1.) - evaluate(BP)
-    if abs(denominator) < 1e-7:
-        return np.clip(mat, 0, 1)
-    return np.clip((evaluate(mat) - evaluate(BP)) / denominator, 0, 1)
+    D is the original UI stretch factor ln(D_formula+1). BP/WP do not modify
+    the five-parameter GHS curve; their default 0/1 leaves it unchanged.
+    """
+    from .ghs import generalized_hyperbolic_stretch
+    if not np.isfinite([BP, WP]).all() or not -1 <= BP < WP <= 2:
+        raise ValueError('Linear display adjustment requires -1 <= BP < WP <= 2')
+    result = generalized_hyperbolic_stretch(mat, D, SP, b, LP, HP)
+    return np.clip((result-BP)/(WP-BP), 0., 1.)
 
 
 def stretch_image(image, settings):
@@ -30,7 +26,9 @@ def stretch_image(image, settings):
         return np.log1p(k * a) / np.log1p(k)
     if mode == 'ghs':
         return apply_ghs(a, strength, settings.get('sp', .1),
-                         settings.get('b', 2.), settings.get('bp', 0.))
+                         settings.get('b', 0.), settings.get('bp', 0.),
+                         settings.get('lp', 0.), settings.get('hp', 1.),
+                         settings.get('wp', 1.))
     if mode != 'asinh':
         raise ValueError('Unknown display stretch')
     return a if strength <= 0 else np.arcsinh(a * strength) / np.arcsinh(strength)

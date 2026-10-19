@@ -19,7 +19,7 @@ from .pipeline import execute_pipeline
 from .presentation import stretch_image
 from .image_data import observed_image, recipe_parameters
 
-FILTERS = ('fnrgf', 'mgn', 'wow', 'rhef', 'usm', 'achf')
+FILTERS = ('fnrgf', 'mgn', 'wow', 'rhef', 'usm', 'tangential', 'achf')
 PREPARATION = ('pre_stretch', 'noise_gate', 'bilateral')
 
 
@@ -127,6 +127,10 @@ def branch_domain(shape, params, name):
     domain = radius > sr
     if name in ('fnrgf', 'rhef'):
         domain &= radius >= float(params[name + '_rad']) / 10 * sr
+    if name == 'tangential':
+        domain &= radius >= float(params.get('tangential_inner', 1.))*sr
+        if params.get('tangential_outer', 0.):
+            domain &= radius < float(params['tangential_outer'])*sr
     if name == 'fnrgf':
         domain &= radius < float(params.get('fnrgf_rmax', 30)) / 10 * sr
     return domain
@@ -141,6 +145,10 @@ def export_layer_package(worker, source, params, display, original_path, destina
     source, valid = observed_image(source, params.get("valid_mask"))
     source = source.astype(np.float32)
     params = dict(params, valid_mask=valid)
+    from .statistics_support import statistics_support
+    statistics = statistics_support(source, params, valid)
+    if params.get('statistics_exclude_lunar') or params.get('statistics_exclude_bright'):
+        params['statistics_mask'] = statistics
     if rgb is not None:
         rgb = np.asarray(rgb)
         if rgb.shape != (*source.shape, 3) or not np.isfinite(rgb[valid]).all():
@@ -166,6 +174,7 @@ def export_layer_package(worker, source, params, display, original_path, destina
 
         tifffile.imwrite(stage / f'{stem}_VALID.tif', valid.astype(np.uint8)*255,
                          compression='zlib', metadata={'role': 'Observed-data validity; 255 observed, 0 missing'})
+        tifffile.imwrite(stage / f'{stem}_STATISTICS_SUPPORT.tif', statistics.astype(np.uint8)*255, compression='zlib')
         base16 = to_u16(stretch_image(prepared, display))
         base_file = f'{stem}_01_BASE_Normal.tif'
         base_rgb = np.repeat(base16[..., None], 3, axis=2)
@@ -191,13 +200,13 @@ def export_layer_package(worker, source, params, display, original_path, destina
             # USM carries its base; ACHF carries background * input.
             # Extract only their signed sharpening residuals.
             # Other operators provide mapped normalized structure; remove DC below.
-            if name == 'usm':
+            if name in ('usm', 'tangential'):
                 values = filtered - prepared
             elif name == 'achf':
                 values = filtered - float(params.get('achf_background', 10)) / 100 * prepared
             else:
                 values = filtered
-            domain = branch_domain(source.shape, params, name) & valid
+            domain = branch_domain(source.shape, params, name) & valid & statistics
             if name == 'rhef' and params.get('rhef_mode') == 'continuous':
                 domain &= prepared > 0
             layer, mapping = neutral_layer(values, domain)
@@ -226,7 +235,7 @@ def export_layer_package(worker, source, params, display, original_path, destina
             records.append(dict(order=order, file=filename, filter=name, mode='Overlay',
                                 opacity=opacity, opacity_255=opacity_255, visible=opacity_255 > 0,
                                 normalization=mapping, operator_strength=100,
-                                signal=('signed sharpening residual' if name in ('usm', 'achf')
+                                signal=('signed sharpening residual' if name in ('usm', 'tangential', 'achf')
                                         else 'full-strength structure output in mapped input units'),
                                 input='PREPARED_float32', domain='Outside lunar disc and filter application domain'))
         if rgb is not None:
@@ -257,8 +266,8 @@ def export_layer_package(worker, source, params, display, original_path, destina
         manifest = dict(schema=1, source=str(original_path), shape=list(source.shape),
                         working_image_sha256=hashlib.sha256(source.tobytes()).hexdigest(),
                         parameters=recipe_parameters(params), display=display, layers=records,
-                        validity_file=f'{stem}_VALID.tif', missing_pixels=int((~valid).sum()),
-                        masked_wow='Observed-only normalized starlet variant' if not valid.all() else None,
+                        validity_file=f'{stem}_VALID.tif', statistics_file=f'{stem}_STATISTICS_SUPPORT.tif', missing_pixels=int((~valid).sum()),
+                        masked_wow='Observed-only normalized starlet variant' if not statistics.all() else None,
                         combined=combined_file, order='bottom_to_top',
                         colour='RGB Color layer over mono detail; no calibrated ICC' if rgb is not None else 'Monochrome equal-channel RGB; no calibrated ICC',
                         colour_calibration=colour_report,
@@ -268,7 +277,7 @@ def export_layer_package(worker, source, params, display, original_path, destina
                         stretch='Base only; no stretch or gamma after Overlay composition',
                         normalization='Median-centred tanh; not the AEL numerical algorithms',
                         opacity='min(Strength/100, 0.35) * Reveal; quantized to 1/255',
-                        limitations=['Finite lunar observations are not automatically excluded from filter input.',
+                        limitations=['Statistics exclusions are recorded separately from missing-data validity.',
                                      'Masked WOW is a normalized-starlet variant, not byte-equivalent to watroo.',
                                      'Native Photoshop rendering not verified.'])
         (stage / 'recipe.json').write_text(json.dumps(manifest, indent=2, allow_nan=False), encoding='utf-8')

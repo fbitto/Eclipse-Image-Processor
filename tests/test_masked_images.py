@@ -76,6 +76,40 @@ class MaskedImageTests(unittest.TestCase):
         np.testing.assert_array_equal(resized[np.isfinite(resized)], 5)
         with self.assertRaises(ValueError):
             observed_image(np.full((4, 4), np.nan))
+
+    def test_constant_bilateral_starlet_excludes_missing_buffers_without_overflow(self):
+        worker = MaskedWorker(FilterWorker(), self.valid)
+        for value in (0., 7., -3., 1e-20):
+            for missing in (0., 1e20, -1e20, np.nan):
+                image = np.where(self.valid, value, missing)
+                with self.subTest(value=value, missing=missing), np.errstate(over='raise', invalid='raise', divide='raise'):
+                    smooth = worker.starlet_blur(image, 4, 1)
+                    np.testing.assert_allclose(smooth[self.valid], value, rtol=1e-12, atol=1e-30)
+
+    def test_bilateral_starlet_matches_observed_only_scalar_taps(self):
+        image = np.random.default_rng(17).normal(size=(9, 11))
+        valid = np.ones(image.shape, dtype=bool)
+        valid[2:6, 4:7] = False
+        image[~valid] = np.nan
+        worker = MaskedWorker(FilterWorker(), valid)
+        coefficients = np.array([1, 4, 6, 4, 1])/16
+        for step in (1, 2, 4):
+            for bilateral in (.2, 1., 3.):
+                sigma = np.std(image[valid])*bilateral
+                expected = np.zeros_like(image)
+                for y, x in zip(*np.nonzero(valid)):
+                    total, mass = 0., 0.
+                    for j, cy in enumerate(coefficients):
+                        for i, cx in enumerate(coefficients):
+                            yy, xx = y+(j-2)*step, x+(i-2)*step
+                            if 0 <= yy < image.shape[0] and 0 <= xx < image.shape[1] and valid[yy, xx]:
+                                weight = cy*cx*np.exp(-.5*((image[yy, xx]-image[y, x])/sigma)**2)
+                                total += weight*image[yy, xx]
+                                mass += weight
+                    expected[y, x] = total/mass
+                with np.errstate(over='raise', invalid='raise', divide='raise'):
+                    actual = worker.starlet_blur(image, step, bilateral)
+                np.testing.assert_allclose(actual[valid], expected[valid], atol=1e-14, rtol=1e-13)
         with self.assertRaises(ValueError):
             observed_image(image, np.ones((4, 4), bool))
 
@@ -122,6 +156,9 @@ class MaskedImageTests(unittest.TestCase):
                 window.chk_export_linear.setChecked(True)
                 self.assertFalse(window.combo_input_state.isHidden())
                 window.combo_input_state.setCurrentIndex(1)
+                # This normalized-float fixture is deliberately above white=1;
+                # this test checks missing-data export without neutralization.
+                window.chk_calibrate_colour.setChecked(False)
                 window.chk_export_layers.setChecked(True)
                 result = Path(tmp)/'final.tif'
                 with patch('gui.app.QFileDialog.getSaveFileName', return_value=(str(result), '')):

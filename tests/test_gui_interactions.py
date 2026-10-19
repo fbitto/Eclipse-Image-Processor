@@ -36,6 +36,34 @@ class GuiInteractionTests(unittest.TestCase):
     def tearDown(self):
         self.window.close()
 
+    def test_linear_colour_and_verification_defaults_reset_on_loading(self):
+        from pathlib import Path
+        import tempfile
+        from unittest.mock import patch
+        import tifffile
+        w = self.window
+        self.assertEqual(w.combo_input_state.currentData(), "linear")
+        self.assertTrue(w.chk_calibrate_colour.isChecked())
+        self.assertTrue(w.chk_verify_preview.isChecked())
+        w.auto_calculate = False
+        yy, xx = np.mgrid[:80, :100]
+        mono = (100 + 20000*np.exp(-np.hypot(xx-50, yy-40)/12)).astype(np.uint16)
+        rgb = np.stack([mono, mono//2, mono//3], axis=-1)
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, image in (("rgb", rgb), ("mono", mono), ("rgb_again", rgb)):
+                path = Path(tmp)/f"{name}.tif"
+                tifffile.imwrite(path, image, photometric="rgb" if image.ndim == 3 else "minisblack")
+                w.combo_input_state.setCurrentIndex(2)
+                w.chk_verify_preview.setChecked(False)
+                with patch("gui.app.QFileDialog.getOpenFileName", return_value=(str(path), "")):
+                    w.load_image_action()
+                self.assertEqual(w.source_path, str(path), w.status_label.text())
+                self.assertEqual(w.combo_input_state.currentData(), "linear")
+                self.assertTrue(w.chk_verify_preview.isChecked())
+                self.assertEqual(w.chk_calibrate_colour.isChecked(), image.ndim == 3)
+                self.assertEqual(w.chk_calibrate_colour.isEnabled(), image.ndim == 3)
+                np.testing.assert_array_equal(w.full_source_rgb, image if image.ndim == 3 else None)
+
     def test_colour_calibration_requires_declared_linear_rgb_and_is_reversible(self):
         self.assertFalse(self.window.chk_calibrate_colour.isEnabled())
         t = np.linspace(.01, .9, 64*64).reshape(64, 64)
@@ -71,7 +99,9 @@ class GuiInteractionTests(unittest.TestCase):
     def test_calibration_row_whitespace_toggles_once_per_click(self):
         self.window.full_source_rgb = np.ones((64, 64, 3), np.float32)
         self.window.combo_input_state.setCurrentIndex(1)
+        self.window.on_input_state_changed()
         checkbox = self.window.chk_calibrate_colour
+        checkbox.setChecked(False)
         checkbox.resize(350, 30)
         self.assertTrue(checkbox.isEnabled())
         point = QPoint(checkbox.width()-3, checkbox.height()//2)
@@ -99,7 +129,7 @@ class GuiInteractionTests(unittest.TestCase):
         self.window.on_processing_finished(np.zeros_like(original))
         np.testing.assert_array_equal(self.window.processed_image, original)
         self.assertEqual(len(self.requests), 1)
-        QTest.qWait(400)
+        QTest.qWait(800)
         self.assertEqual(len(self.requests), 2)
         self.assertEqual((self.requests[-1]["sx"], self.requests[-1]["sy"]), (25, 26))
         result = np.full_like(original, 3)
@@ -125,7 +155,7 @@ class GuiInteractionTests(unittest.TestCase):
         self.window.dispatch_pipeline_request_if_auto()
         self.window.on_processing_finished(np.zeros_like(replacement))
         np.testing.assert_array_equal(self.window.processed_image, replacement)
-        QTest.qWait(400)
+        QTest.qWait(800)
         self.assertEqual(len(self.requests), 2)
 
     def test_real_worker_finishes_with_latest_slider_values(self):
@@ -221,11 +251,11 @@ class GuiInteractionTests(unittest.TestCase):
 
     def test_geometry_edits_restart_one_debounce_timer(self):
         self.window.txt_x.setText("20")
-        QTest.qWait(180)
+        QTest.qWait(350)
         self.window.txt_y.setText("25")
-        QTest.qWait(180)
+        QTest.qWait(350)
         self.assertEqual(self.requests, [])
-        QTest.qWait(180)
+        QTest.qWait(350)
         self.assertEqual(len(self.requests), 1)
         self.assertEqual(self.requests[0]["sx"], 20)
         self.assertEqual(self.requests[0]["sy"], 25)
@@ -235,12 +265,12 @@ class GuiInteractionTests(unittest.TestCase):
         from unittest.mock import patch
         with patch.object(self.window.sec_fnrgf, "is_filter_active", return_value=True):
             self.window.sl_fnrgf_str.setValue(30)
-            QTest.qWait(180)
+            QTest.qWait(350)
             self.window.sl_fnrgf_str.setValue(31)
             self.window.sl_fnrgf_str.sliderReleased.emit()
-            QTest.qWait(180)
+            QTest.qWait(350)
             self.assertEqual(self.requests, [])
-            QTest.qWait(180)
+            QTest.qWait(350)
             self.assertEqual(len(self.requests), 1)
             self.assertEqual(self.requests[0]["fnrgf_str"], 31)
 
@@ -250,13 +280,13 @@ class GuiInteractionTests(unittest.TestCase):
         self.window.txt_x.setText("21")
         self.window.on_processing_finished(self.window.raw_image.copy())
         self.assertEqual(self.requests, [])
-        QTest.qWait(400)
+        QTest.qWait(800)
         self.assertEqual(len(self.requests), 1)
 
     def test_manual_mode_does_not_schedule_and_explicit_calculate_cancels_timer(self):
         self.window.txt_x.setText("21")
         self.window.toggle_auto_calc_mode(False)
-        QTest.qWait(400)
+        QTest.qWait(800)
         self.assertEqual(self.requests, [])
         self.window.txt_y.setText("22")
         self.assertFalse(self.window.recalculation_timer.isActive())
