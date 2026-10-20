@@ -295,3 +295,53 @@ class GuiInteractionTests(unittest.TestCase):
         self.window.dispatch_pipeline_request()
         self.assertEqual(len(self.requests), 1)
         self.assertFalse(self.window.recalculation_timer.isActive())
+
+    def test_basic_mode_visibility_and_advanced_round_trip(self):
+        from core.result_cache import parameter_signature
+        w = self.window
+        self.assertFalse(w.chk_advanced.isChecked())
+        for slider in (*w.sl_mgn_sigmas, *w.sl_mgn_weights, w.sl_fnrgf_smooth,
+                       w.sl_rhef_upsilon_high, w.sl_wow_scales, w.sl_ghs_lp):
+            self.assertTrue(slider.isHidden())
+            self.assertTrue(slider.title_label.isHidden())
+            self.assertTrue(slider.value_label.isHidden())
+        for slider in (w.sl_fnrgf_mask, w.sl_fnrgf_ord, w.sl_mgn_k, w.sl_mgn_h,
+                       w.sl_tangential_denoise, w.sl_achf_threshold, w.sl_wow_noise):
+            self.assertFalse(slider.isHidden())
+        before = parameter_signature(w.collect_filter_parameters((64, 64)))
+        w.chk_advanced.setChecked(True)
+        self.assertFalse(w.sl_mgn_sigmas[0].isHidden())
+        self.assertTrue(w.sl_wow_noise.isHidden())
+        w.chk_advanced.setChecked(False)
+        self.assertEqual(before, parameter_signature(w.collect_filter_parameters((64, 64))))
+        self.assertIs(w.chk_advanced.parentWidget(), w.chk_calibrate_colour.parentWidget())
+
+    def test_basic_wow_noise_updates_every_scale_and_advanced_values_survive(self):
+        w = self.window
+        self.assertEqual(w.sl_wow_noise.value(), 0)
+        w.sl_wow_noise.setValue(23)
+        self.assertTrue(all(s.value() == 23 for s in w.sl_wow_denoise))
+        self.assertTrue(all(s.value_label.text() == '2.3' for s in w.sl_wow_denoise))
+        self.assertTrue(all(x == 2.3 for x in w.collect_filter_parameters((64, 64))['wow_denoise']))
+        w.chk_advanced.setChecked(True)
+        w.sl_wow_denoise[0].setValue(41)
+        w.chk_advanced.setChecked(False)
+        self.assertEqual(w.sl_wow_denoise[0].value(), 41)
+        self.assertFalse(w.lbl_advanced_values.isHidden())
+        w.sl_wow_noise.setValue(24)
+        self.assertTrue(all(s.value() == 24 for s in w.sl_wow_denoise))
+        self.assertTrue(w.lbl_advanced_values.isHidden())
+
+    def test_basic_rhef_edit_links_tails_without_resetting_on_mode_switch(self):
+        w = self.window
+        w.chk_advanced.setChecked(True)
+        w.chk_rhef_symmetric.setChecked(False)
+        w.sl_rhef_upsilon_high.setValue(77)
+        w.chk_advanced.setChecked(False)
+        self.assertEqual(w.sl_rhef_upsilon_high.value(), 77)
+        self.assertFalse(w.lbl_advanced_values.isHidden())
+        w.sl_rhef_upsilon.setValue(42)
+        params = w.collect_filter_parameters((64, 64))
+        self.assertEqual(params['rhef_upsilon_high'], params['rhef_upsilon'])
+        self.assertTrue(w.chk_rhef_symmetric.isChecked())
+        self.assertEqual(w.sl_rhef_upsilon_high.value(), 42)

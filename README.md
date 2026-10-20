@@ -36,6 +36,8 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
+To build a standalone macOS application (`.app`) or a drag-to-install disk image (`.dmg`), see the [macOS build instructions](docs/build-macos.md).
+
 `requirements.txt` is the dependency list for installation. `main.py` also contains inline script metadata (PEP 723); keep both lists synchronized when changing dependencies.
 
 | Package | Role |
@@ -146,7 +148,9 @@ No camera matrix, photometric color calibration or ICC assignment is inferred.
 
 New images default to **Input: linear**, **Calibrate color** enabled for RGB,
 and **Full-resolution verification preview** enabled. The input selector can
-still be changed for already stretched data; monochrome input disables color neutralization.
+still be changed for already stretched data. Color neutralization requires RGB
+input declared linear. Selecting unspecified or already stretched input unchecks
+and disables **Calibrate color**; monochrome input also disables it.
 
 **Calibrate color (tse-tools)** assumes neutral sky/corona: sample every tenth
 pixel, select joint RGB values strictly between zero and one, subtract per-channel
@@ -168,6 +172,43 @@ Adapted under MIT; see [the retained notice](docs/third-party/eclipsetools-MIT.t
 
 ## Filters and parameters, in interface order
 
+**Advanced mode**, below **Calibrate color**, is off by default. Basic mode shows
+the usual controls; advanced mode reveals all parameters, including MGN scales
+and weights. FNRGF keeps its original controls through **Apply Mask (%)** visible
+in basic mode. The parameter tables below list both basic and advanced controls.
+
+Basic WOW has one noise threshold, initially zero: editing it sets the same
+threshold for every scale. Advanced mode exposes individual thresholds. Basic
+RHEF has one Upsilon control: editing it links both tails. Switching modes alone
+preserves all settings; a notice appears in basic mode if individual WOW
+thresholds or separate RHEF tails remain active from advanced editing. Editing
+the corresponding basic control replaces those individual settings. Hidden
+parameters remain active with their current values; changing modes does not
+reset them or recalculate the image.
+
+### Basic and advanced controls
+
+**Active** and **Strength** remain visible for every enhancement. The table lists
+the other controls available in basic mode and those added by advanced mode.
+
+| Section | Basic mode | Additional controls in advanced mode |
+| --- | --- | --- |
+| Geometry | Center X/Y, Radius, scale information and automatic lunar detection | Lunar/statistics exclusions, lunar guard, bright-limb percentile and annulus radius |
+| Pre-stretch | Active, type and intensity | No additional controls |
+| Radial Noise Gate | SNR Threshold | Local sigma and Gate sigma |
+| Edge-preserving Denoise | Blur Sigma and Edge Sensitivity | No additional controls |
+| FNRGF | Model, Fourier Order, Angular Segments, Coefficients to Remove, Application Radius, Outer Radius, Ring Width, Width Function, Radial Binning and Apply Mask (%) | Model smoothing, Boundary fade, Harmonic regularization, Minimum width fraction, Robust fit iterations, Minimum samples per sector and highest-harmonic mean/width weights |
+| MGN | Gamma, Factor k and Global Weight h | Kernel Truncation, all six scales and their individual weights |
+| WOW | One Noise threshold (all scales, sigma), initially 0 | Native wavelet scale count, individual denoising thresholds, Standard/Edge-aware mode and Bilateral intensity scale |
+| RHEF | One Upsilon control, linked to both tails when edited | Algorithm mode, Application Radius, Ring Width, separate upper-tail exponent and linking checkbox, minimum samples, quantile samples and Noise confidence |
+| Tangential Detail | Angular Gaussian sigma and Noise threshold | Detail gain, inner/outer radii, Limit outer radius and Boundary fade |
+| ACHF | Support Radius and Intensity Threshold | Contrast Gain and Background Retention |
+| Final Stretch | Algorithm, intensity and Reveal Opacity; GHS also shows SP, its image picker and Local Intensity (b) | GHS shadow/highlight protection (LP/HP) and post-stretch black/white points |
+
+Input transfer state, color calibration, preview verification and export options
+are independent of Advanced mode. Controls that require a particular algorithm,
+RGB input or an available wavelet scale retain their normal availability rules.
+
 The interface and sequential pipeline use this order:
 
 **Pre-stretch → Radial Noise Gate → Edge-preserving Denoise → FNRGF → MGN → WOW → RHEF → Tangential Detail → ACHF → Final Stretch.**
@@ -179,6 +220,8 @@ All displayed slider values are actual parameter values. **Preview px** means pi
 ### Geometry and statistics support
 
 These controls appear above the filters and affect their geometry and sample selection.
+Statistics-support controls are visible only in advanced mode. Lunar exclusion
+remains enabled by default and effective in basic mode.
 
 | Parameter | Range / units | Effect |
 | --- | --- | --- |

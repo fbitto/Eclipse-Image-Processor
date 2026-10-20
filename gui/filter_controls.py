@@ -1,7 +1,7 @@
 """Additional numerical controls with explicit physical units and conversions."""
-from PySide6.QtWidgets import QCheckBox
+from PySide6.QtWidgets import QCheckBox, QLabel
 from .components import ScrollSafeComboBox
-from .factories import create_slider_float, create_slider
+from .factories import create_slider_float, create_slider, update_slider_display
 
 # attribute, recipe key, title, min, max, default, divisor, help
 CONTROLS = {
@@ -112,3 +112,78 @@ def collect_controls(window):
     params['mgn_weights'] = tuple(sl.value()/100 for sl in window.sl_mgn_weights)
     params['wow_bilateral'] = window.sl_wow_bilateral.value()/10 if window.combo_wow_bilateral.currentIndex() else None
     return params
+
+
+def set_control_visible(control, visible):
+    """Keep each factory slider's title and displayed value with its track."""
+    control.setVisible(visible)
+    if hasattr(control, 'title_label'):
+        control.title_label.setVisible(visible)
+        control.value_label.setVisible(visible)
+
+
+def add_advanced_mode(window, header_layout):
+    window.chk_advanced = QCheckBox('Advanced mode')
+    window.chk_advanced.setToolTip('Show all filter parameters. Hidden settings remain active. Basic WOW noise edits apply to every scale; basic Upsilon edits link both tails.')
+    header_layout.addWidget(window.chk_advanced)
+    window.sl_wow_noise, _ = create_slider_float(
+        'Noise threshold (all scales, sigma)', 0, 100, 0, 10.,
+        window.sec_wow.content_layout,
+        tooltip='Apply this noise threshold to every native wavelet scale. Zero disables noise suppression. Editing replaces individual advanced thresholds.',
+        on_release_callback=window.dispatch_pipeline_request_if_auto)
+    window.lbl_advanced_values = QLabel('Individual WOW thresholds or separate RHEF tails remain active. Edit the basic control to link them again.')
+    window.lbl_advanced_values.setWordWrap(True)
+    window.lbl_advanced_values.setStyleSheet('color: #aaaaaa; font-size: 10px;')
+    window.lbl_advanced_values.setToolTip('Switching modes preserves parameters. Advanced WOW and RHEF values remain active until their basic control is edited.')
+    header_layout.addWidget(window.lbl_advanced_values)
+    advanced = [window.sl_mgn_trunc, *window.sl_mgn_sigmas, *window.sl_mgn_weights,
+                window.sl_wow_scales, *window.sl_wow_denoise,
+                window.combo_wow_bilateral, window.sl_wow_bilateral,
+                window.combo_rhef_mode, window.sl_rhef_rad, window.sl_rhef_bin,
+                window.chk_rhef_symmetric, window.chk_tangential_outer,
+                window.sl_achf_boost, window.sl_achf_background,
+                window.sl_ghs_lp, window.sl_ghs_hp, window.sl_ghs_bp, window.sl_ghs_wp,
+                window.chk_statistics_lunar, window.chk_statistics_bright,
+                window.sl_statistics_guard, window.sl_statistics_percentile,
+                window.sl_statistics_outer]
+    for family, specs in CONTROLS.items():
+        for attr, *_ in specs:
+            if attr not in ('tangential_arc', 'tangential_denoise'):
+                advanced.append(getattr(window, 'sl_' + attr))
+
+    def update_visibility(checked):
+        for control in advanced:
+            set_control_visible(control, checked)
+        set_control_visible(window.sl_wow_noise, not checked)
+        window.sl_rhef_upsilon.title_label.setText('Lower-tail Upsilon' if checked else 'Upsilon (both tails)')
+        update_custom_values()
+
+    def update_custom_values():
+        mixed_noise = any(slider.value() != window.sl_wow_noise.value()
+                          for slider in window.sl_wow_denoise if slider.isEnabled())
+        window.lbl_advanced_values.setVisible(
+            not window.chk_advanced.isChecked() and
+            (mixed_noise or not window.chk_rhef_symmetric.isChecked()))
+
+    def apply_noise(value):
+        for slider in window.sl_wow_denoise:
+            blocked = slider.blockSignals(True)
+            slider.setValue(value)
+            slider.blockSignals(blocked)
+            update_slider_display(slider)
+        window.on_filter_slider_released(window.sec_wow, window.sl_wow_str)
+        update_custom_values()
+
+    def apply_upsilon(_):
+        if not window.chk_advanced.isChecked():
+            window.sl_rhef_upsilon_high.setValue(window.sl_rhef_upsilon.value())
+            window.chk_rhef_symmetric.setChecked(True)
+
+    window.sl_wow_noise.valueChanged.connect(apply_noise)
+    window.sl_rhef_upsilon.valueChanged.connect(apply_upsilon)
+    for slider in window.sl_wow_denoise:
+        slider.valueChanged.connect(update_custom_values)
+    window.sl_wow_scales.valueChanged.connect(update_custom_values)
+    window.chk_rhef_symmetric.toggled.connect(update_custom_values)
+    window.chk_advanced.toggled.connect(update_visibility)
+    update_visibility(False)

@@ -37,7 +37,7 @@ from core.layer_export import export_layer_package
 from core.linear_export import export_linear_sources, split_source_channels
 from core.colour import neutralize_tse, colour_layer, set_luminosity
 from core.result_cache import parameter_signature
-from gui.filter_controls import add_controls, collect_controls
+from gui.filter_controls import add_controls, collect_controls, add_advanced_mode
 from core.image_data import resize_observed, recipe_parameters, normalize_observed
 from gui.components import ClickableLabel, CollapsibleSection, FullRowCheckBox, InWindowTooltips, ScrollSafeSlider, ScrollSafeComboBox
 from gui.factories import (
@@ -58,7 +58,7 @@ class EclipseProcessorApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Corona Enhance Filters v0.5.0")
+        self.setWindowTitle("Eclipse Image Processor v0.5.0")
         self.resize(1180, 780)
         self.setMinimumSize(960, 600)
 
@@ -205,6 +205,9 @@ class EclipseProcessorApp(QMainWindow):
                 slider.valueChanged.connect(
                     lambda value, section=section: self.on_filter_slider_released(section, None))
         self._build_stretch_section(control_layout)
+        top_header_layout.addWidget(self.chk_calibrate_colour)
+        add_advanced_mode(self, top_header_layout)
+        top_header_layout.addWidget(self.lbl_colour_hint)
         for slider in (self.sl_stretch, self.sl_ghs_sp, self.sl_ghs_b, self.sl_ghs_lp, self.sl_ghs_hp,
                        self.sl_ghs_bp, self.sl_ghs_wp, self.sl_blend):
             slider.valueChanged.connect(lambda _: self.presentation_timer.start())
@@ -760,18 +763,15 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_input_state.setToolTip("Declare input linearity for source-file labels and color-calibration availability. LINEAR requires a declared linear input; otherwise sources use INPUT. This does not undo or bypass stretching.")
         self.combo_input_state.setVisible(False)
         self.chk_calibrate_colour = FullRowCheckBox("Calibrate color")
-        self.chk_calibrate_colour.setStyleSheet("QCheckBox { color: #dddddd; font-size: 11px; }")
         self.chk_calibrate_colour.setToolTip("Requires linear RGB. Assumes a neutral background and corona: subtracts P1 and balances P99 minus P1. This is not photometric or ICC calibration. Applies to colour verification and export; fast preview stays monochrome. Preserves the original sources.")
         self.chk_calibrate_colour.setEnabled(False)
         self.chk_calibrate_colour.setChecked(True)
         self.chk_calibrate_colour.toggled.connect(self.on_colour_changed)
         self.combo_input_state.currentIndexChanged.connect(self.on_input_state_changed)
-        layout.addWidget(self.chk_calibrate_colour)
         self.lbl_colour_hint = QLabel("Color calibration requires an RGB image.")
         self.lbl_colour_hint.setToolTip("Color calibration is available only for RGB input explicitly declared linear. It is calculated for colour verification/export and does not change numerical luminance filters.")
         self.lbl_colour_hint.setWordWrap(True)
         self.lbl_colour_hint.setStyleSheet("color: #aaaaaa; font-size: 10px;")
-        layout.addWidget(self.lbl_colour_hint)
         self.chk_export_linear.toggled.connect(lambda _: self.combo_input_state.setVisible(self.chk_export_linear.isChecked() or self.full_source_rgb is not None))
         layout.addWidget(self.combo_input_state)
         self.btn_export = QPushButton("💾 Export Final Image")

@@ -13,10 +13,10 @@ Para generar también el DMG de instalación por arrastre:
 .venv/bin/python scripts/build_macos.py --dmg
 ```
 
-`dist/Corona Enhance Filters.dmg` contiene la aplicación y un acceso directo a
+`dist/Eclipse Image Processor.dmg` contiene la aplicación y un acceso directo a
 Aplicaciones. Abre el DMG y arrastra la aplicación sobre ese acceso para instalarla.
 
-El resultado es `dist/Corona Enhance Filters.app`. Se puede abrir desde Finder y copiar
+El resultado es `dist/Eclipse Image Processor.app`. Se puede abrir desde Finder y copiar
 a Aplicaciones. Incluye Python, las dependencias y el icono seleccionado, por lo
 que no necesita `uv` para ejecutarse.
 

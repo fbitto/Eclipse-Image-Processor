@@ -39,7 +39,7 @@ def main():
     environment["PYINSTALLER_CONFIG_DIR"] = str(build / "cache")
     subprocess.run([
         sys.executable, "-m", "PyInstaller",
-        "--noconfirm", "--windowed", "--onedir", "--name", "Corona Enhance Filters",
+        "--noconfirm", "--windowed", "--onedir", "--name", "Eclipse Image Processor",
         "--icon", str(icon), "--osx-bundle-identifier", "com.fbitto.realcecoronal",
         "--specpath", str(build), "--workpath", str(build / "work"),
         "--distpath", str(root / "dist"),
@@ -48,17 +48,17 @@ def main():
         "--hidden-import", "PIL.TiffImagePlugin",
         str(root / "main.py"),
     ], cwd=root, env=environment, check=True)
-    print(f"Application ready: {root / 'dist' / 'Corona Enhance Filters.app'}")
+    print(f"Application ready: {root / 'dist' / 'Eclipse Image Processor.app'}")
     if args.dmg:
-        app = root / "dist" / "Corona Enhance Filters.app"
+        app = root / "dist" / "Eclipse Image Processor.app"
         subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(app)], check=True)
         with tempfile.TemporaryDirectory(prefix="dmg-", dir=build) as staging:
             destination = Path(staging)
             subprocess.run(["/usr/bin/ditto", str(app), str(destination / app.name)], check=True)
             (destination / "Applications").symlink_to("/Applications", target_is_directory=True)
-            dmg = root / "dist" / "Corona Enhance Filters.dmg"
+            dmg = root / "dist" / "Eclipse Image Processor.dmg"
             subprocess.run([
-                "/usr/bin/hdiutil", "create", "-volname", "Corona Enhance Filters",
+                "/usr/bin/hdiutil", "create", "-volname", "Eclipse Image Processor",
                 "-srcfolder", str(destination), "-format", "UDZO", "-ov", str(dmg),
             ], check=True)
             subprocess.run(["/usr/bin/hdiutil", "verify", str(dmg)], check=True)

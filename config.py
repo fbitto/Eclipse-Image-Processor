@@ -1,4 +1,4 @@
-# config.py - Global configuration and styling for Corona Enhance Filters v0.5.0
+# config.py - Global configuration and styling for Eclipse Image Processor v0.5.0
 
 import os
 

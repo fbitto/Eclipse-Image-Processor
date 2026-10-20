@@ -13,7 +13,7 @@
 # ]
 # ///
 """
-Corona Enhance Filters v0.5.0 - Application entry point
+Eclipse Image Processor v0.5.0 - Application entry point
 Modular structure for token-efficient development.
 """
 
@@ -49,8 +49,8 @@ def main():
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Corona Enhance Filters")
-    app.setApplicationDisplayName("Corona Enhance Filters")
+    app.setApplicationName("Eclipse Image Processor")
+    app.setApplicationDisplayName("Eclipse Image Processor")
     app.setStyle("Fusion")
     app.setStyleSheet(LIGHTROOM_QSS)
     # Tooltips use the inactive palette on some platforms. Set every group so
@@ -67,7 +67,7 @@ def main():
     if QSystemTrayIcon.isSystemTrayAvailable():
         # The small PNG is also readable by the macOS menu bar icon renderer.
         tray = QSystemTrayIcon(QIcon(resource_path("assets/icon-options/03-realce-coronal.png")), window)
-        tray.setToolTip("Corona Enhance Filters")
+        tray.setToolTip("Eclipse Image Processor")
         menu = QMenu(window)
 
         def show_window():
