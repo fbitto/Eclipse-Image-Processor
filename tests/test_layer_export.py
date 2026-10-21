@@ -1,5 +1,6 @@
 """Independent branches, neutral contrast and round-trip of an editable stack."""
 import json
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,11 +10,17 @@ import numpy as np
 import tifffile
 
 from core.filters import FilterWorker
-from core.layer_export import branch_domain, export_layer_package, neutral_layer, overlay, to_u16
+from core.layer_export import branch_domain, export_layer_package, neutral_layer, overlay, to_u16, photoshop_loader
 from core.presentation import render_presentation, stretch_image
 
 
 class LayerExportTests(unittest.TestCase):
+    def test_loader_uses_photoshop_extendscript_layer_blend_constants(self):
+        # ExtendScript Layer.blendMode uses COLORBLEND, unlike ColorBlendMode.COLOR.
+        script = photoshop_loader([dict(file='RGB.tif', mode='Color', opacity_255=255, visible=True)])
+        self.assertEqual(set(re.findall(r'BlendMode\.(\w+)', script)),
+                         {'NORMAL', 'OVERLAY', 'COLORBLEND', 'LINEARLIGHT'})
+
     def test_radial_application_and_outer_limit_are_exported_as_alpha_domain(self):
         p = dict(sx=10., sy=10., sr=2., fnrgf_rad=15, fnrgf_rmax=30, rhef_rad=20)
         fnrgf = branch_domain((21, 21), p, 'fnrgf')

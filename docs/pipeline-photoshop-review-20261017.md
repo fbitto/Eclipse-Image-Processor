@@ -199,7 +199,7 @@ capas/
   07_DetalleMultiescala_Overlay_000_OCULTA.tif
   mascaras/
 receta.json
-CAPAS.md
+Layers.md
 comparativa.jpg
 ```
 

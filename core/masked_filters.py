@@ -8,7 +8,7 @@ not an assertion of byte equivalence to watroo's unmasked implementation.
 from .cancellation import check_cancelled
 import numpy as np
 from scipy.ndimage import gaussian_filter, convolve1d
-from .filters import adaptive_circular_highpass, blend_filter_result
+from .filters import adaptive_circular_highpass, blend_filter_result, ordered_scale_results
 
 
 class MaskedWorker:
@@ -68,12 +68,21 @@ class MaskedWorker:
         data = np.where(self.valid, np.maximum(a, 1e-15), 0).astype(float)
         result = np.zeros_like(a, dtype=float)
         weights = np.ones(len(sigmas)) if weights is None else weights
-        for sigma, weight in zip(sigmas, weights):
+        def scale_detail(item):
+            sigma, weight = item
             check_cancelled()
-            residual = data - self.blur(data, sigma, truncate=truncate, mode='nearest')
-            check_cancelled()
-            deviation = np.sqrt(np.maximum(self.blur(residual**2, sigma, truncate=truncate, mode='nearest'), 0))
-            result += weight*np.arctan(np.divide(residual, deviation, out=np.zeros_like(residual), where=deviation > 0) * k / 100.)
+            support = gaussian_filter(self.valid.astype(float), sigma, truncate=truncate, mode='nearest')
+            def blur(values):
+                check_cancelled()
+                signal = gaussian_filter(np.where(self.valid, values, 0), sigma,
+                                         truncate=truncate, mode='nearest')
+                return np.divide(signal, support, out=np.zeros_like(signal), where=support > 0)
+            residual = data-blur(data)
+            deviation = np.sqrt(np.maximum(blur(residual**2), 0))
+            return weight*np.arctan(np.divide(residual, deviation,
+                    out=np.zeros_like(residual), where=deviation > 0)*k/100.)
+        for detail in ordered_scale_results(scale_detail, zip(sigmas, weights), data):
+            result += detail
         lower, upper = data[self.valid].min(), data[self.valid].max()
         global_image = (data-lower)/(upper-lower) if upper > lower else np.zeros_like(data)
         global_image = np.maximum(global_image, 0) ** (10. / gamma)
@@ -124,6 +133,9 @@ class MaskedWorker:
         gate = np.clip((snr-limit)/limit, 0, 1)
         return np.where(self.valid, a*(1-strength/100.+strength/100.*self.blur(gate, gate_sigma*spatial_scale)), 0).astype(np.float32)
 
+    def run_larson_sekanina(self, a, *args, **kwargs):
+        return np.where(self.valid, self.worker.run_larson_sekanina(a, *args, valid=self.valid, **kwargs), 0)
+
     def run_tangential(self, a, *args, **kwargs):
         return np.where(self.valid, self.worker.run_tangential(a, *args, valid=self.valid, **kwargs), 0)
 
@@ -147,8 +159,22 @@ class MaskedWorker:
             support = self.valid.astype(float)
             for axis in (0, 1):
                 check_cancelled()
-                signal = convolve1d(signal, kernel, axis=axis, mode='reflect')
-                support = convolve1d(support, kernel, axis=axis, mode='reflect')
+                def convolve(values):
+                    if step < 8:
+                        return convolve1d(values, kernel, axis=axis, mode='reflect')
+                    padding = [(0, 0)]*2
+                    padding[axis] = (2*step, 2*step)
+                    extended = np.pad(values, padding, mode='symmetric')
+                    # Match SciPy: double accumulation, round once per axis.
+                    result = np.zeros(values.shape, dtype=float)
+                    for j, coefficient in enumerate(coefficients):
+                        check_cancelled()
+                        slices = [slice(None)]*2
+                        slices[axis] = slice(j*step, j*step+values.shape[axis])
+                        result += coefficient*extended[tuple(slices)]
+                    return result.astype(values.dtype, copy=False)
+                signal = convolve(signal)
+                support = convolve(support)
             return np.divide(signal, support, out=np.zeros_like(signal), where=support > 0)
         # Observed-only bilateral taps; no reflected values across missing data.
         height, width = a.shape

@@ -7,7 +7,11 @@ is resampled; missing or off-frame samples carry zero statistical weight.
 from .cancellation import check_cancelled
 import numpy as np
 from scipy.ndimage import map_coordinates, gaussian_filter1d
+from scipy.fft import rfft, irfft
+import os
 
+
+FFT_MIN_RADIUS = 32
 
 def tangential_detail(image, cx, cy, radius, arc_sigma_deg=3., gain=1.,
                       denoise=0., inner_radius=1., outer_radius=0., fade_px=8., valid=None):
@@ -43,6 +47,23 @@ def tangential_detail(image, cx, cy, radius, arc_sigma_deg=3., gain=1.,
     signal = np.where(mask, a, 0)
     support = mask.astype(float)
     sigma = arc_sigma_deg/360*na
+    # Preserve the finite truncate=3 kernel, rather than an ideal spectral Gaussian.
+    kernel_radius = int(3*sigma+.5)
+    spectrum = None
+    if kernel_radius >= FFT_MIN_RADIUS:
+        offsets = np.arange(-kernel_radius, kernel_radius+1)
+        weights = np.exp(-.5*(offsets/sigma)**2)
+        weights /= weights.sum()
+        kernel = np.zeros(na)
+        np.add.at(kernel, offsets % na, weights)
+        spectrum = rfft(kernel)[:, None]
+    def angular_blur(values):
+        check_cancelled()
+        if spectrum is None:
+            return gaussian_filter1d(values, sigma, axis=0, mode='wrap', truncate=3.)
+        workers = min(4, os.cpu_count() or 1)
+        return irfft(rfft(values, axis=0, workers=workers)*spectrum,
+                     n=na, axis=0, workers=workers)
     active_rows = np.flatnonzero(domain)
     # Partition Cartesian targets once, avoiding a full-canvas scan per tile.
     tiles = (r.ravel()[active_rows]//128).astype(int)
@@ -61,8 +82,8 @@ def tangential_detail(image, cx, cy, radius, arc_sigma_deg=3., gain=1.,
         coordinates = [np.clip(Y, 0, a.shape[0]-1), np.clip(X, 0, a.shape[1]-1)]
         w = map_coordinates(support, coordinates, order=1, mode='nearest', prefilter=False)*inside
         v = map_coordinates(signal, coordinates, order=1, mode='nearest', prefilter=False)*inside
-        sw = gaussian_filter1d(w, sigma, axis=0, mode='wrap', truncate=3.)
-        sv = gaussian_filter1d(v, sigma, axis=0, mode='wrap', truncate=3.)
+        sw = angular_blur(w)
+        sv = angular_blur(v)
         mean = np.divide(sv, sw, out=np.zeros_like(v), where=sw > .05)
         original = np.divide(v, w, out=np.zeros_like(v), where=w > 0)
         d = np.where((w >= 1-1e-6) & (sw > .05), original-mean, 0)

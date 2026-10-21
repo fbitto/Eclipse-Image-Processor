@@ -107,7 +107,7 @@ FILTER_DEFAULTS = {
 }
 
 # ============================================================================
-# QT STYLESHEET - Dark theme with blue accent
+# QT STYLESHEET - Neutral dark editing workspace
 # ============================================================================
 # Alias for backward compatibility with main_new.py
 LIGHTROOM_QSS = '''
@@ -117,6 +117,7 @@ LIGHTROOM_QSS = '''
     }
     
     QWidget {
+        font-size: 11px;
         background-color: #2b2b2b;
         color: #ffffff;
     }
@@ -133,24 +134,24 @@ LIGHTROOM_QSS = '''
     }
     
     QSlider::handle:horizontal {
-        background: #0082c9;
+        background: #666666;
         width: 12px;
         margin: -4px 0;
         border-radius: 6px;
-        border: 1px solid #0066a1;
+        border: 1px solid #777777;
     }
     
     QSlider::handle:horizontal:hover {
-        background: #00a8ff;
+        background: #888888;
     }
     
     QSlider::sub-page:horizontal {
-        background: #0082c9;
+        background: #666666;
         border-radius: 2px;
     }
     
     QPushButton {
-        background-color: #0082c9;
+        background-color: #666666;
         color: white;
         border: none;
         padding: 6px 12px;
@@ -159,11 +160,11 @@ LIGHTROOM_QSS = '''
     }
     
     QPushButton:hover {
-        background-color: #00a8ff;
+        background-color: #888888;
     }
     
     QPushButton:pressed {
-        background-color: #004d7a;
+        background-color: #444444;
     }
     
     QPushButton:disabled {
@@ -180,16 +181,17 @@ LIGHTROOM_QSS = '''
     }
     
     QSpinBox::up-button, QDoubleSpinBox::up-button {
-        background-color: #0082c9;
+        background-color: #666666;
         border: none;
     }
     
     QSpinBox::down-button, QDoubleSpinBox::down-button {
-        background-color: #0082c9;
+        background-color: #666666;
         border: none;
     }
     
     QComboBox {
+        font-size: 11px;
         background-color: #444444;
         color: #ffffff;
         border: 1px solid #555555;
@@ -198,14 +200,14 @@ LIGHTROOM_QSS = '''
     }
     
     QComboBox::drop-down {
-        background-color: #0082c9;
+        background-color: #333333;
         border: none;
     }
     
     QComboBox QAbstractItemView {
         background-color: #444444;
         color: #ffffff;
-        selection-background-color: #0082c9;
+        selection-background-color: #666666;
     }
     
     QCheckBox {
@@ -222,8 +224,8 @@ LIGHTROOM_QSS = '''
     }
     
     QCheckBox::indicator:checked {
-        background-color: #0082c9;
-        border: 1px solid #0066a1;
+        background-color: #666666;
+        border: 1px solid #777777;
     }
     
     QGroupBox {
@@ -248,13 +250,13 @@ LIGHTROOM_QSS = '''
     }
     
     QScrollBar::handle:vertical {
-        background: #0082c9;
+        background: #666666;
         border-radius: 6px;
         min-height: 20px;
     }
     
     QScrollBar::handle:vertical:hover {
-        background: #00a8ff;
+        background: #888888;
     }
     
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
@@ -269,13 +271,13 @@ LIGHTROOM_QSS = '''
     }
     
     QScrollBar::handle:horizontal {
-        background: #0082c9;
+        background: #666666;
         border-radius: 6px;
         min-width: 20px;
     }
     
     QScrollBar::handle:horizontal:hover {
-        background: #00a8ff;
+        background: #888888;
     }
     
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
@@ -293,7 +295,7 @@ LIGHTROOM_QSS = '''
     }
     
     QProgressBar::chunk {
-        background-color: #0082c9;
+        background-color: #666666;
         border-radius: 2px;
     }
     
@@ -305,8 +307,8 @@ LIGHTROOM_QSS = '''
     }
     
     QTabBar::tab:selected {
-        background-color: #0082c9;
-        border: 1px solid #0066a1;
+        background-color: #666666;
+        border: 1px solid #777777;
     }
     
     QTabBar::tab:hover {
@@ -324,7 +326,7 @@ LIGHTROOM_QSS = '''
     }
     
     QMenuBar::item:selected {
-        background-color: #0082c9;
+        background-color: #666666;
     }
     
     QMenu {
@@ -334,7 +336,7 @@ LIGHTROOM_QSS = '''
     }
     
     QMenu::item:selected {
-        background-color: #0082c9;
+        background-color: #666666;
     }
     
     QStatusBar {

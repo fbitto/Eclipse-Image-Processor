@@ -118,27 +118,34 @@ def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
                     profile = gaussian_filter1d(profile, smooth_px/(grid[1]-grid[0]), mode='nearest')
                     local[family, :, k] = np.interp(centers[run], grid, profile)
         target = observed & (bins >= run[0]) & (bins <= run[-1])
-        rr, tt = r[target], theta[target]
-        mean, log_width = np.zeros(rr.size), np.zeros(rr.size)
-        for family, tail in ((0, mean_tail), (1, width_tail)):
+        targets = np.flatnonzero(target)
+        attenuation = np.array([np.linspace(1., mean_tail, order+1),
+                                np.linspace(1., width_tail, order+1)])
+        if cutoff:
+            attenuation[:, -cutoff:] = 0
+        for first in range(0, targets.size, 32768):
             check_cancelled()
-            attenuation = np.linspace(1., tail, order+1)
-            if cutoff:
-                attenuation[-cutoff:] = 0
-            # The log-width DC term sets units, and must never be attenuated.
+            selected = targets[first:first+32768]
+            rr, tt = r.ravel()[selected], theta.ravel()[selected]
+            # Share radial interpolation and angular bases across both families.
+            nodes = centers[run]
+            if len(run) == 1:
+                coefficients = np.broadcast_to(local[:, :1, :], (2, rr.size, local.shape[-1]))
+            else:
+                position = np.clip(rr, nodes[0], nodes[-1])
+                left = np.clip(np.searchsorted(nodes, position, side='right')-1, 0, len(nodes)-2)
+                slopes = (local[:, left+1, :]-local[:, left, :]) / (nodes[left+1]-nodes[left])[None, :, None]
+                coefficients = local[:, left, :]+slopes*(position-nodes[left])[None, :, None]
+            mean, log_width = np.zeros(rr.size), np.zeros(rr.size)
             for k in range(local.shape[-1]):
                 check_cancelled()
                 harmonic = (k+1)//2
-                factor = attenuation[harmonic]
-                if family == 1 and k == 0:
-                    factor = 1.
                 basis = 1. if k == 0 else (np.cos(harmonic*tt) if k % 2 else np.sin(harmonic*tt))
-                values = np.interp(rr, centers[run], local[family, :, k])*basis*factor
-                if family == 0:
-                    mean += values
-                else:
-                    log_width += values
-        floor = np.interp(rr, centers[run], floors[run])
-        width = np.maximum(np.exp(np.clip(log_width, -700, 700)), floor)
-        output[target] = (unit[target]-mean)/width
+                mean += coefficients[0, :, k]*basis*attenuation[0, harmonic]
+                # The log-width DC term sets units and is never attenuated.
+                factor = 1. if k == 0 else attenuation[1, harmonic]
+                log_width += coefficients[1, :, k]*basis*factor
+            floor = np.interp(rr, nodes, floors[run])
+            width = np.maximum(np.exp(np.clip(log_width, -700, 700)), floor)
+            output.ravel()[selected] = (unit.ravel()[selected]-mean)/width
     return output

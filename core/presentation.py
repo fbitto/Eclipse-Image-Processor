@@ -39,5 +39,9 @@ def render_presentation(processed, original, settings):
     alpha = float(settings.get('blend', 1.))
     if not np.isfinite(alpha) or not 0 <= alpha <= 1:
         raise ValueError('Reveal opacity must be between zero and one')
+    if alpha == 0:
+        return stretch_image(original, settings)
+    if alpha == 1:
+        return stretch_image(processed, settings)
     return (alpha * stretch_image(processed, settings)
             + (1 - alpha) * stretch_image(original, settings))

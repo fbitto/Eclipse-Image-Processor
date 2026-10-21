@@ -1,23 +1,19 @@
 """Main application window: EclipseProcessorApp."""
 
 import os
-import time
-from pathlib import Path
 from typing import Optional, Tuple
 
 import cv2
 import numpy as np
 from PySide6.QtCore import QThread, QTimer, Signal, Qt
-from PySide6.QtGui import QFontDatabase, QCloseEvent, QIcon, QImage, QPixmap
+from PySide6.QtGui import QCloseEvent, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
-    QComboBox,
     QCheckBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListView,
     QStyledItemDelegate,
     QMainWindow,
@@ -29,17 +25,17 @@ from PySide6.QtWidgets import (
 )
 import tifffile
 
-from config import LIGHTROOM_QSS, CPU_CORES
+from config import CPU_CORES
 from core.filters import FilterWorker
-from core.pipeline import execute_pipeline, prepare_parameters
+from core.pipeline import prepare_parameters
 from core.presentation import apply_ghs, render_presentation
-from core.layer_export import export_layer_package
-from core.linear_export import export_linear_sources, split_source_channels
+from gui.export_worker import ExportThread
+from core.linear_export import split_source_channels
 from core.colour import neutralize_tse, colour_layer, set_luminosity
 from core.result_cache import parameter_signature
 from gui.filter_controls import add_controls, collect_controls, add_advanced_mode
-from core.image_data import resize_observed, recipe_parameters, normalize_observed
-from gui.components import ClickableLabel, CollapsibleSection, FullRowCheckBox, InWindowTooltips, ScrollSafeSlider, ScrollSafeComboBox
+from core.image_data import resize_observed, normalize_observed
+from gui.components import BUTTON_STYLE, CHECKBOX_STYLE, ClickableLabel, CollapsibleSection, FullRowCheckBox, InWindowTooltips, ScrollSafeSlider, ScrollSafeComboBox
 from gui.factories import (
     create_filter_group,
     create_slider,
@@ -73,6 +69,7 @@ class EclipseProcessorApp(QMainWindow):
         self.source_rgb_white = 1.
         self._colour_cache = None
         self._full_cache = None
+        self._export_thread = None
         self._running_full_job = False
         self._running_signature = None
         self._running_full_source = None
@@ -108,6 +105,12 @@ class EclipseProcessorApp(QMainWindow):
         self.persistent_thread.start()
 
         self._build_ui()
+        for checkbox in self.findChildren(QCheckBox):
+            checkbox.setStyleSheet(CHECKBOX_STYLE)
+            checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        for button in self.findChildren(QPushButton):
+            if not button.isFlat():
+                button.setStyleSheet(BUTTON_STYLE)
         self.in_window_tooltips = InWindowTooltips(self)
 
     def _build_ui(self):
@@ -128,6 +131,7 @@ class EclipseProcessorApp(QMainWindow):
         main_layout.addWidget(self.image_label, stretch=3)
 
         right_container = QWidget()
+        self.control_sidebar = right_container
         right_container.setFixedWidth(380)
         right_container.setStyleSheet("background-color: #2b2b2b; border-radius: 6px;")
         right_layout = QVBoxLayout(right_container)
@@ -146,21 +150,18 @@ class EclipseProcessorApp(QMainWindow):
         top_header_layout.addWidget(self.status_label)
 
         btn_row = QHBoxLayout()
-        self.btn_load = QPushButton("📁 Open Image")
-        self.btn_load.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
+        self.btn_load = QPushButton("Open Image")
         self.btn_load.setToolTip("Open TIFF, FITS, XISF, PNG, JPEG or BMP. Filters use monochrome intensity; source RGB is retained for export. Missing samples remain excluded.")
         self.btn_load.clicked.connect(self.load_image_action)
         btn_row.addWidget(self.btn_load)
 
-        self.btn_compare = QPushButton("👁️ View Original")
-        self.btn_compare.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
+        self.btn_compare = QPushButton("View Original")
         self.btn_compare.setCheckable(True)
         self.btn_compare.setToolTip("Temporarily compare processed and original intensity with the selected display stretch. This comparison does not change the exported Reveal blend.")
         self.btn_compare.clicked.connect(self.toggle_compare_mode)
         btn_row.addWidget(self.btn_compare)
 
         self.btn_auto_calc = QPushButton("Auto Calculate")
-        self.btn_auto_calc.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
         self.btn_auto_calc.setCheckable(True)
         self.btn_auto_calc.setChecked(True)
         self.btn_auto_calc.setToolTip("Recalculate automatically after a 300 ms pause in geometry or filter adjustments")
@@ -176,7 +177,7 @@ class EclipseProcessorApp(QMainWindow):
 
         top_header_layout.addLayout(btn_row)
         self.chk_verify_preview = QCheckBox('Full-resolution verification preview')
-        self.chk_verify_preview.setChecked(True)
+        self.chk_verify_preview.setChecked(False)
         self.chk_verify_preview.setToolTip('Calculate filters at native resolution in the background, then reduce the final rendered result. Export reuses this result when settings match. Disable for a faster approximate preview.')
         self.chk_verify_preview.toggled.connect(self.dispatch_pipeline_request_if_auto)
         top_header_layout.addWidget(self.chk_verify_preview)
@@ -200,11 +201,12 @@ class EclipseProcessorApp(QMainWindow):
         self._build_filters_section(control_layout)
         for section in (self.sec_pre_stretch, self.sec_noise_gate, self.sec_bilateral,
                         self.sec_fnrgf, self.sec_mgn, self.sec_wow, self.sec_rhef,
-                        self.sec_tangential, self.sec_achf):
+                        self.sec_tangential, self.sec_larson_sekanina, self.sec_achf):
             for slider in section.findChildren(QSlider):
                 slider.valueChanged.connect(
                     lambda value, section=section: self.on_filter_slider_released(section, None))
         self._build_stretch_section(control_layout)
+        top_header_layout.insertWidget(2, self.combo_input_state)
         top_header_layout.addWidget(self.chk_calibrate_colour)
         add_advanced_mode(self, top_header_layout)
         top_header_layout.addWidget(self.lbl_colour_hint)
@@ -223,6 +225,7 @@ class EclipseProcessorApp(QMainWindow):
             self.sec_wow: "Wavelets Optimized Whitening: normalize multiscale contrast with optional noise suppression.",
             self.sec_rhef: "Radial Histogram Equalization: map intensities to ranks within radial distributions.",
             self.sec_tangential: "Tangential detail: subtract an angular blur with observed support and retain the Cartesian base.",
+            self.sec_larson_sekanina: "Classic Larson-Sekanina: add the signed residual of two radial/rotational shifts; uses the reference disk center and protects the lunar disk.",
             self.sec_achf: "Adaptive Circular High-Pass Filter: use symmetric accepted neighbor pairs to extract signed detail.",
             self.sec_stretch: "Presentation stretching after the sequential filters; the numerical source remains separate.",
         }
@@ -251,7 +254,7 @@ class EclipseProcessorApp(QMainWindow):
 
         self.lbl_scale_info = QLabel("Scale: 1.0x (100% resolution)")
         self.lbl_scale_info.setToolTip("Pipeline scale compares native image pixels with preview pixels; display scale compares native pixels with the fitted on-screen image. Geometry is entered in native pixels.")
-        self.lbl_scale_info.setStyleSheet("color: #e5a00d; font-size: 10px; font-weight: bold;")
+        self.lbl_scale_info.setStyleSheet("color: #aaaaaa; font-size: 10px;")
         self.sec_geo.content_layout.addWidget(self.lbl_scale_info)
 
         self.txt_x.textChanged.connect(self.trigger_circle_redraw)
@@ -260,8 +263,7 @@ class EclipseProcessorApp(QMainWindow):
         for field in (self.txt_x, self.txt_y, self.txt_r):
             field.textChanged.connect(lambda _: self.dispatch_pipeline_request_if_auto())
 
-        self.btn_auto_moon = QPushButton("🎯 Auto-detect Lunar Disk")
-        self.btn_auto_moon.setStyleSheet("QPushButton { background-color: #3c3c3c; color: #e5a00d; border: 1px solid #555555; border-radius: 4px; padding: 6px; font-weight: bold; font-size: 11px; } QPushButton:hover { background-color: #4a4a4a; border: 1px solid #e5a00d; }")
+        self.btn_auto_moon = QPushButton("Auto-detect Lunar Disk")
         self.btn_auto_moon.setToolTip("Estimate disk geometry from a closed circular missing-data boundary, or use robust contrast normalization, Hough detection and limb refinement. A missing-data boundary is not necessarily the physical lunar limb.")
         self.btn_auto_moon.clicked.connect(self.auto_detect_moon_action)
         self.sec_geo.content_layout.addWidget(self.btn_auto_moon)
@@ -312,7 +314,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sec_pre_stretch.toggled_active.connect(self.on_filter_toggled)
         layout.addWidget(self.sec_pre_stretch)
 
-        denoising_group = create_filter_group("🔇 DENOISING & NOISE SUPPRESSION", layout)
+        denoising_group = create_filter_group("DENOISING & NOISE SUPPRESSION", layout)
         self.sec_noise_gate = CollapsibleSection("RADIAL NOISE GATE", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_noise_gate_str, _ = create_slider(
             "Gate Strength (%)", 0, 100, 10, self.sec_noise_gate.content_layout,
@@ -349,7 +351,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sec_bilateral.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_bilateral_str))
         denoising_group.addWidget(self.sec_bilateral)
 
-        radial_group = create_filter_group("🔄 RADIAL ENHANCEMENT", layout)
+        radial_group = create_filter_group("RADIAL ENHANCEMENT", layout)
         self.sec_fnrgf = CollapsibleSection("FNRGF", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_fnrgf_str, _ = create_slider(
             "Strength (%)", 0, 100, 10, self.sec_fnrgf.content_layout,
@@ -357,17 +359,17 @@ class EclipseProcessorApp(QMainWindow):
             tooltip="Blend percentage of the radial gradient filter (0=off, 100=full effect)"
         )
         self.sl_fnrgf_ord, _ = create_slider(
-            "Fourier Order", 1, 24, 6, self.sec_fnrgf.content_layout,
+            "Fourier order", 1, 24, 6, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
             tooltip="Highest angular Fourier harmonic in the annular brightness and spread models. Higher orders follow finer angular variations; they do not guarantee additional real detail."
         )
         self.sl_fnrgf_seg, _ = create_dyadic_slider(
-            "Angular Segments", 4, 10, 4, self.sec_fnrgf.content_layout,
+            "Angular segments", 4, 10, 4, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
             tooltip="At least the smallest power of two >= 2*Fourier Order+1. Higher manually chosen values are retained when the order changes."
         )
         self.sl_fnrgf_cut, _ = create_slider(
-            "Coefficients to Remove", 0, 7, 0, self.sec_fnrgf.content_layout,
+            "Remove coefficients", 0, 7, 0, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
             tooltip="Remove this many highest-order model coefficients. Zero retains them all; the maximum is Fourier order + 1."
         )
@@ -382,13 +384,13 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_ord.valueChanged.connect(sync_fnrgf_limits)
         sync_fnrgf_limits()
         self.sl_fnrgf_rad, _ = create_slider(
-            "Application Radius (disk radii)", 5, 25, 10, self.sec_fnrgf.content_layout,
+            "Inner radius (R)", 5, 25, 10, self.sec_fnrgf.content_layout,
             divisor=10,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
             tooltip="Process only above this radius, in disk radii"
         )
         self.sl_fnrgf_rmax, _ = create_slider(
-            "Outer Radius (disk radii)", 15, 60, 30, self.sec_fnrgf.content_layout,
+            "Outer radius (R)", 15, 60, 30, self.sec_fnrgf.content_layout,
             divisor=10,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
             tooltip="Outer boundary in disk radii. The upper limit follows the farthest image corner; verify coverage when the disk is off-center."
@@ -397,16 +399,18 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_rad.valueChanged.connect(
             lambda value: self.sl_fnrgf_rmax.setMinimum(value + 1))
         self.sl_fnrgf_bin_px, _ = create_slider(
-            "Ring Width (pixels)", 1, 32, 4, self.sec_fnrgf.content_layout,
+            "Ring width (px)", 1, 32, 4, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf, self.sl_fnrgf_str),
             tooltip="Ring width in pixels at each processing resolution (default 4). Export increases the ring count to retain this width. For logarithmic spacing this is the inner-ring width; outer rings are wider."
         )
 
         w_row = QHBoxLayout()
-        w_lbl = QLabel("Width Function:")
+        w_lbl = QLabel("Spread estimator")
+        w_lbl.setFixedWidth(126)
         w_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
         self.combo_fnrgf_width = ScrollSafeComboBox()
-        self.combo_fnrgf_width.addItems(["Standard Deviation (STD)", "Median Absolute Deviation (MAD)"])
+        self.combo_fnrgf_width.addItems(["STD", "MAD"])
+        self.combo_fnrgf_width.setCurrentIndex(1)
         self.combo_fnrgf_width.setToolTip("Estimate sector spread using standard deviation or 1.4826 times median absolute deviation. MAD makes the spread less sensitive to outliers; the brightness model still uses sector means.")
         self.combo_fnrgf_width.currentIndexChanged.connect(lambda _: self.dispatch_pipeline_request_if_auto())
         w_lbl.setToolTip(self.combo_fnrgf_width.toolTip())
@@ -415,10 +419,12 @@ class EclipseProcessorApp(QMainWindow):
         self.sec_fnrgf.content_layout.addLayout(w_row)
 
         b_row = QHBoxLayout()
-        b_lbl = QLabel("Radial Binning:")
+        b_lbl = QLabel("Radial spacing")
+        b_lbl.setFixedWidth(126)
         b_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
         self.combo_fnrgf_binning = ScrollSafeComboBox()
-        self.combo_fnrgf_binning.addItems(["Linear", "Log-spaced (Corona Optimized)"])
+        self.combo_fnrgf_binning.addItems(["Linear", "Log"])
+        self.combo_fnrgf_binning.setCurrentIndex(1)
         self.combo_fnrgf_binning.setToolTip("Linear bins have equal radial widths. Log-spaced bins are finer near the inner boundary and wider farther out.")
         self.combo_fnrgf_binning.currentIndexChanged.connect(lambda _: self.dispatch_pipeline_request_if_auto())
         b_lbl.setToolTip(self.combo_fnrgf_binning.toolTip())
@@ -427,14 +433,14 @@ class EclipseProcessorApp(QMainWindow):
         self.sec_fnrgf.content_layout.addLayout(b_row)
 
         self.sl_fnrgf_mask, _ = create_slider(
-            "Apply Mask (%)", 0, 100, 0, self.sec_fnrgf.content_layout,
+            "Limb protection (%)", 0, 100, 0, self.sec_fnrgf.content_layout,
             on_release_callback=self.dispatch_pipeline_request_if_auto,
             tooltip="Protect the original input near r/R = 1 with a triangular band from 0.95 to 1.05. Zero disables protection; 100 removes FNRGF at the band center. This is not the missing-data mask."
         )
         self.sec_fnrgf.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_fnrgf_str))
         radial_group.addWidget(self.sec_fnrgf)
 
-        multiscale_group = create_filter_group("📊 MULTI-SCALE / WAVELETS", layout)
+        multiscale_group = create_filter_group("MULTI-SCALE / WAVELETS", layout)
         self.sec_mgn = CollapsibleSection("MGN", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_mgn_str, _ = create_slider(
             "Strength (%)", 0, 100, 10, self.sec_mgn.content_layout,
@@ -474,10 +480,12 @@ class EclipseProcessorApp(QMainWindow):
             tooltip="Wavelets Optimized Whitening blend strength"
         )
         self.sl_wow_scales, _ = create_slider(
-            "Native wavelet scales (0 = Auto)", 0, 10, 0, self.sec_wow.content_layout,
+            "Native wavelet scales", 0, 10, 0, self.sec_wow.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow, self.sl_wow_str),
-            tooltip="0 selects the native-resolution maximum. Threshold controls refer to native wavelet bands. Fast preview adapts these bands approximately to its resolution."
+            tooltip="Integer number of native-resolution wavelet scales, not a power of two. Auto selects the largest count supported by this panel (up to 10). The internal dilation doubles at each scale. Fast preview adapts physical bands approximately."
         )
+        self.sl_wow_scales.setProperty("zero_label", "Auto")
+        update_slider_display(self.sl_wow_scales)
         self.sl_wow_denoise = []
         for scale in range(10):
             slider, _ = create_slider(
@@ -497,7 +505,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sec_wow.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_wow_str))
         multiscale_group.addWidget(self.sec_wow)
 
-        histogram_group = create_filter_group("📈 RADIAL HISTOGRAM EQUALIZATION", layout)
+        histogram_group = create_filter_group("RADIAL HISTOGRAM EQUALIZATION", layout)
         self.sec_rhef = CollapsibleSection("RHEF", has_checkbox=True, is_expanded=False, is_active=False)
         self.combo_rhef_mode = ScrollSafeComboBox()
         self.combo_rhef_mode.addItem("Legacy / compatible", "legacy")
@@ -531,7 +539,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sec_rhef.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_rhef_str))
         histogram_group.addWidget(self.sec_rhef)
 
-        sharpening_group = create_filter_group("✨ SHARPENING", layout)
+        sharpening_group = create_filter_group("SHARPENING", layout)
         self.sec_tangential = CollapsibleSection("TANGENTIAL DETAIL", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_tangential_str, _ = create_slider(
             "Strength (%)", 0, 100, 10, self.sec_tangential.content_layout,
@@ -540,6 +548,14 @@ class EclipseProcessorApp(QMainWindow):
         )
         self.sec_tangential.toggled_active.connect(self.on_filter_toggled)
         sharpening_group.addWidget(self.sec_tangential)
+
+        self.sec_larson_sekanina = CollapsibleSection("LARSON-SEKANINA", has_checkbox=True, is_expanded=False, is_active=False)
+        self.sl_larson_sekanina_str, _ = create_slider(
+            "Strength (%)", 0, 100, 10, self.sec_larson_sekanina.content_layout,
+            on_release_callback=self.dispatch_pipeline_request_if_auto,
+            tooltip="Add the selected percentage of the classic signed residual. No threshold, deringing or range rescaling.")
+        self.sec_larson_sekanina.toggled_active.connect(self.on_filter_toggled)
+        sharpening_group.addWidget(self.sec_larson_sekanina)
 
         self.sec_achf = CollapsibleSection("ACHF", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_achf_str, _ = create_slider(
@@ -592,7 +608,7 @@ class EclipseProcessorApp(QMainWindow):
 
     def _build_stretch_section(self, layout: QVBoxLayout):
         """Build the presentation controls shared by screen and export."""
-        stretch_group = create_filter_group("🌟 FINAL STRETCH (DISPLAY & EXPORT)", layout)
+        stretch_group = create_filter_group("FINAL STRETCH (DISPLAY & EXPORT)", layout)
 
         self.sec_stretch = CollapsibleSection("FINAL STRETCH MODE", has_checkbox=False, is_expanded=True)
         
@@ -619,52 +635,15 @@ class EclipseProcessorApp(QMainWindow):
         ghs_layout.setContentsMargins(0, 4, 0, 4)
         ghs_layout.setSpacing(6)
 
-        sp_header = QHBoxLayout()
-        sp_title = QLabel("Symmetry Point (SP)")
-        sp_title.setToolTip("Brightness level where maximum contrast enhancement occurs (typically shadow region)")
-        sp_header.addWidget(sp_title)
-        self.lbl_ghs_sp = QLabel("0.05")
-        self.lbl_ghs_sp.setToolTip("GHS symmetry point in normalized processed intensity, from 0 to 1. Set it with the slider or shadow picker.")
-        self.lbl_ghs_sp.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-        self.lbl_ghs_sp.setStyleSheet("color: #e5a00d; font-size: 11px; font-weight: bold;")
-        sp_header.addStretch()
-        sp_header.addWidget(self.lbl_ghs_sp)
-        ghs_layout.addLayout(sp_header)
-
-        self.sl_ghs_sp = ScrollSafeSlider(Qt.Orientation.Horizontal)
-        self.sl_ghs_sp.setRange(0, 2000)
-        self.sl_ghs_sp.setValue(100)
-        self.sl_ghs_sp.setToolTip("Adjust the shadow brightness point for maximum contrast (0.000–1.000)")
+        self.sl_ghs_sp, self.lbl_ghs_sp = create_slider_float(
+            "Symmetry point (SP)", 0, 2000, 100, 2000., ghs_layout,
+            tooltip="GHS symmetry point in normalized processed intensity, from 0 to 1. Set it with the slider or shadow picker.",
+            on_release_callback=self.render_matrix_to_screen)
         self.sl_ghs_sp.valueChanged.connect(self.on_sp_slider_changed)
-        self.sl_ghs_sp.sliderReleased.connect(self.render_matrix_to_screen)
-        ghs_layout.addWidget(self.sl_ghs_sp)
 
-        self.btn_pick_sp = QPushButton("🎯 Set SP by Shadow Click")
+        self.btn_pick_sp = QPushButton("Set SP by Shadow Click")
         self.btn_pick_sp.setCheckable(True)
         self.btn_pick_sp.setToolTip("Enable the picker, then click the preview to sample normalized processed intensity before display stretching. The symmetry point is limited to 0–1.")
-        self.btn_pick_sp.setStyleSheet("""
-            QPushButton {
-                background-color: #3c3c3c;
-                color: #e5a00d;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                padding: 6px;
-                font-weight: bold;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-                border: 1px solid #e5a00d;
-            }
-            QPushButton:pressed {
-                background-color: #2a2a2a;
-            }
-            QPushButton:checked {
-                background-color: #4CAF50;
-                color: #ffffff;
-                border: 1px solid #45a049;
-            }
-        """)
         self.btn_pick_sp.clicked.connect(self.toggle_sp_picker_mode)
         ghs_layout.addWidget(self.btn_pick_sp)
 
@@ -740,7 +719,7 @@ class EclipseProcessorApp(QMainWindow):
                 border: 1px solid #606060;
                 border-radius: 0;
                 outline: 0;
-                selection-background-color: #086eae;
+                selection-background-color: #505050;
                 selection-color: #ffffff;
             }
             QListView::item {
@@ -750,7 +729,7 @@ class EclipseProcessorApp(QMainWindow):
                 border: none;
             }
             QListView::item:selected, QListView::item:hover {
-                background-color: #086eae;
+                background-color: #505050;
                 color: #ffffff;
             }
         """)
@@ -773,26 +752,7 @@ class EclipseProcessorApp(QMainWindow):
         self.lbl_colour_hint.setWordWrap(True)
         self.lbl_colour_hint.setStyleSheet("color: #aaaaaa; font-size: 10px;")
         self.chk_export_linear.toggled.connect(lambda _: self.combo_input_state.setVisible(self.chk_export_linear.isChecked() or self.full_source_rgb is not None))
-        layout.addWidget(self.combo_input_state)
-        self.btn_export = QPushButton("💾 Export Final Image")
-        self.btn_export.setStyleSheet("""
-            QPushButton {
-                background-color: #0d6efd;
-                color: #ffffff;
-                font-weight: 700;
-                font-size: 12px;
-                padding: 8px;
-                border: 1px solid #0b5ed7;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #0b5ed7;
-                border-color: #0a58ca;
-            }
-            QPushButton:pressed {
-                background-color: #0a58ca;
-            }
-        """)
+        self.btn_export = QPushButton("Export Final Image")
         self.btn_export.setToolTip("Save the full-resolution final TIFF with presentation stretch and Reveal blend, plus a matching JPEG preview. Color and optional calibration also appear in the verification preview; checked options add separate source/layer packages.")
         self.btn_export.clicked.connect(self.export_image_action)
         layout.addWidget(self.btn_export)
@@ -808,6 +768,7 @@ class EclipseProcessorApp(QMainWindow):
             title="Logarithmic K" if is_log else "Stretch Factor ln(D+1)" if is_ghs else "Stretch Intensity",
         )
 
+        self.sl_stretch.setProperty("reset_value", 2000 if is_ghs else 10)
         self.ghs_container.setVisible(is_ghs)
         if not is_ghs and hasattr(self, "btn_pick_sp") and self.btn_pick_sp.isChecked():
             self.btn_pick_sp.setChecked(False)
@@ -852,7 +813,7 @@ class EclipseProcessorApp(QMainWindow):
         if checked:
             self.sp_picker_active = True
             self.image_label.setCursor(Qt.CursorShape.CrossCursor)
-            self.status_label.setText("🎯 Click on corona shadows to set SP...")
+            self.status_label.setText("Click on corona shadows to set SP...")
             self.status_label.setStyleSheet("color: #e5a00d; font-weight: bold;")
         else:
             self.sp_picker_active = False
@@ -921,7 +882,7 @@ class EclipseProcessorApp(QMainWindow):
                 self.btn_pick_sp.setChecked(False)
                 self.sp_picker_active = False
                 self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
-                self.status_label.setText(f"🎯 SP set to {sample_norm:.3f} (Sample: X:{clamped_x}, Y:{clamped_y})")
+                self.status_label.setText(f"SP set to {sample_norm:.3f} (Sample: X:{clamped_x}, Y:{clamped_y})")
                 self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
                 self.render_matrix_to_screen()
                 return
@@ -957,11 +918,11 @@ class EclipseProcessorApp(QMainWindow):
             return
         self.show_original_mode = checked
         if checked:
-            self.btn_compare.setText("👁️ View Processed")
+            self.btn_compare.setText("View Processed")
             self.status_label.setText("Status: Showing Original")
             self.status_label.setStyleSheet("color: #cc3335; font-weight: bold;")
         else:
-            self.btn_compare.setText("👁️ View Original")
+            self.btn_compare.setText("View Original")
             self.status_label.setText("Status: Showing Processed")
             self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
         self.render_matrix_to_screen()
@@ -1003,6 +964,8 @@ class EclipseProcessorApp(QMainWindow):
         """Run the latest complete recipe; snapshot errors never lock the worker."""
         self.recalculation_timer.stop()
         if self.raw_image is None or self.full_raw_image is None:
+            return
+        if self._export_thread is not None:
             return
         if self.is_processing:
             self.filter_worker.cancel()
@@ -1078,12 +1041,14 @@ class EclipseProcessorApp(QMainWindow):
             "rhef_bin_px": self.sl_rhef_bin.value()/10.0,
             "wow_enabled": self.sec_wow.is_filter_active(),
             "wow_str": self.sl_wow_str.value(),
-            "wow_scales": self.sl_wow_scales.value(),
+            "wow_scales": self.sl_wow_scales.value() or self.sl_wow_scales.maximum(),
             "wow_native_scales": True,
             "wow_denoise": [slider.value()/10 for slider in self.sl_wow_denoise if slider.isEnabled()],
             "wow_bilateral": 1 if self.combo_wow_bilateral.currentIndex() else None,
             "tangential_enabled": self.sec_tangential.is_filter_active(),
             "tangential_str": self.sl_tangential_str.value(),
+            "larson_sekanina_enabled": self.sec_larson_sekanina.is_filter_active(),
+            "larson_sekanina_str": self.sl_larson_sekanina_str.value(),
             "achf_enabled": self.sec_achf.is_filter_active(),
             "achf_str": self.sl_achf_str.value(),
             "achf_kernel": self.sl_achf_kernel.value(),
@@ -1167,6 +1132,7 @@ class EclipseProcessorApp(QMainWindow):
         previous = self.sl_wow_scales.blockSignals(True)
         self.sl_wow_scales.setMaximum(maximum)
         self.sl_wow_scales.blockSignals(previous)
+        update_slider_display(self.sl_wow_scales)
         self.sec_wow.chk_active.setEnabled(min(shape) >= 10)
         if min(shape) < 10:
             self.sec_wow.chk_active.setChecked(False)
@@ -1445,7 +1411,7 @@ class EclipseProcessorApp(QMainWindow):
                 if control is self.combo_input_state:
                     control.setCurrentIndex(control.findData("linear"))
                 else:
-                    control.setChecked(source_rgb is not None if control is self.chk_calibrate_colour else True)
+                    control.setChecked(source_rgb is not None if control is self.chk_calibrate_colour else False)
                 control.blockSignals(blocked)
             self.on_input_state_changed()
             self.combo_input_state.setVisible(source_rgb is not None or self.chk_export_linear.isChecked())
@@ -1488,113 +1454,56 @@ class EclipseProcessorApp(QMainWindow):
             print(f"Detailed file load error: {e}")
 
     def export_image_action(self):
-        """Export the full-resolution processed image."""
+        """Snapshot settings on the GUI thread, calculate/write on an export thread."""
         if self.raw_image is None or self.full_raw_image is None:
             self.status_label.setText("Status: No image loaded")
             return
-
-        try:
-            sx_full = int(self.txt_x.text())
-            sy_full = int(self.txt_y.text())
-            sr_full = int(self.txt_r.text())
-        except ValueError:
-            self.status_label.setText("Status: Invalid Sun center or radius")
+        if self.is_processing or self._export_thread is not None:
             return
-
+        pending_preview = self.recalculation_timer.isActive()
+        self.recalculation_timer.stop()
         file_path, _ = QFileDialog.getSaveFileName(self, "Export Filtered Image", "", "TIFF Files (*.tiff *.tif)")
         if not file_path:
+            if pending_preview:
+                self.dispatch_pipeline_request_if_auto()
             return
-
         if not file_path.lower().endswith((".tiff", ".tif")):
             file_path += ".tiff"
-
         try:
-            export_start = time.time()
-            worker = FilterWorker()
-            scale_factor = self.full_raw_image.shape[0] / float(self.preview_image.shape[0]) if self.preview_image is not None else 1.0
-
-            print(f"\n{'='*80}\n[EXPORT] Full-resolution pipeline starting (Scale: {scale_factor:.2f}x | Multithreaded: {CPU_CORES} CPUs)\n{'='*80}")
-            self.status_label.setText(f"Status: Exporting full resolution ({scale_factor:.2f}x)...")
-            self.status_label.setStyleSheet("color: #e5a00d; font-weight: bold;")
             parameters = self.collect_filter_parameters(self.full_raw_image.shape[:2])
-            display = self.collect_display_parameters()
-            export_layers = self.chk_export_layers.isChecked()
-            export_linear = self.chk_export_linear.isChecked()
-            input_state = self.combo_input_state.currentData()
-            source_rgb = self.full_source_rgb
-            colour_rgb, _, colour_report = self.colour_data()
-            original_path = self.source_path or file_path
-            source = self.full_raw_image.copy()
-            QApplication.processEvents()
-            cached = getattr(self, '_full_cache', None)
-            if cached is not None and cached[0] is self.full_raw_image and cached[1] == parameter_signature(parameters):
-                img = cached[2]
-            else:
-                img = execute_pipeline(worker, source, parameters)
+            cached = self._full_cache
+            processed = (cached[2] if cached is not None and cached[0] is self.full_raw_image
+                         and cached[1] == parameter_signature(parameters) else None)
+            request = dict(source=self.full_raw_image.copy(), parameters=parameters,
+                display=self.collect_display_parameters(), file_path=file_path,
+                original_path=self.source_path or file_path,
+                scale_factor=self.full_raw_image.shape[0]/float(self.preview_image.shape[0]),
+                source_rgb=self.full_source_rgb,
+                calibrate_colour=self.chk_calibrate_colour.isChecked(), white=self.source_rgb_white,
+                export_layers=self.chk_export_layers.isChecked(), export_linear=self.chk_export_linear.isChecked(),
+                input_state=self.combo_input_state.currentData(), processed=processed)
+        except (ValueError, TypeError, OverflowError) as error:
+            self.status_label.setText(f"Status: Export failed - {error}")
+            return
+        self.recalculation_timer.stop()
+        self.presentation_timer.stop()
+        self.control_sidebar.setEnabled(False)
+        self.status_label.setText("Status: Exporting full resolution...")
+        self._export_thread = ExportThread(request, self)
+        self._export_thread.finished.connect(self._on_export_finished)
+        self._export_thread.start()
 
-            img_norm = render_presentation(img, source, display)
-            if colour_rgb is not None:
-                img_norm = set_luminosity(colour_layer(colour_rgb, source, display), img_norm)
-
-            img_16bit = np.clip(img_norm * 65535.0, 0, 65535).astype(np.uint16)
-
-            t0 = time.time()
-            valid = np.isfinite(source)
-            if not valid.all():
-                if img_16bit.ndim == 3:
-                    img_16bit = np.concatenate([img_16bit, (valid.astype(np.uint16)*65535)[..., None]], axis=2)
-                else:
-                    img_16bit = np.stack([img_16bit, valid.astype(np.uint16)*65535], axis=-1)
-            tifffile.imwrite(file_path, img_16bit, photometric="rgb" if colour_rgb is not None else "minisblack",
-                             extrasamples=['unassalpha'] if not valid.all() else None,
-                             compression="zlib", maxworkers=CPU_CORES,
-                             metadata={"scale_factor": scale_factor, "source": original_path,
-                                       "parameters": recipe_parameters(parameters), "display": display,
-                                       "colour_calibration": colour_report,
-                                       "role": "Sequential pipeline presentation; not a linear master"})
-            print(f"[EXPORT: DISK WRITE] Done in {time.time() - t0:.3f}s")
-            
-            # Presentation is already stretched: JPEG uses the same display values.
-            t0 = time.time()
-            jpeg_path = file_path.rsplit('.', 1)[0] + "_preview.jpg"
-            
-            img_gamma = img_norm
-            img_gamma = np.clip(img_gamma * 255.0, 0, 255).astype(np.uint8)
-            
-            # Save as JPEG with high quality
-            if not cv2.imwrite(jpeg_path, cv2.cvtColor(img_gamma, cv2.COLOR_RGB2BGR) if img_gamma.ndim == 3 else img_gamma, [cv2.IMWRITE_JPEG_QUALITY, 95]):
-                raise OSError("Could not write JPEG preview")
-            print(f"[EXPORT: JPEG PREVIEW] Done in {time.time() - t0:.3f}s")
-            
-            layers_path = None
-            if export_layers:
-                candidate = Path(file_path).with_suffix("").with_name(Path(file_path).stem + "_PS_layers")
-                suffix = 2
-                while candidate.exists():
-                    candidate = Path(file_path).with_suffix("").with_name(Path(file_path).stem + f"_PS_layers_{suffix}")
-                    suffix += 1
-                layers_path = export_layer_package(worker, source, parameters, display,
-                                                   original_path, candidate, rgb=colour_rgb, colour_report=colour_report)
-
-            linear_path = None
-            if export_linear:
-                candidate = Path(file_path).with_suffix("").with_name(Path(file_path).stem + "_sources")
-                suffix = 2
-                while candidate.exists():
-                    candidate = Path(file_path).with_suffix("").with_name(Path(file_path).stem + f"_sources_{suffix}")
-                    suffix += 1
-                linear_path = export_linear_sources(source, source_rgb, original_path, candidate, input_state)
-
-            print(f"[EXPORT] Finished successfully in {time.time() - export_start:.3f}s\n{'='*80}\n")
-
-            self.status_label.setText(f"Status: Exported {os.path.basename(file_path)} + preview"
-                                      + (f" + {layers_path.name}" if layers_path else "")
-                                      + (f" + {linear_path.name}" if linear_path else ""))
+    def _on_export_finished(self):
+        thread = self._export_thread
+        self._export_thread = None
+        self.control_sidebar.setEnabled(True)
+        if thread.error is None:
+            self.status_label.setText(thread.message)
             self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
-        except Exception as e:
-            print(f"Export failed with exception: {e}")
-            self.status_label.setText(f"Status: Export failed - {str(e)[:40]}")
-            self.status_label.setStyleSheet("color: #ff0000; font-weight: bold;")
+        else:
+            self.status_label.setText(f"Status: Export failed - {thread.error}")
+            self.status_label.setStyleSheet("color: #ff3333; font-weight: bold;")
+        thread.deleteLater()
 
     def render_matrix_to_screen(self):
         """Render the processed image to the screen with stretch applied."""
@@ -1666,6 +1575,8 @@ class EclipseProcessorApp(QMainWindow):
         self.recalculation_timer.stop()
         self.presentation_timer.stop()
         self.in_window_tooltips.detach()
+        if self._export_thread is not None:
+            self._export_thread.wait()
         if self.persistent_thread is not None and self.persistent_thread.isRunning():
             self.filter_worker.cancel()
             self.persistent_thread.quit()

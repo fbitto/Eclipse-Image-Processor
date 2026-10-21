@@ -1,7 +1,7 @@
 """Additional numerical controls with explicit physical units and conversions."""
 from PySide6.QtWidgets import QCheckBox, QLabel
 from .components import ScrollSafeComboBox
-from .factories import create_slider_float, create_slider, update_slider_display
+from .factories import create_slider_float, create_slider, update_slider_display, set_parameter_title
 
 # attribute, recipe key, title, min, max, default, divisor, help
 CONTROLS = {
@@ -20,8 +20,11 @@ CONTROLS = {
     'rhef': [
         ('rhef_upsilon_high', 'rhef_upsilon_high', 'Upper-tail exponent', 1, 500, 35, 100., 'Exponent for the upper half of the rank curve. One leaves this tail unchanged.'),
         ('rhef_min_count', 'rhef_min_count', 'Minimum samples per ring', 2, 128, 12, 1., 'Continuous mode: fewer positive samples leave the ring unprocessed.'),
-        ('rhef_quantiles', 'rhef_quantiles', 'Quantile samples', 17, 1025, 257, 1., 'Continuous mode: number of quantile nodes interpolating the intensity distribution.'),
+        ('rhef_quantiles', 'rhef_quantiles', 'Quantile samples', 17, 1025, 257, 1., 'Continuous mode: integer number of quantile nodes, including both endpoints. Any count from 17 to 1025 is valid; powers of two are not required. Odd counts include the median node. Default 257 gives 256 intervals. More nodes increase cost.'),
         ('rhef_noise_confidence', 'rhef_noise_confidence', 'Noise confidence (0 = off)', 0, 100, 0, 10., 'Optional blend attenuation where angular spread is near estimated noise. Adjacent-pixel noise is approximate, particularly on correlated stacks.')],
+    'larson_sekanina': [
+        ('larson_sekanina_radial', 'larson_sekanina_radial', 'Radial increment (preview px)', 0, 1000, 0, 10., 'Inward radial sampling offset; scaled for export. Zero isolates angular detail.'),
+        ('larson_sekanina_angular', 'larson_sekanina_angular', 'Angular increment (degrees)', 0, 1800, 10, 10., 'Symmetric rotations by plus/minus this angle. Both increments zero bypass the operator.')],
     'tangential': [
         ('tangential_arc', 'tangential_arc', 'Angular Gaussian sigma (degrees)', 1, 300, 30, 10., 'Angular blur sigma, 0.1 to 30 degrees. The corresponding arc length increases with radius.'),
         ('tangential_gain', 'tangential_gain', 'Detail gain', 0, 50, 10, 10., 'Multiplier of the signed angular residual before the separate Strength blend.'),
@@ -47,7 +50,7 @@ def add_controls(window):
             slider.setObjectName('sl_'+attr)
             setattr(window, 'sl_'+attr, slider)
     window.combo_fnrgf_mode = ScrollSafeComboBox()
-    window.combo_fnrgf_mode.addItem('Continuous / support-aware', 'continuous')
+    window.combo_fnrgf_mode.addItem('Continuous · observed support', 'continuous')
     window.combo_fnrgf_mode.addItem('Reference-compatible', 'legacy')
     window.combo_fnrgf_mode.setToolTip('Continuous fits use observed angular support and interpolated radial models. Compatible mode retains the original reference conventions.')
     window.sec_fnrgf.content_layout.insertWidget(0, window.combo_fnrgf_mode)
@@ -55,7 +58,8 @@ def add_controls(window):
     def mode_changed():
         continuous = window.combo_fnrgf_mode.currentData() == 'continuous'
         for name in ('smooth', 'fade', 'ridge', 'robust'):
-            getattr(window, 'sl_fnrgf_'+name).setEnabled(continuous)
+            slider = getattr(window, 'sl_fnrgf_'+name)
+            slider.parameter_row.setEnabled(continuous)
     window.combo_fnrgf_mode.currentIndexChanged.connect(mode_changed)
     mode_changed()
     window.chk_rhef_symmetric = QCheckBox('Use the same exponent for both tails')
@@ -116,6 +120,8 @@ def collect_controls(window):
 
 def set_control_visible(control, visible):
     """Keep each factory slider's title and displayed value with its track."""
+    if hasattr(control, "parameter_row"):
+        control.parameter_row.setVisible(visible)
     control.setVisible(visible)
     if hasattr(control, 'title_label'):
         control.title_label.setVisible(visible)
@@ -148,14 +154,14 @@ def add_advanced_mode(window, header_layout):
                 window.sl_statistics_outer]
     for family, specs in CONTROLS.items():
         for attr, *_ in specs:
-            if attr not in ('tangential_arc', 'tangential_denoise'):
+            if attr not in ('tangential_arc', 'tangential_denoise', 'larson_sekanina_radial', 'larson_sekanina_angular'):
                 advanced.append(getattr(window, 'sl_' + attr))
 
     def update_visibility(checked):
         for control in advanced:
             set_control_visible(control, checked)
         set_control_visible(window.sl_wow_noise, not checked)
-        window.sl_rhef_upsilon.title_label.setText('Lower-tail Upsilon' if checked else 'Upsilon (both tails)')
+        set_parameter_title(window.sl_rhef_upsilon.title_label, 'Lower-tail Upsilon' if checked else 'Upsilon (both tails)')
         update_custom_values()
 
     def update_custom_values():

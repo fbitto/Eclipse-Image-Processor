@@ -37,11 +37,113 @@ class SliderInteractionTests(unittest.TestCase):
                 self.assertNotIn('value /', slider.toolTip())
                 for tick in (slider.minimum(), slider.maximum()):
                     slider.setValue(tick)
+                    if tick == 0 and slider.property("zero_label"):
+                        self.assertEqual(slider.value_label.text(), slider.property("zero_label"))
+                        continue
                     self.assertEqual(float(slider.value_label.text()),
                                      float(slider.display_formatter(tick)) if slider.display_formatter
                                      else tick / slider.display_divisor)
         for combo in self.window.findChildren(QComboBox):
             self.assertIsInstance(combo, ScrollSafeComboBox)
+
+    def test_fnrgf_compact_editing_reset_and_advanced_visibility(self):
+        w = self.window
+        slider = w.sl_fnrgf_rad
+        slider.value_label.setText('1.7')
+        slider.value_label.editingFinished.emit()
+        self.assertEqual(slider.value(), 17)
+        for invalid in ('nan', 'invalid', '999'):
+            slider.value_label.setText(invalid)
+            slider.value_label.editingFinished.emit()
+            self.assertEqual(slider.value(), 17)
+            self.assertEqual(slider.value_label.text(), '1.7')
+        segments = w.sl_fnrgf_seg
+        segments.value_label.setText('64')
+        segments.value_label.editingFinished.emit()
+        self.assertEqual(segments.value(), 6)
+        segments.value_label.setText('63')
+        segments.value_label.editingFinished.emit()
+        self.assertEqual(segments.value_label.text(), '64')
+        QTest.mouseDClick(slider, Qt.MouseButton.LeftButton)
+        self.assertEqual(slider.value(), 10)
+        self.assertTrue(w.sl_fnrgf_smooth.parameter_row.isHidden())
+        w.chk_advanced.setChecked(True)
+        self.assertFalse(w.sl_fnrgf_smooth.parameter_row.isHidden())
+        w.combo_fnrgf_mode.setCurrentIndex(1)
+        self.assertFalse(w.sl_fnrgf_smooth.value_label.isEnabled())
+        w.combo_fnrgf_mode.setCurrentIndex(0)
+        self.assertTrue(w.sl_fnrgf_smooth.value_label.isEnabled())
+
+    def test_all_parameters_have_editable_rows_and_mode_aware_values(self):
+        from PySide6.QtWidgets import QLineEdit
+        w = self.window
+        for slider in w.findChildren(QSlider):
+            self.assertIsInstance(slider.value_label, QLineEdit)
+            self.assertIsNotNone(slider.parameter_row)
+        w.combo_stretch_mode.setCurrentIndex(1)
+        w.sl_stretch.value_label.setText('1000')
+        w.sl_stretch.value_label.editingFinished.emit()
+        self.assertEqual(w.sl_stretch.value(), 30)
+        w.combo_stretch_mode.setCurrentIndex(2)
+        w.sl_stretch.value_label.setText('3.5')
+        w.sl_stretch.value_label.editingFinished.emit()
+        self.assertEqual(w.sl_stretch.value(), 3500)
+        QTest.mouseDClick(w.sl_stretch, Qt.MouseButton.LeftButton)
+        self.assertEqual(w.sl_stretch.value(), 2000)
+        w.sl_ghs_sp.value_label.setText('0.25')
+        w.sl_ghs_sp.value_label.editingFinished.emit()
+        self.assertEqual(w.sl_ghs_sp.value(), 500)
+        self.assertEqual(w.sl_ghs_lp.maximum(), 500)
+        self.assertEqual(w.sl_ghs_hp.minimum(), 500)
+        for slider in (w.sl_statistics_percentile, w.sl_tangential_outer):
+            self.assertFalse(slider.value_label.isEnabled())
+            previous = slider.value()
+            slider.value_label.setText('1')
+            slider.value_label.editingFinished.emit()
+            self.assertEqual(slider.value(), previous)
+        w.chk_advanced.setChecked(True)
+        self.assertFalse(w.sl_wow_denoise[0].parameter_row.isHidden())
+        w.chk_advanced.setChecked(False)
+        self.assertTrue(w.sl_wow_denoise[0].parameter_row.isHidden())
+
+    def test_long_parameter_labels_put_parenthetical_units_on_second_line(self):
+        w = self.window
+        self.assertEqual(w.sl_mgn_sigmas[0].title_label.text(), 'Scale 1 sigma\n(preview px)')
+        self.assertEqual(w.sl_mgn_trunc.title_label.text(), 'Kernel Truncation\n(Sigmas)')
+        self.assertEqual(w.sl_fnrgf_str.title_label.text(), 'Strength (%)')
+        from gui.factories import update_slider_display
+        update_slider_display(w.sl_mgn_trunc, title='Long parameter name (preview px)')
+        self.assertEqual(w.sl_mgn_trunc.title_label.text(), 'Long parameter name\n(preview px)')
+
+    def test_quantile_counts_remain_integers_and_wow_auto_tracks_the_panel_limit(self):
+        import numpy as np
+        from gui.filter_controls import collect_controls
+        w = self.window
+        w.combo_rhef_mode.setCurrentIndex(1)
+        for count in (17, 32, 33, 257, 1025):
+            w.sl_rhef_quantiles.value_label.setText(str(count))
+            w.sl_rhef_quantiles.value_label.editingFinished.emit()
+            self.assertEqual(collect_controls(w)['rhef_quantiles'], count)
+        w.full_raw_image = np.zeros((80, 96), np.float32)
+        w.raw_image = w.full_raw_image
+        w.preview_image = w.full_raw_image
+        w.update_wow_controls()
+        self.assertEqual(w.sl_wow_scales.value_label.text(), 'Auto')
+        self.assertEqual(w.collect_filter_parameters(w.raw_image.shape)['wow_scales'], 4)
+        for count in (1, 3, 4):
+            w.sl_wow_scales.value_label.setText(str(count))
+            w.sl_wow_scales.value_label.editingFinished.emit()
+            self.assertEqual(w.sl_wow_scales.value(), count)
+        w.sl_wow_scales.value_label.setText('auto')
+        w.sl_wow_scales.value_label.editingFinished.emit()
+        self.assertEqual(w.sl_wow_scales.value(), 0)
+        self.assertEqual(w.sl_wow_scales.value_label.text(), 'Auto')
+        w.sl_wow_scales.setValue(4)
+        w.full_raw_image = np.zeros((20, 24), np.float32)
+        w.update_wow_controls()
+        self.assertEqual(w.sl_wow_scales.maximum(), 2)
+        self.assertEqual(w.sl_wow_scales.value_label.text(), '2')
+        self.assertEqual(sum(s.isEnabled() for s in w.sl_wow_denoise), 2)
 
     def test_known_physical_values_and_finest_symmetry_step(self):
         w = self.window

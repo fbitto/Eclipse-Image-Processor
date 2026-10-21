@@ -11,6 +11,7 @@ import tifffile
 
 from core.filters import FilterWorker
 from core.pipeline import prepare_parameters
+from core.export import export_images
 from gui.app import EclipseProcessorApp
 
 
@@ -60,7 +61,9 @@ class FilterExportTests(unittest.TestCase):
                               side_effect=originals["run_mgn_native"]) as mgn, \
                  patch.object(FilterWorker, "run_fnrgf_native", autospec=True,
                               side_effect=originals["run_fnrgf_native"]) as fnrgf:
-                EclipseProcessorApp.export_image_action(window)
+                export_images(image.copy(), window.collect_filter_parameters(image.shape),
+                              window.collect_display_parameters(), str(path), 'original.tif',
+                              scale_factor=2., export_layers=True)
             self.assertTrue(path.is_file(), window.status_label.setText.call_args)
             self.assertEqual(gate.call_args.kwargs["spatial_scale"], 2)
             self.assertEqual(mgn.call_args.kwargs["sigmas"], (2.5, 5, 10, 20, 40, 80))
@@ -81,5 +84,9 @@ class FilterExportTests(unittest.TestCase):
             package = path.with_name("export_PS_layers")
             manifest = json.loads((package / "recipe.json").read_text())
             self.assertEqual([r["filter"] for r in manifest["layers"]], ["base", "fnrgf", "mgn", "rhef"])
-            self.assertTrue(all(r["file"].startswith("original_") for r in manifest["layers"]))
-            self.assertTrue((package / "Cargar_capas_Photoshop.jsx").is_file())
+            self.assertEqual([r["file"] for r in manifest["layers"]],
+                             ["01_BASE_Normal.tif", "02_FNRGF_Overlay.tif", "03_MGN_Overlay.tif", "04_RHEF_Overlay.tif"])
+            self.assertTrue((package / "Load_layers_Photoshop.jsx").is_file())
+            instructions = (package / "Layers.md").read_text()
+            self.assertIn('File > Scripts > Browse > Load_layers_Photoshop.jsx', instructions)
+            self.assertIn('| Order | File | Blend mode | Effective opacity |', instructions)

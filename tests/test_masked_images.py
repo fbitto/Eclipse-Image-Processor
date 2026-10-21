@@ -163,6 +163,8 @@ class MaskedImageTests(unittest.TestCase):
                 result = Path(tmp)/'final.tif'
                 with patch('gui.app.QFileDialog.getSaveFileName', return_value=(str(result), '')):
                     window.export_image_action()
+                    self.assertTrue(window._export_thread.wait(30000))
+                    app.processEvents()
                 self.assertTrue(result.is_file(), window.status_label.text())
                 final = tifffile.imread(result)
                 self.assertEqual(final.dtype, np.uint16)

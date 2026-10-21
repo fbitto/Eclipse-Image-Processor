@@ -36,6 +36,22 @@ class GuiInteractionTests(unittest.TestCase):
     def tearDown(self):
         self.window.close()
 
+    def test_larson_sekanina_controls_are_available_and_collected(self):
+        w = self.window
+        w.auto_calculate = False
+        w.chk_advanced.setChecked(False)
+        w.sec_larson_sekanina.chk_active.setChecked(True)
+        w.sl_larson_sekanina_str.setValue(25)
+        w.sl_larson_sekanina_radial.setValue(15)
+        w.sl_larson_sekanina_angular.setValue(23)
+        params = w.collect_filter_parameters((64, 64))
+        self.assertTrue(params['larson_sekanina_enabled'])
+        self.assertEqual(params['larson_sekanina_str'], 25)
+        self.assertEqual(params['larson_sekanina_radial'], 1.5)
+        self.assertEqual(params['larson_sekanina_angular'], 2.3)
+        self.assertFalse(w.sl_larson_sekanina_radial.isHidden())
+        self.assertFalse(w.sl_larson_sekanina_angular.isHidden())
+
     def test_linear_colour_and_verification_defaults_reset_on_loading(self):
         from pathlib import Path
         import tempfile
@@ -44,7 +60,7 @@ class GuiInteractionTests(unittest.TestCase):
         w = self.window
         self.assertEqual(w.combo_input_state.currentData(), "linear")
         self.assertTrue(w.chk_calibrate_colour.isChecked())
-        self.assertTrue(w.chk_verify_preview.isChecked())
+        self.assertFalse(w.chk_verify_preview.isChecked())
         w.auto_calculate = False
         yy, xx = np.mgrid[:80, :100]
         mono = (100 + 20000*np.exp(-np.hypot(xx-50, yy-40)/12)).astype(np.uint16)
@@ -54,12 +70,12 @@ class GuiInteractionTests(unittest.TestCase):
                 path = Path(tmp)/f"{name}.tif"
                 tifffile.imwrite(path, image, photometric="rgb" if image.ndim == 3 else "minisblack")
                 w.combo_input_state.setCurrentIndex(2)
-                w.chk_verify_preview.setChecked(False)
+                w.chk_verify_preview.setChecked(True)
                 with patch("gui.app.QFileDialog.getOpenFileName", return_value=(str(path), "")):
                     w.load_image_action()
                 self.assertEqual(w.source_path, str(path), w.status_label.text())
                 self.assertEqual(w.combo_input_state.currentData(), "linear")
-                self.assertTrue(w.chk_verify_preview.isChecked())
+                self.assertFalse(w.chk_verify_preview.isChecked())
                 self.assertEqual(w.chk_calibrate_colour.isChecked(), image.ndim == 3)
                 self.assertEqual(w.chk_calibrate_colour.isEnabled(), image.ndim == 3)
                 np.testing.assert_array_equal(w.full_source_rgb, image if image.ndim == 3 else None)
@@ -207,6 +223,8 @@ class GuiInteractionTests(unittest.TestCase):
         help_event = QHelpEvent(QEvent.Type.ToolTip, point, button.mapToGlobal(point))
         self.application.sendEvent(button, help_event)
         panel = self.window.in_window_tooltips.panel
+        self.assertFalse(panel.isVisible())
+        QTest.qWait(self.window.in_window_tooltips.hover_delay_ms + 100)
         self.assertTrue(panel.isVisible())
         self.assertFalse(panel.isWindow())
         self.assertTrue(self.window.rect().contains(panel.geometry()))
@@ -214,6 +232,30 @@ class GuiInteractionTests(unittest.TestCase):
         self.assertEqual(panel.grab().toImage().pixelColor(3, 3).name(), "#151a21")
         self.application.sendEvent(button, QEvent(QEvent.Type.Leave))
         self.assertFalse(panel.isVisible())
+
+    def test_tooltip_hover_is_cancelled_and_restarted_for_another_control(self):
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QHelpEvent
+        self.window.show()
+        self.application.processEvents()
+        tips = self.window.in_window_tooltips
+        tips.hover_delay_ms = 100
+        def hover(widget):
+            point = QPoint(2, 2)
+            self.application.sendEvent(widget, QHelpEvent(QEvent.Type.ToolTip, point, widget.mapToGlobal(point)))
+        hover(self.window.btn_load)
+        QTest.qWait(40)
+        self.application.sendEvent(self.window.btn_load, QEvent(QEvent.Type.Leave))
+        QTest.qWait(120)
+        self.assertFalse(tips.panel.isVisible())
+        hover(self.window.btn_load)
+        QTest.qWait(60)
+        hover(self.window.btn_compare)
+        QTest.qWait(60)
+        self.assertFalse(tips.panel.isVisible())
+        QTest.qWait(70)
+        self.assertTrue(tips.panel.isVisible())
+        self.assertEqual(tips.label.text(), self.window.btn_compare.toolTip())
 
     def test_only_modified_click_requests_recentering(self):
         label = ClickableLabel()

@@ -19,7 +19,7 @@ from .pipeline import execute_pipeline
 from .presentation import stretch_image
 from .image_data import observed_image, recipe_parameters
 
-FILTERS = ('fnrgf', 'mgn', 'wow', 'rhef', 'usm', 'tangential', 'achf')
+FILTERS = ('fnrgf', 'mgn', 'wow', 'rhef', 'usm', 'tangential', 'larson_sekanina', 'achf')
 PREPARATION = ('pre_stretch', 'noise_gate', 'bilateral')
 
 
@@ -29,7 +29,11 @@ def photoshop_loader(records):
 (function () {
     var layers = RECORDS;
     var folder = File($.fileName).parent;
-    var dialogs = app.displayDialogs;
+    // Snapshot the enum name: do not retain a host enum object across imports.
+    var dialogName = String(app.displayDialogs);
+    var dialogMode = dialogName === String(DialogModes.NO) ? 'NO' :
+        (dialogName === String(DialogModes.ERROR) ? 'ERROR' : 'ALL');
+    var importError = null;
     var result = null;
     function ownedCopy(file) {
         for (var i = 0; i < app.documents.length; i++) {
@@ -61,7 +65,7 @@ def photoshop_loader(records):
                     result.activeLayer = result.layers[0];
                 }
                 result.activeLayer.name = entry.file.replace(/\\.tif$/i, '');
-                result.activeLayer.blendMode = entry.mode === 'Color' ? BlendMode.COLOR : (entry.mode === 'Normal' ? BlendMode.NORMAL : BlendMode.OVERLAY);
+                result.activeLayer.blendMode = entry.mode === 'Color' ? BlendMode.COLORBLEND : (entry.mode === 'Normal' ? BlendMode.NORMAL : (entry.mode === 'Linear Light' ? BlendMode.LINEARLIGHT : BlendMode.OVERLAY));
                 result.activeLayer.opacity = entry.opacity_255 * 100 / 255;
                 result.activeLayer.visible = entry.visible;
             } finally {
@@ -70,8 +74,16 @@ def photoshop_loader(records):
             }
         }
         app.activeDocument = result;
+    } catch (error) {
+        importError = error;
+        throw new Error('Layer import failed at line ' + error.line + ': ' + error.message);
     } finally {
-        app.displayDialogs = dialogs;
+        try {
+            app.displayDialogs = DialogModes[dialogMode];
+        } catch (restoreError) {
+            // A cleanup failure must not hide the actual import error.
+            if (importError === null) throw restoreError;
+        }
     }
 })();
 '''.replace('RECORDS', json.dumps(records, ensure_ascii=True))
@@ -116,6 +128,32 @@ def overlay(base, layer, alpha, opacity):
                      1 - 2 * (1 - base) * (1 - layer))
     weight = alpha * opacity
     return base * (1 - weight) + mixed * weight
+
+
+def linear_light(base, layer, alpha, opacity):
+    """Signed addition: clip(base + 2*layer - 1), then layer opacity/alpha."""
+    mixed = np.clip(base + 2*layer - 1, 0, 1)
+    weight = alpha*opacity
+    return base*(1-weight) + mixed*weight
+
+
+def linear_detail_layer(values, valid, input_span):
+    """Zero-centred linear encoding; one shared scale, no median or tanh.
+
+    L=0.5+D/(2S), so Linear Light adds D/S before gamut clipping.
+    S is at least the prepared input span and the largest absolute residual.
+    """
+    selected = np.asarray(values, dtype=float)[valid]
+    if not np.isfinite(selected).all():
+        raise ValueError('Observed detail must be finite')
+    peak = float(np.max(np.abs(selected))) if selected.size else 0.
+    scale = max(float(input_span), peak)
+    layer = np.full(values.shape, .5)
+    if scale > 0:
+        layer[valid] += selected/(2*scale)
+    return layer, dict(center=0., scale=scale, constant=peak == 0,
+                       formula='0.5 + D/(2*scale)',
+                       blend='clip(base + D/scale, 0, 1) before opacity')
 
 
 def branch_domain(shape, params, name):
@@ -176,7 +214,7 @@ def export_layer_package(worker, source, params, display, original_path, destina
                          compression='zlib', metadata={'role': 'Observed-data validity; 255 observed, 0 missing'})
         tifffile.imwrite(stage / f'{stem}_STATISTICS_SUPPORT.tif', statistics.astype(np.uint8)*255, compression='zlib')
         base16 = to_u16(stretch_image(prepared, display))
-        base_file = f'{stem}_01_BASE_Normal.tif'
+        base_file = '01_BASE_Normal.tif'
         base_rgb = np.repeat(base16[..., None], 3, axis=2)
         if not valid.all():
             base_rgb = np.concatenate([base_rgb, (valid.astype(np.uint16)*65535)[..., None]], axis=2)
@@ -196,7 +234,15 @@ def export_layer_package(worker, source, params, display, original_path, destina
             branch[name + '_str'] = 100
             # FNRGF limb protection belongs in layer alpha, not baked into RGB.
             branch['fnrgf_apply_mask'] = 0
-            filtered = execute_pipeline(worker, prepared.copy(), branch)
+            if name == 'larson_sekanina':
+                from .filters import larson_sekanina_residual
+                # Preserve faint residuals without subtracting a rounded float32 base.
+                filtered = larson_sekanina_residual(
+                    prepared, params['sx'], params['sy'], params['sr'],
+                    params.get('larson_sekanina_radial', 0.),
+                    params.get('larson_sekanina_angular', 1.), valid & statistics)
+            else:
+                filtered = execute_pipeline(worker, prepared.copy(), branch)
             # USM carries its base; ACHF carries background * input.
             # Extract only their signed sharpening residuals.
             # Other operators provide mapped normalized structure; remove DC below.
@@ -209,7 +255,12 @@ def export_layer_package(worker, source, params, display, original_path, destina
             domain = branch_domain(source.shape, params, name) & valid & statistics
             if name == 'rhef' and params.get('rhef_mode') == 'continuous':
                 domain &= prepared > 0
-            layer, mapping = neutral_layer(values, domain)
+            mode = 'Overlay'
+            if name == 'larson_sekanina':
+                layer, mapping = linear_detail_layer(values, domain, np.ptp(prepared[valid]))
+                mode = 'Linear Light'
+            else:
+                layer, mapping = neutral_layer(values, domain)
             alpha = domain.astype(np.float64)
             if name == 'fnrgf' and params.get('fnrgf_apply_mask', 0):
                 yy, xx = np.ogrid[:source.shape[0], :source.shape[1]]
@@ -222,20 +273,19 @@ def export_layer_package(worker, source, params, display, original_path, destina
             layer16, alpha16 = to_u16(layer), to_u16(alpha)
             order = len(records) + 1
             label = name.upper()
-            if name == 'rhef':
-                label += '_' + params.get('rhef_mode', 'legacy')
-            filename = f'{stem}_{order:02d}_{label}_Overlay.tif'
+            filename = f'{order:02d}_{label}_{mode.replace(" ", "")}.tif'
             rgba = np.empty((*source.shape, 4), dtype=np.uint16)
             rgba[..., :3] = layer16[..., None]
             rgba[..., 3] = alpha16
             tifffile.imwrite(stage / filename, rgba, photometric='rgb',
                              extrasamples=['unassalpha'], compression='zlib', metadata=None)
-            composite = overlay(composite, layer16.astype(float) / 65535,
+            blend = linear_light if mode == 'Linear Light' else overlay
+            composite = blend(composite, layer16.astype(float) / 65535,
                                 alpha16.astype(float) / 65535, opacity_255 / 255)
-            records.append(dict(order=order, file=filename, filter=name, mode='Overlay',
+            records.append(dict(order=order, file=filename, filter=name, mode=mode,
                                 opacity=opacity, opacity_255=opacity_255, visible=opacity_255 > 0,
                                 normalization=mapping, operator_strength=100,
-                                signal=('signed sharpening residual' if name in ('usm', 'tangential', 'achf')
+                                signal=('signed sharpening residual' if name in ('usm', 'tangential', 'larson_sekanina', 'achf')
                                         else 'full-strength structure output in mapped input units'),
                                 input='PREPARED_float32', domain='Outside lunar disc and filter application domain'))
         if rgb is not None:
@@ -246,7 +296,7 @@ def export_layer_package(worker, source, params, display, original_path, destina
                                        'colour_calibration': colour_report})
             rgb_layer = to_u16(colour_layer(rgb, source, display))
             order = len(records)+1
-            filename = f'{stem}_{order:02d}_RGB_Color.tif'
+            filename = f'{order:02d}_RGB_Color.tif'
             rgba = np.concatenate([rgb_layer, (valid.astype(np.uint16)*65535)[..., None]], axis=2)
             tifffile.imwrite(stage/filename, rgba, photometric='rgb', extrasamples=['unassalpha'], compression='zlib', metadata=None)
             records.append(dict(order=order, file=filename, filter='colour', mode='Color', opacity=1., opacity_255=255, visible=True))
@@ -274,32 +324,34 @@ def export_layer_package(worker, source, params, display, original_path, destina
                         blend_space='Display numeric values; no extra gamma conversion',
                         alpha='Unassociated; input lunar disc excluded from enhancement layers',
                         composite='Independent branches, distinct from sequential pipeline final',
-                        stretch='Base only; no stretch or gamma after Overlay composition',
-                        normalization='Median-centred tanh; not the AEL numerical algorithms',
+                        stretch='Base only; no stretch or gamma after layer composition',
+                        normalization='Larson-Sekanina: zero-centred linear residual; other detail: median-centred tanh',
                         opacity='min(Strength/100, 0.35) * Reveal; quantized to 1/255',
                         limitations=['Statistics exclusions are recorded separately from missing-data validity.',
                                      'Masked WOW is a normalized-starlet variant, not byte-equivalent to watroo.',
                                      'Native Photoshop rendering not verified.'])
         (stage / 'recipe.json').write_text(json.dumps(manifest, indent=2, allow_nan=False), encoding='utf-8')
-        (stage / 'Cargar_capas_Photoshop.jsx').write_text(photoshop_loader(records), encoding='utf-8')
-        lines = ['# Capas para Photoshop', '',
-                 'En Photoshop: Archivo > Secuencias de comandos > Examinar > Cargar_capas_Photoshop.jsx.',
-                 'El script crea un documento nuevo sin guardar; configura nombres, orden, modos y opacidades.',
-                 'Orden de abajo hacia arriba. SOURCE y PREPARED son archivos numéricos: no apilarlos.',
-                 'La capa RGB superior en modo Color conserva el detalle de las capas inferiores. No cambiarla a Normal.',
-                 'La base ya está estirada. No aplicar gamma ni estirado a las capas de gris medio ni al combinado.',
-                 'El combinado PS usa ramas independientes y difiere del final de la cadena de la aplicación.',
-                 'Importar conservando transparencia (alfa sin premultiplicar). No añadir de nuevo esa máscara.',
-                 'Usar los valores numéricos RGB sin conversión adicional de gamma en la mezcla; no hay ICC calibrado.',
-                 'Para comparar con PS_COMBINED, desactivar ajustes adicionales de mezcla gamma en Photoshop.',
-                 'La opacidad recomendada es un inicio conservador; no reproduce Strength de la cadena.', '',
-                 '| Orden | Archivo | Modo | Opacidad efectiva |', '|---|---|---|---|']
+        (stage / 'Load_layers_Photoshop.jsx').write_text(photoshop_loader(records), encoding='utf-8')
+        lines = ['# Photoshop layers', '',
+                 'In Photoshop: File > Scripts > Browse > Load_layers_Photoshop.jsx.',
+                 'The script creates a new unsaved document and sets layer names, order, blend modes and opacities.',
+                 'Layers are listed from bottom to top. SOURCE and PREPARED are numerical files: do not stack them.',
+                 'The top RGB layer uses Color mode to preserve detail from the layers below. Do not change it to Normal.',
+                 'Larson-Sekanina uses Linear Light: L=0.5+D/(2S), with zero residual at neutral gray; other detail uses Overlay.',
+                 'Linear Light adds D/S before gamut clipping, then applies layer opacity. Its scale is recorded in recipe.json.',
+                 'The base is already stretched. Do not apply gamma or stretching to the neutral-gray layers or the composite.',
+                 'The PS composite uses independent branches and differs from the application\'s sequential pipeline final.',
+                 'Preserve transparency when importing (unassociated alpha). Do not apply that mask again.',
+                 'Blend numerical RGB values without an additional gamma conversion; no calibrated ICC profile is supplied.',
+                 'To compare with PS_COMBINED, disable additional gamma-blending adjustments in Photoshop.',
+                 'Recommended opacities are conservative starting points; they do not reproduce sequential pipeline Strength.', '',
+                 '| Order | File | Blend mode | Effective opacity |', '|---|---|---|---|']
         lines += [f"| {r['order']} | {r['file']} | {r['mode']} | {100*r['opacity_255']/255:.4f}% |" for r in records]
-        lines += ['', 'Los datos ausentes se excluyen del cálculo y se conservan como NaN/alfa cero.',
-                  'En entradas con máscara, WOW usa una variante starlet normalizada por soporte, distinta del backend sin máscara.',
-                  'Gris neutro teórico 0.5 se cuantiza a 32768/65535 en TIFF. No es radiancia.',
-                  'El máximo error por cuantización y la gestión de color de Photoshop deben verificarse allí.']
-        (stage / 'CAPAS.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        lines += ['', 'Missing data are excluded from calculations and retained as NaN or zero alpha.',
+                  'For masked inputs, WOW uses a support-normalized starlet variant that differs from the unmasked backend.',
+                  'Theoretical neutral gray 0.5 is quantized to 32768/65535 in TIFF. These values are not radiance.',
+                  'Maximum quantization error and Photoshop color management must be checked in Photoshop.']
+        (stage / 'Layers.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
         stage.rename(destination)
         return destination
     except Exception:

@@ -157,6 +157,7 @@ class ControlAndVerificationTests(unittest.TestCase):
 
     def test_verification_preview_reuses_native_result_for_actual_rgb_export(self):
         w=self.window
+        w.chk_verify_preview.setChecked(True)
         full=w.full_raw_image;w.full_source_rgb=np.stack([full*.9,full,full*1.2],axis=-1)
         w.raw_image=cv2.resize(full,(48,40),interpolation=cv2.INTER_AREA);w.preview_image=w.raw_image;w.processed_image=w.raw_image.copy()
         w.sec_tangential.chk_active.setChecked(True);w.sl_tangential_str.setValue(40)
@@ -171,8 +172,10 @@ class ControlAndVerificationTests(unittest.TestCase):
         w.chk_export_layers.setChecked(False)
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'actual.tif'
-            with patch('gui.app.QFileDialog.getSaveFileName',return_value=(str(path),'')),patch('gui.app.execute_pipeline',side_effect=AssertionError('native cache was not reused')):
+            with patch('gui.app.QFileDialog.getSaveFileName',return_value=(str(path),'')),patch('core.export.execute_pipeline',side_effect=AssertionError('native cache was not reused')):
                 w.export_image_action()
+                self.assertTrue(w._export_thread.wait(30000))
+                self.app.processEvents()
             np.testing.assert_array_equal(tifffile.imread(path),np.clip(expected*65535,0,65535).astype(np.uint16))
             self.assertEqual(cv2.imread(str(path.with_name('actual_preview.jpg'))).shape,(*full.shape,3))
         # Numeric settings invalidate this cache, whereas display controls do not.
@@ -187,6 +190,7 @@ class ControlAndVerificationTests(unittest.TestCase):
 
     def test_failed_colour_neutralization_is_reported_and_disabled_in_verification(self):
         w=self.window;full=w.full_raw_image
+        w.chk_verify_preview.setChecked(True)
         w.chk_calibrate_colour.setChecked(False)
         w.full_source_rgb=np.repeat(full[...,None],3,axis=-1)
         w._full_cache=(full,parameter_signature(w.collect_filter_parameters(full.shape)),full.copy(),w._preview_revision)

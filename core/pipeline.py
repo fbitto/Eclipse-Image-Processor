@@ -23,7 +23,7 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
     scale = float(np.sqrt(target_shape[0] / preview_shape[0] * target_shape[1] / preview_shape[1]))
     p["spatial_scale"] = scale
     for key in ("bilateral_d", "usm_radius", "achf_kernel", "rhef_bin_px",
-                "fnrgf_smooth", "fnrgf_fade", "tangential_fade", "statistics_guard_px"):
+                "fnrgf_smooth", "fnrgf_fade", "tangential_fade", "larson_sekanina_radial", "statistics_guard_px"):
         if key in p:
             # Apply pixel floors before resizing, preserving the preview footprint.
             value = max(5.0, p[key]) if key in ("bilateral_d", "usm_radius") else p[key]
@@ -66,7 +66,7 @@ def execute_pipeline(worker, raw_image, params):
         raise ValueError("No image supplied")
 
     pipeline_start = time.time()
-    print(f"\n{'='*80}\n[PIPELINE] Execution start (Native Engine - {CPU_CORES} CPUs) - Shape: {raw_image.shape}\n{'='*80}")
+    print(f"\n{'='*80}\n[PIPELINE] Execution start (Native Engine; {CPU_CORES} CPUs available) - Shape: {raw_image.shape}\n{'='*80}")
 
     p = params
     valid = p.get("valid_mask")
@@ -200,11 +200,22 @@ def execute_pipeline(worker, raw_image, params):
 
     check_cancelled()
     if p.get('tangential_enabled', False):
+        step_start = time.time()
         img = worker.run_tangential(
             img, p['tangential_str'], p['sx'], p['sy'], p['sr'],
             arc_sigma=p.get('tangential_arc', 3.), gain=p.get('tangential_gain', 1.),
             denoise=p.get('tangential_denoise', 0.), inner_radius=p.get('tangential_inner', 1.),
             outer_radius=p.get('tangential_outer', 0.), fade_px=p.get('tangential_fade', 8.))
+        print(f"[TANGENTIAL DETAIL] Done in {time.time() - step_start:.3f}s")
+
+    check_cancelled()
+    if p.get('larson_sekanina_enabled', False):
+        step_start = time.time()
+        img = worker.run_larson_sekanina(
+            img, p['larson_sekanina_str'], p['sx'], p['sy'], p['sr'],
+            radial_increment=p.get('larson_sekanina_radial', 0.),
+            angular_increment=p.get('larson_sekanina_angular', 1.))
+        print(f"[LARSON-SEKANINA] Done in {time.time() - step_start:.3f}s")
 
     check_cancelled()
     # STEP 4: ACHF (SYMMETRIC VARIABLE KERNEL)
