@@ -18,23 +18,44 @@ class ColourTests(unittest.TestCase):
         self.rgb = np.stack([.1+.6*self.t, .05+.3*self.t, .025+.15*self.t], axis=-1).astype(np.float32)
         self.mono = self.rgb @ np.array([.299, .587, .114])
 
-    def test_tse_percentiles_ratios_shift_and_integer_white_equivalence(self):
+    def test_gain_only_percentiles_and_integer_white_equivalence(self):
         a, report = neutralize_tse(self.rgb)
         np.testing.assert_allclose(report['ratios'], [1, .5, .25], atol=1e-6)
         np.testing.assert_allclose(a[..., 0], a[..., 1], atol=1e-6)
         np.testing.assert_allclose(a[..., 1], a[..., 2], atol=1e-6)
-        # Independent direct expression of tse-tools's normalized-data recipe.
+        # Independent expression: gains and a common scale, without additive offsets.
         sample = self.rgb[::10, ::10].astype(float)
         low, high = np.percentile(sample.reshape(-1, 3), [1, 99], axis=0)
         ratio = (high-low)/(high-low)[1]
         ratio /= ratio.max()
-        expected = (self.rgb.astype(float)-low)/ratio
-        minimum = min(expected.min(), 0)
-        expected = np.clip((expected-minimum)/(1-minimum), 0, 1)
+        expected = self.rgb.astype(float)/ratio
+        expected /= max(expected.max(),1.)
         np.testing.assert_allclose(a, expected, atol=1e-7)
         scaled, _ = neutralize_tse(self.rgb*65535, 65535)
         np.testing.assert_allclose(a, scaled, atol=2e-7)
         np.testing.assert_array_equal(self.rgb, np.stack([.1+.6*self.t, .05+.3*self.t, .025+.15*self.t], axis=-1).astype(np.float32))
+
+    def test_brightness_gradient_does_not_become_a_colour_gradient(self):
+        brightness=np.geomspace(.001,.95,100*120).reshape(100,120)
+        rgb=brightness[...,None]*np.array([.493,1.,.728])
+        rgb[0,0]=0
+        result,report=neutralize_tse(rgb)
+        positive=brightness>0
+        positive[0,0]=False
+        chroma=result[positive]/result[positive].sum(axis=-1,keepdims=True)
+        np.testing.assert_allclose(chroma,np.full_like(chroma,1/3),atol=1e-7)
+        np.testing.assert_array_equal(result[0,0],0)
+        self.assertFalse(report['background_subtracted'])
+        self.assertGreaterEqual(report['highlight_scale'],1)
+        # Gains estimated on an otherwise neutral ramp must also preserve the
+        # chromaticity of a coloured control at two different brightnesses.
+        controls=rgb.copy()
+        controls[1,1]=[.001,.002,.004]
+        controls[1,2]=[.1,.2,.4]
+        actual,_=neutralize_tse(controls)
+        np.testing.assert_allclose(actual[1,1]/actual[1,1].sum(),
+                                   actual[1,2]/actual[1,2].sum(),atol=1e-7)
+        self.assertTrue(np.all((actual>=0)&(actual<=1)))
 
     def test_calibration_excludes_missing_and_rejects_undetermined_balance(self):
         rgb = self.rgb.copy(); rgb[0, 0] = np.nan

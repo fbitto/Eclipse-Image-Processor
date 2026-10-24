@@ -47,3 +47,5 @@ The earlier study of continuous radial statistics and RHEF used AEL 1.3.2, revis
 ## Other credited components
 
 See the [README software and scientific credits](README.md#algorithm-credits-scientific-references-and-acknowledgments), including sunkit-image, watroo, tse-tools/eclipsetools, EclipseForgeHDR, Eclipse_HDR and GHS. The tse-tools/eclipsetools MIT notice is retained in [docs/third-party/eclipsetools-MIT.txt](docs/third-party/eclipsetools-MIT.txt).
+
+The optional colour neutralization derives P1/P99 channel-span sampling from Samuli Vuorinen’s tse-tools/eclipsetools `color_calibrate` (revision `14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391`). The current local adaptation applies multiplicative gains and one shared highlight scale; it deliberately omits the upstream per-channel background subtraction and additive pedestal shift to avoid brightness-dependent colour changes. Nonpositive samples are clipped only in the display copy; original input is preserved.

@@ -697,7 +697,7 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_input_state.setToolTip("Linear is assumed by default, not automatically confirmed. Change this if the source was already stretched. This declaration also controls color calibration; it does not undo stretching.")
         self.combo_input_state.setVisible(False)
         self.chk_calibrate_colour = FullRowCheckBox("Calibrate color")
-        self.chk_calibrate_colour.setToolTip("Requires linear RGB. Assumes a neutral background and corona: subtracts P1 and balances P99 minus P1. This is not photometric or ICC calibration. Applies to colour verification and export; fast preview stays monochrome. Preserves the original sources.")
+        self.chk_calibrate_colour.setToolTip("Requires linear RGB. Assumes neutral channel spans: balances P99 minus P1 using gains only, without subtracting backgrounds. A common highlight scale preserves channel ratios. This is not photometric or ICC calibration. Applies to colour verification and export; fast preview stays monochrome. Preserves the original sources.")
         self.chk_calibrate_colour.setEnabled(False)
         self.chk_calibrate_colour.setChecked(True)
         self.chk_calibrate_colour.toggled.connect(self.on_colour_changed)

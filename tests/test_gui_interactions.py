@@ -140,7 +140,7 @@ class GuiInteractionTests(unittest.TestCase):
             colorize.assert_not_called()
             self.assertTrue(self.window.image_label.pixmap().toImage().isGrayscale())
         calibrated, _, report = self.window.colour_data()
-        self.assertIn("tse-tools", report["method"])
+        self.assertIn("gain-only", report["method"])
         np.testing.assert_allclose(calibrated[..., 0], calibrated[..., 1], atol=1e-6)
         original, _, original_report = self.window.colour_data(original=True)
         np.testing.assert_array_equal(original, rgb)

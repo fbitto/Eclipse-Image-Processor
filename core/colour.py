@@ -1,18 +1,18 @@
-"""Optional tse-tools neutralization and display-only RGB/mono composition."""
+"""Optional gain-only neutralization derived from tse-tools and display-only RGB/mono composition."""
 import numpy as np
 from .presentation import stretch_image
 
 
 def neutralize_tse(rgb, white=1.):
-    """tse-tools color_calibrate recipe, adapted to explicitly exclude NaN.
+    """Gain-only display neutralization using sampled P99-P1 channel spans.
 
-    Reference: naavis/eclipsetools, commands/utils.py, revision
-    14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391 (MIT).
-    Stride 10, joint (0,1) selection, P1/P99, green-reference ratios,
-    shared negative shift and clipping match the reference for normalized data.
-    Pass white=None for floating HDR in arbitrary units: use a shared finite
-    RGB maximum as a working scale, not a measured saturation/white level.
-    This neutralizes assumed sky/corona colour; it is not an ICC calibration.
+    Derived from tse-tools color_calibrate, revision
+    14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391 (MIT), with NaN exclusion.
+    Unlike that recipe, do not subtract channel backgrounds or add a pedestal:
+    additive offsets can turn intensity gradients into chromatic gradients.
+    A single global highlight scale preserves positive channel ratios.
+    white=None uses a shared HDR working scale, not measured sensor saturation.
+    This assumes neutral sky/corona statistics; it is not ICC calibration.
     """
     a = np.asarray(rgb, dtype=float)
     if a.ndim != 3 or a.shape[-1] != 3:
@@ -38,16 +38,17 @@ def neutralize_tse(rgb, white=1.):
         raise ValueError('Colour calibration needs nonconstant sampled channels')
     ratios = span/span[1]
     ratios /= ratios.max()
-    corrected = (a-background)/ratios
-    # Match the reference shared pedestal shift across all channels. This is
-    # a presentation neutralization; never replace the original linear source.
-    minimum = min(float(corrected[valid].min()), 0.)
-    corrected = np.where(valid[..., None], np.clip((corrected-minimum)/(1-minimum), 0, 1), np.nan)
-    report = dict(method='tse-tools P1/P99 neutralization', reference_revision='14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391',
+    gains=1/ratios
+    corrected=np.maximum(a,0)*gains
+    # One common factor avoids independent channel clipping in bright pixels.
+    highlight_scale=max(float(np.max(corrected[valid])),1.)
+    corrected=np.where(valid[...,None],corrected/highlight_scale,np.nan)
+    report = dict(method='gain-only P1/P99-span neutralization', reference_revision='14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391',
                   white=float(white), white_source=('shared observed maximum with headroom' if automatic else 'declared input white'),
-                  background=background.tolist(), foreground=foreground.tolist(),
-                  ratios=ratios.tolist(), negative_shift=minimum, sampled_pixels=len(selected), stride=10,
-                  assumption='Declared linear input; neutral background and corona; not photometric/ICC calibration')
+                  sample_p1=background.tolist(), sample_p99=foreground.tolist(),
+                  ratios=ratios.tolist(), gains=gains.tolist(), highlight_scale=highlight_scale,
+                  background_subtracted=False, sampled_pixels=len(selected), stride=10,
+                  assumption='Declared linear input; neutral channel spans; not photometric/ICC calibration')
     return corrected.astype(np.float32), report
 
 
