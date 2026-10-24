@@ -89,13 +89,6 @@ class MaskedWorker:
         result = (1-h/100.) * result / len(sigmas) + h/100. * global_image
         return self.mix(a, result, strength)
 
-    def run_usm(self, a, strength, radius, amount):
-        if strength == 0:
-            return a.copy()
-        blurred = self.blur(a, max(.5, radius/10))
-        sharpened = np.clip(a + (a-blurred)*max(.1, amount), a[self.valid].min(), a[self.valid].max())
-        return np.where(self.valid, (1-strength/100.)*a+strength/100.*sharpened, 0).astype(np.float32)
-
     def run_bilateral_denoise(self, a, strength, diameter, sigma_color, sigma_space):
         if strength == 0 or self.span(a) == 0:
             return a.copy()

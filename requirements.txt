@@ -10,6 +10,7 @@
 #     "tifffile>=2026.9.20",
 #     "xisf>=0.9.7",
 #     "watroo==0.0.4",
+#     "psd-tools==1.26.0",
 # ]
 # ///
 
@@ -23,3 +24,6 @@ tifffile>=2026.9.20
 xisf>=0.9.7
 
 watroo==0.0.4
+
+# PSB16 export; low-level record API validated with this version.
+psd-tools==1.26.0

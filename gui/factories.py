@@ -64,7 +64,6 @@ def create_slider(
     slider.display_divisor = divisor
     slider.display_formatter = formatter
     slider.valueChanged.connect(lambda _: update_slider_display(slider))
-    update_slider_display(slider)
     if on_release_callback:
         slider.sliderReleased.connect(on_release_callback)
 
@@ -127,6 +126,7 @@ def create_slider(
             pass
         update_slider_display(slider)
     lbl_val.editingFinished.connect(commit_value)
+    update_slider_display(slider)
     target_layout.addWidget(container)
     return slider, lbl_val
 
@@ -162,6 +162,8 @@ def update_slider_display(slider, *, divisor=None, formatter=None, title=None):
     if value == 0 and slider.property("zero_label"):
         text = slider.property("zero_label")
     slider.value_label.setText(text)
+    slider.value_label.ensurePolished()
+    slider.value_label.setFixedWidth(max(58, slider.value_label.fontMetrics().horizontalAdvance(text) + 12))
 
 
 def create_stepper_input(
@@ -245,6 +247,14 @@ def create_filter_group(group_title: str, control_layout: QVBoxLayout) -> QVBoxL
     header_layout.setContentsMargins(8, 4, 8, 4)
 
     title_label = QLabel(group_title.upper())
+    group_help={
+        'RADIAL ENHANCEMENT':'Radial normalization uses the configured reference disk geometry.',
+        'RADIAL HISTOGRAM EQUALIZATION':'Adjust contrast by ranking original-image intensities within radial distributions.',
+        'MULTI-SCALE / WAVELETS':'Extract contrast at multiple spatial scales from the original input.',
+        'SHARPENING':'Independent signed-detail layers; each starts from the original input.',
+        'BASE STRETCH (DISPLAY & EXPORT)':'Stretch the original base before blending the independent filter layers.',
+    }
+    title_label.setToolTip(group_help[group_title])
     title_label.setStyleSheet("""
         QLabel {
             background: transparent;

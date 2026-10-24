@@ -25,6 +25,6 @@ def resource_path(relative_path: str) -> str:
 def application_icon_path() -> str:
     """Use ICO on Windows and PNG elsewhere, avoiding Qt's ICNS decoder."""
     extension = "ico" if sys.platform == "win32" else "png"
-    base = "assets/icon-options/03-realce-coronal"
+    base = "assets/Eclipse_Image_Processor"
     native_path = resource_path(f"{base}.{extension}")
     return native_path if os.path.isfile(native_path) else resource_path(f"{base}.png")

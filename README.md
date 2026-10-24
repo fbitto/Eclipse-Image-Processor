@@ -1,16 +1,13 @@
 # Eclipse Image Processor
 
-Desktop application for enhancing solar eclipse and corona images with Python and PySide6. It combines radial normalization, multiscale enhancement, sharpening and presentation stretches, with native-resolution TIFF export and independent Photoshop layers.
+**Version 0.6.0 · Francisco Bitto**
+[Source and issues](https://github.com/fbitto/Eclipse-Image-Processor) · [MIT license](LICENSE)
 
-**Author:** Francisco Bitto  
-**Version:** v0.5.0  
-**Repository:** [fbitto/Eclipse-Image-Processor](https://github.com/fbitto/Eclipse-Image-Processor)
+A Python/PySide6 desktop application for enhancing solar-eclipse corona images. Preview, full-resolution verification and export share independent filter layers and Photoshop blend modes. These are visualization products, not calibrated brightness measurements.
 
-## Installation and launch
+## Install and launch
 
-The project declares **Python 3.14 or later**. Use an interpreter for which the dependencies in `requirements.txt` are available. Memory requirements depend on image dimensions, enabled filters and native-resolution layer exports.
-
-From the project directory:
+Use **Python 3.14 or later**, with the dependencies available for your platform. From the project directory:
 
 ```bash
 python3 -m venv .venv
@@ -19,242 +16,116 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-On Windows, create the environment with `python` and activate it in PowerShell:
+On Windows, use `python` to create the environment and activate it with `.venv\Scripts\Activate.ps1`. For a macOS app or DMG, see [build instructions](docs/build-macos.md). Local builds are not a notarized public release.
+
+Dependencies: PySide6 (GUI), NumPy/SciPy (numerical processing), OpenCV/Pillow (image handling), Astropy/xisf (astronomical input), tifffile (TIFF), watroo 0.0.4 (WOW), and psd-tools 1.26.0 (PSB). Install the pinned requirements; the PSB writer relies on the specified low-level API. Keep `requirements.txt` and the inline metadata in `main.py` synchronized.
+
+## Build a standalone application
+
+Build on the target operating system; PyInstaller does not cross-compile these packages. Install the build dependencies in the same environment as the runtime dependencies.
+
+**macOS (Terminal):**
+
+```bash
+.venv/bin/python -m pip install -r requirements.txt -r requirements-build.txt
+.venv/bin/python scripts/build_macos.py --dmg
+```
+
+Output: `dist/Eclipse Image Processor.app` and `.dmg`. Omit `--dmg` for just the app. The build uses `assets/Eclipse_Image_Processor.icns` for Finder/Dock and the matching PNG for Qt and the menu-bar icon. Architecture follows the Python interpreter. See [macOS build details](docs/build-macos.md).
+
+**Windows (PowerShell):**
 
 ```powershell
-.venv\Scripts\Activate.ps1
+.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt
+.venv\Scripts\python.exe scripts/build_windows.py
 ```
 
-| Dependency | Role |
-| --- | --- |
-| PySide6 | Desktop interface and background processing workers |
-| NumPy / SciPy | Arrays, statistics, convolution, interpolation and FFTs |
-| OpenCV / Pillow | Image decoding, resizing and geometry detection |
-| Astropy / xisf | FITS and XISF input |
-| tifffile | TIFF reading and export |
-| watroo 0.0.4 | WOW wavelet backend |
+Output: `dist\Eclipse Image Processor\Eclipse Image Processor.exe`. Distribute the **whole application folder**, including `_internal`. The build embeds `assets/Eclipse_Image_Processor.ico` and version metadata; Qt uses that ICO for the window/taskbar and the matching PNG for the notification-area icon. See [Windows build details](docs/build-windows.md).
 
-`requirements.txt` and the inline script metadata in `main.py` declare the runtime dependencies. Keep them synchronized when changing dependencies. For a standalone macOS `.app` or `.dmg`, follow the [macOS build instructions](docs/build-macos.md). Local builds require separate signing and notarization for public distribution.
+The menu-bar/notification-area icon appears when the desktop supports a system tray. Local builds are unsigned or ad-hoc signed; public signing/notarization is a separate release step. Both builders use `config.APP_VERSION` and include third-party license notices. Rebuild to update an existing package's icon or version.
 
-## Basic workflow
+## Process an image
 
-1. Click **Open Image**. Supported extensions are TIFF, FITS, XISF, PNG, JPEG and BMP; successful decoding depends on the reader and file layout.
-2. Check **Input: linear**, directly below the opening button when applicable. This is a user declaration; it neither detects nor converts the image transfer function.
-3. Check the detected lunar center and radius. Repeat automatic detection, edit the native-pixel geometry, or Ctrl-click / Command-click the image to move the center.
-4. Enable the desired filters and adjust their strength. **Auto Calculate** is enabled by default and waits 650 ms after the latest numerical adjustment. Disable it while editing several settings and refresh manually when ready.
-5. Enable **Full-resolution verification preview** to inspect the native calculation. It is **off by default**; the normal preview is a faster, approximate monochrome calculation with a maximum dimension of 1500 pixels.
-6. Choose the final stretch and **Reveal Opacity**, then click **Export Final Image**.
+1. **Open Image / Settings:** open TIFF, FITS, XISF, PNG, JPEG or BMP, or reopen a settings JSON. Prefer an original linear image. **Input: linear** is an assumption you must check; choosing another input state does not undo a previous stretch.
+2. **Check disk geometry:** inspect the red circle and adjust Center X, Center Y and Radius in original-image pixels. Use **Auto-detect Lunar Disk** or Ctrl-click / Command-click to move the center. A missing-data boundary can be larger than the physical Moon.
+3. **Choose the base stretch:** start with Asinh or Log; use GHS for finer control. The stretch affects the original base, before blending the filter layers.
+4. **Enable filters:** start with one or two, then adjust **Opacity** and **Strength**. Opacity changes the mixture immediately using cached layers; Strength changes the filter's encoded contrast and recalculates that filter. All filter opacities start at 50%.
+5. **Check at full resolution:** the default preview is an approximate monochrome calculation, reduced to at most 1500 pixels on its longest side. Enable **Full-resolution verification preview** before judging fine detail, limb artifacts and noise. RGB color and optional calibration appear in native verification and export.
+6. **Save:** choose **Save Settings Only** for a JSON, or **Export Final Image** for the full-resolution TIFF, JPEG preview and settings JSON. Leave **Also export editable Photoshop layers** enabled to add a layered PSB or TIFF package.
 
-Filter sections and pre-stretch start inactive. The sidebar uses aligned labels, sliders and editable numeric values. Parenthetical units or qualifiers can occupy a second line. Double-clicking a slider restores its default; the mouse wheel scrolls the sidebar without changing slider or dropdown values. Tooltips appear after **800 ms** over a control.
+**Auto Calculate** waits 650 ms after numerical edits. Turn it off to edit several parameters, then use the manual calculation button. Disabling and re-enabling an unchanged filter reuses its cached layer. Native verification layers are reused for export while the source and filter settings match. Independent filters run in parallel within CPU and memory limits.
 
-**Advanced mode** starts off. Hiding advanced controls retains their values. Basic WOW noise-threshold edits update all bands; advanced controls allow separate thresholds. Basic RHEF Upsilon edits link the two tails, while switching modes alone retains existing values.
+The numeric fields are editable. Double-click a slider to restore its default. The mouse wheel scrolls the panel without changing values. Hover for an English tooltip; **Advanced mode** reveals additional settings without resetting hidden values.
 
-### Image data and masks
+## Filters and blending
 
-Processing uses a monochrome float32 image. RGB input is retained separately as float32 for color presentation and optional source export; monochrome conversion uses `0.299R + 0.587G + 0.114B`. Loading does not preserve every source metadata field or the original storage type.
+Every filter starts from the **original linear input**, rather than the output of another filter. Layers are blended in the following order; the combined result is not stretched again.
 
-Nonfinite samples and zero-alpha pixels are missing data. Their support is retained separately from finite pixels excluded only from statistical estimation. Lunar statistical exclusion starts enabled; bright-limb exclusion starts disabled. Check the geometry: a detected circular missing-data boundary is not necessarily the physical lunar limb.
+| Layer | Blend mode | Main use |
+| --- | --- | --- |
+| FNRGF | Multiply | Fourier radial normalization; check radial bounds, angular order and reference geometry. |
+| RHEF | Overlay | Radial histogram equalization; compatible or continuous mode, with Upsilon redistribution. |
+| MGN | Overlay | Local contrast at six Gaussian scales plus a global gamma component. |
+| WOW | Overlay | Wavelet contrast with optional noise suppression and edge-aware processing. |
+| Tangential Detail | Overlay | Angular-blur residuals around the reference center. |
+| Larson–Sekanina | Linear Light | Signed radial/rotational detail. |
+| ACHF | Overlay | Adaptive, ISO 01, ISO 04 and Angular detail layers. |
 
-Float products retain missing samples as NaN; display TIFFs carry transparency and exported validity masks identify observed pixels. JPEG cannot retain transparency. Statistical exclusion has a separate support mask and does not turn finite input pixels into missing observations.
+MGN defaults to sigmas **1.25, 2.5, 5, 10, 20 and 40 original-image pixels**, weights 1, gamma 3.2, k 0.7, h 0.7 and truncation 3. The sliders always show original-image units; only the internal preview sigmas are reduced. Other controls labelled **preview px** scale up for native processing; angular values remain in degrees.
 
-## Processing pipeline
+The ACHF selector chooses which variant to **edit**. Its Include checkboxes enable any combination; the ACHF section's Active checkbox gates the whole family. Each variant retains its own settings. All active ACHF variants are automatically included in layer export; inactive ones are omitted. Angular's default angular sigma is a parameter, not part of its name.
 
-Enabled stages run in this order:
+**Reveal Opacity** scales all filter-layer opacities together. At 0%, only the stretched original base remains. Increase enhancement cautiously: more contrast can reveal noise and processing artifacts as well as structure.
 
-```text
-Pre-stretch → Radial Noise Gate → Edge-preserving Denoise
-            → FNRGF → MGN → WOW → RHEF
-            → Tangential Detail → Larson–Sekanina → ACHF
-            → Final Stretch / Reveal
-```
+Technical notes: [layer composition and cache](docs/layer-composition.md), [continuous RHEF](docs/rhef-continuous.md), [Larson–Sekanina](docs/larson-sekanina.md), [AEL ACHF](docs/achf-ael.md), [GHS](docs/ghs-reference-20261019.md), and [CPU measurements](docs/performance-optimization-20261021.md).
 
-Spatial settings labelled **preview px** are scaled for native processing. Geometry is always expressed in native pixels; angular settings remain in degrees. Preview adaptation is approximate, especially for wavelet bands. Full-resolution verification and final export use the native filter definitions.
+## Settings and export
 
-| Stage | Purpose and principal controls |
-| --- | --- |
-| Pre-stretch | Optional Asinh or logarithmic preparation before enhancement. |
-| Radial Noise Gate | Attenuates weak local contrast; strength, threshold, local scale and gate smoothing. This is an application-specific contrast gate, not a calibrated camera-noise model. |
-| Edge-preserving Denoise | Gradient-weighted Gaussian smoothing, controlled by strength, blur scale and sensitivity. |
-| FNRGF | Fourier radial normalization; model, Fourier order, angular segments, radial bounds, ring width, spread estimator and spacing. |
-| MGN | Multiscale Gaussian normalization; six independently adjustable Gaussian scales and weights, gamma, k, h and kernel truncation. |
-| WOW | Wavelet-optimized whitening; native scale count, noise thresholds and standard or edge-aware processing. |
-| RHEF | Radial histogram equalization; compatible or continuous model, radial sampling and Upsilon redistribution. |
-| Tangential Detail | Signed angular Gaussian-blur residual; angular scale, gain, noise threshold and radial blending. |
-| Larson–Sekanina | Classical symmetric rotational/radial difference; radial and angular increments. |
-| ACHF | Adaptive circular high-pass; support radius, gain, intensity threshold and background retention. |
-| Final Stretch / Reveal | Asinh, logarithmic or GHS presentation and blend with the separately stretched original. |
+**Save Settings Only** writes the current controls and source-image reference to a JSON without calculating filters or writing images. **Open Image / Settings** reloads that JSON and restores the original image and adjustments. Relative and absolute source paths are stored, so the image and JSON can move together. The original image is required; pixels and caches are not embedded. Older version-1 JSON files migrate MGN scales to original-image pixels on load.
 
-### FNRGF
+For image export, choose a TIFF destination. The application writes:
 
-The default model is **Continuous · observed support**, with **MAD** spread estimation and **Log** radial spacing. Continuous statistics fit regularized angular models using observed samples; missing sectors are not treated as zero observations. **Reference-compatible** mode retains the alternative sector convention based on sunkit-image.
+- `<name>.tif` (or `.tiff`): full-resolution 16-bit display composition.
+- `<name>_preview.jpg`: the same presentation at 8-bit JPEG precision.
+- `<name>.json`: reloadable processing settings.
+- Optionally, `<name>_PS_layers.psb`, or a TIFF layer directory with `Load_layers_Photoshop.jsx`, reference composite and recipe.
 
-- Fourier order: 1–24. Angular segments are offered as powers of two, with at least `2 × order + 1` segments; the UI raises the count when required.
-- Ring width: 1–32 processing pixels, default 4. Check inner/outer radii and limb protection against the detected geometry.
-- Advanced controls expose model smoothing, boundary fade, ridge regularization, minimum width, robust iterations, minimum sector population and highest-harmonic weights.
+The default Photoshop format is **PSB, 16-bit layers**. Open it directly in Photoshop; layer names, modes, opacities and transparency are retained. The bottom **00_BACKGROUND_Black** layer fills missing regions visually; hide it to reveal transparency. Original layer masks remain intact. The TIFF alternative includes a Photoshop import script.
 
-The application's range mapping and strength blend differ from the reference implementation's complete output recipe.
+The progress bar advances by export stages, not estimated time. Long filters or PSB verification may remain at one stage for a while. The console reports calculation times and, after completion, whether processing is idle or another update is pending. Existing layer-package destinations receive a numbered suffix. The selected image and settings destinations can be replaced after the save dialog's overwrite confirmation.
 
-### MGN
+The PSB is verified before publication. Its cached composition matches the application's reference; Photoshop can round 16-bit blending slightly when recomputing edited layers. See [PSB validation and limits](docs/psb-export.md).
 
-The six default Gaussian scales are **1.25, 2.5, 5, 10, 20 and 40 preview pixels**, each with weight 1. Default gamma is 3.2, k is 0.7, h is 0.7 and truncation is 3 sigma. Doubling the scales is a useful progression, not a required constraint. A zero scale weight removes its contribution while retaining the fixed six-scale normalization.
+## Input, color and limitations
 
-The dimensionless normalization result is mapped into input units before strength blending. Missing-data and statistical-support paths use normalized filtering.
+- RGB is retained for color presentation; filters use float32 luminance (`0.299 R + 0.587 G + 0.114 B`). Nonfinite values and zero-alpha pixels are missing data. Not all source metadata is preserved.
+- Lunar/statistical exclusions differ from missing-data masks. Verify the center, radius and bright-limb exclusions before trusting radial enhancement.
+- **Calibrate color** is enabled for eligible linear RGB input. It adapts P1/P99 channel neutralization relative to green; it is not photometric or ICC calibration. Insufficient shared samples or constant channels disable it. Floating HDR input uses an observed working scale, not a measured sensor saturation level.
+- PSB and final display images use a black backdrop. Filter layers retain transparency. Display products are not linear masters or scientific brightness measurements.
+- Fast preview and native processing can differ because resampling changes noise and local statistics. Full-resolution verification is authoritative; it does not establish astrophysical reality or eliminate filter artifacts.
 
-### WOW
-
-**Native wavelet scales** accepts **Auto** or an integer count, up to the panel's image-dependent maximum of 10. Auto selects the largest count supported by that panel. The count itself does not need to be a power of two: the internal wavelet dilation doubles between bands.
-
-Edge-aware processing is the default, with bilateral scale 1. Noise thresholds default to zero; basic mode sets one threshold for all bands, and advanced mode exposes each band separately. Fast preview adapts native physical bands approximately.
-
-Complete-support processing uses `watroo==0.0.4`. Explicit-mask processing uses an application-specific support-normalized starlet variant, whose noise thresholds and output are not identical to watroo.
-
-### RHEF
-
-**Legacy / compatible** is the default; **Continuous** is optional. Continuous mode interpolates positive-intensity quantile distributions across radius, retaining input where support is insufficient. It differs from independent per-ring ranking.
-
-Default Upsilon values are 0.35 for both tails, linked in basic mode. Continuous-model **Quantile samples** accepts **every integer from 17 to 1025**, default **257**. It does not require `2^n + 1`; an odd count includes the median, and 257 provides 256 quantile intervals. Noise confidence defaults to zero.
-
-See [continuous RHEF notes](docs/rhef-continuous.md).
-
-### Tangential Detail
-
-The filter subtracts an angular Gaussian blur from the image, using observed-support normalization and periodic angular sampling. Only the signed detail is resampled onto the Cartesian input. Defaults include angular sigma 3°, gain 1 and noise threshold 0. Optional radial limits and boundary fade restrict the effect.
-
-### Classical Larson–Sekanina
-
-The radial/rotational shift-difference method is credited to **S. M. Larson and Z. Sekanina (1984)**, originally developed to enhance cometary structure. See the [original paper](https://doi.org/10.1086/113551) and the full citation under Scientific methods.
-
-For radial increment `dr` and angular increment `dθ`, the signed detail is:
-
-```text
-D(r, θ) = 2 I(r, θ) − I(r − dr, θ − dθ) − I(r − dr, θ + dθ)
-output  = I + (Strength / 100) × D
-```
-
-The default increments are **0 preview pixels** and **1°**. Both zero produce an exact bypass. The implementation uses bilinear sampling and fully observed footprints outside the lunar disk; unsupported positions retain the input. Signed values are not clipped internally.
-
-This implements the classical operator with the existing geometry. PixInsight-specific threshold, deringing and dynamic-range extensions are not included. The independent Photoshop layer uses **Linear Light**. See [implementation and export notes](docs/larson-sekanina.md).
-
-### ACHF
-
-The adaptive neighborhood accepts symmetric opposite pairs according to their intensity difference. Controls cover support radius (1–20 preview pixels), contrast gain (default 2), intensity threshold (default 10%) and background retention (default 10%), followed by the filter strength blend.
-
-This independently implements adaptive circular high-pass principles rather than reproducing Corona 3.0. Cost grows approximately with image pixels × support radius², so large native supports can be expensive.
-
-### Final stretch and color
-
-Asinh and logarithmic stretches provide simple presentation curves. GHS implements the scalar forward equations by David Payne and Mike Cranfield, with symmetry around SP and tangent protections outside LP/HP.
-
-| GHS control | Range / default |
-| --- | --- |
-| Stretch factor ln(D+1) | 0–20 / 2 |
-| Symmetry point SP | 0–1 / 0.05 |
-| Local intensity b | −5–15 / 0 |
-| Shadow protection LP | 0–SP / 0 |
-| Highlight protection HP | SP–1 / 1 |
-| Post-stretch black point | −1 to below white point / 0 |
-| Post-stretch white point | Above black point to 2 / 1 |
-
-The SP picker samples normalized processed intensity before presentation stretching. Black/white points apply a separate linear adjustment after GHS. See [GHS equations and validation](docs/ghs-reference-20261019.md).
-
-Finite intensities are normalized for presentation. **Reveal Opacity**, default 100%, blends separately stretched original and processed images. **View Original** is a temporary comparison and is not saved in exports. The final stretched TIFF is a display product, not a linear scientific master.
-
-For RGB input declared linear, **Calibrate color** starts enabled. The optional tse-tools-derived neutralization uses jointly valid samples, P1 subtraction and P99−P1 channel spans relative to green, followed by range handling. It requires sufficient nonconstant samples. It is disabled for monochrome or input declared nonlinear/unknown. Source exports retain the uncalibrated working input.
-
-Fast preview is monochrome; native verification and final export include source color and optional neutralization. Luminance-guided presentation and color-layer reconstruction operate on display values and do not constitute an ICC-managed Photoshop color-match guarantee.
-
-## Export products
-
-Export runs calculation and file writing in a background worker with a snapshot of the current settings. Sidebar controls are disabled during export; closing waits for completion. A matching cached native result is reused, otherwise native processing is calculated again.
-
-The chosen destination produces:
-
-- **16-bit TIFF**, monochrome or RGB according to the input, with alpha for missing data.
-- **`<name>_preview.jpg`**, using the same display values without a second gamma transformation.
-- Optional Photoshop and source packages in separate folders; existing package folders receive a numbered alternative.
-
-### Independent Photoshop layers
-
-**Also export independent Photoshop layers** starts enabled. The package is named `<destination>_PS_layers`. Layer filenames contain only **two-digit number, filter and blend mode**, for example:
-
-```text
-01_BASE_Normal.tif
-02_FNRGF_Overlay.tif
-03_MGN_Overlay.tif
-04_WOW_Overlay.tif
-05_RHEF_Overlay.tif
-06_TANGENTIAL_Overlay.tif
-07_LARSON_SEKANINA_LinearLight.tif
-08_ACHF_Overlay.tif
-09_RGB_Color.tif
-```
-
-This example includes all enhancement filters and RGB. Only active, nonzero filters are exported, and numbering is contiguous from bottom to top. RHEF's selected model is recorded in the recipe rather than added to its filename.
-
-Each enhancement branch starts from the same prepared input, after optional pre-stretch, noise gate and denoise. These independent branches differ from the sequential final pipeline, so the Photoshop composition is a separate result.
-
-Most detail layers use neutral-centered **Overlay** encoding. Tangential Detail and ACHF remove their base component before encoding. Larson–Sekanina preserves zero-centered signed detail using `L = 0.5 + D/(2S)` for **Linear Light**, where S bounds the input span and detail magnitude. Recommended detail opacity is capped at 35%, incorporates Reveal and is quantized to 1/255. The optional RGB layer uses **Color** at 100%.
-
-The package also contains:
-
-- `<original>_SOURCE_float32.tif` and `<original>_PREPARED_float32.tif`: monochrome working input and shared preparation.
-- `<original>_RGB_COLOUR_INPUT_float32.tif` when RGB is available.
-- `<original>_VALID.tif` and `<original>_STATISTICS_SUPPORT.tif`: observation and statistical support masks.
-- `<original>_PS_COMBINED.tif`: reference composition reconstructed from the exported layers.
-- `recipe.json`, `Layers.md` and `Load_layers_Photoshop.jsx`: parameters, encodings, order, blend modes, opacities and import script.
-
-In Photoshop, use **File > Scripts > Browse** and select the generated JSX. It creates a new unsaved document with the layer settings; existing open documents remain available. Do not apply a fresh stretch or gamma to the neutral detail layers before blending.
-
-### Source working images
-
-**Also export linear images** starts disabled. It creates `<destination>_sources`, containing float32 monochrome/RGB working inputs, a validity mask, `sources.json` and `LEEME.txt`.
-
-Names use `_LINEAR_L_float32.tif` / `_LINEAR_RGB_float32.tif` when the input is declared linear, and `_INPUT_...` otherwise. These are loaded working arrays before filters, presentation and color calibration; they are not byte-for-byte copies of the source file. The linear label reflects the user's declaration, not an inferred calibration.
-
-## CPU performance and responsiveness
-
-Processing currently uses the **CPU**. CPU thread limits are initialized before numerical-library imports; the detected logical CPU count does not mean every operation uses every core. Pipeline stages retain their sequential dependencies.
-
-Independent MGN scales use up to four workers, with a size-dependent memory limit and deterministic ordered reduction. Masked MGN reuses Gaussian support. Masked standard WOW uses sparse five-tap filtering at large dilations. Tangential Detail switches to circular FFT convolution for wide angular kernels; Larson–Sekanina uses rotation matrices instead of per-pixel polar angles.
-
-Native numerical output is cached for verification/export. Numerical recipe changes invalidate the cache; display adjustments reuse it. Preview cancellation is cooperative: active library operations finish before the next cancellation check, and obsolete results are discarded. Display rendering still includes work on the GUI thread.
-
-See the [CPU optimization report](docs/performance-optimization-20261021.md) for measured timings, numerical comparisons and limits. Those measurements describe specific images and settings, not a universal speedup.
-
-## Development and verification
+## Development
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-Tests use deterministic synthetic images and cover numerical behavior, masks, bypasses, presentation, export and GUI controls. Real-image checks remain necessary for lunar geometry, artifacts, interaction and output appearance. For a release, also inspect exported dimensions, TIFF bit depth/alpha, companion JPEG and Photoshop import. Dependency minimums are not a verified platform compatibility matrix.
-
-| Location | Responsibility |
-| --- | --- |
-| `main.py` | CPU initialization and application startup |
-| `gui/app.py`, `gui/factories.py`, `gui/filter_controls.py` | Window, shared controls and filter panels |
-| `core/filters.py` | Active filters and preview worker; edit this rather than the backup copy |
-| `core/continuous_fnrgf.py`, `core/radial_continuous.py`, `core/masked_filters.py` | Continuous and support-aware numerical paths |
-| `core/export.py`, `gui/export_worker.py` | Export calculation, orchestration and background worker |
-| `core/layer_export.py`, `core/linear_export.py` | Photoshop and source packages |
-| `tests/`, `scripts/`, `docs/` | Automated checks, development tools and implementation reports |
-
-`config.py` contains shared styling/constants and legacy defaults. Active GUI defaults are defined by the current controls; legacy defaults are not authoritative for the window.
-
-For slow processing, disable Auto Calculate while editing and reduce unnecessary scales or supports. For radial seams or limb fringes, check geometry, support masks, radial sampling and strength before increasing enhancement. For startup/decoder errors, check the active environment and the terminal error from the relevant dependency.
+`main.py` initializes CPU threading before NumPy imports. Numerical filters live in `core/`, Qt controls in `gui/`, synthetic checks and fixtures in `tests/`, and implementation reports in `docs/`. Test fixtures and third-party license notices must remain in the repository. Build outputs, caches and local astronomical data are ignored.
 
 ## Algorithm credits, scientific references and acknowledgments
 
-Eclipse Image Processor is developed by Francisco Bitto. Its enhancement tools build on the scientific work and software projects credited below. Credit for an algorithm belongs to its original authors; the application adds its own interface, parameter handling, masking, blending and export workflow. Please cite the relevant methods as well as this application when publishing processed images.
+Eclipse Image Processor is developed by Francisco Bitto. Its enhancement tools build on the scientific work and software projects credited below. Credit for an algorithm belongs to its original authors; the application adds its own interface, parameter handling, masking, blending and export workflow. Please cite the relevant methods as well as this application when publishing processed images. Copied/adapted third-party code retains its original authorship; see [third-party attributions](ATTRIBUTIONS.md).
+
+**AEL credit:** Pere Guerra Serra (2026), *Agentic Eclipse Library*, version 1.3.3. This application includes code copied and adapted for the ACHF ISO 01, ISO 04 and Angular variants and the low-level 16-bit PSB writer, under the MIT license. See [full attribution](ATTRIBUTIONS.md).
 
 ### Software and implementation sources
 
 | Project / authors | Contribution to this application |
 | --- | --- |
-| [sunkit-image](https://github.com/sunpy/sunkit-image), the SunPy community and contributors | Numerical implementation reference for MGN, FNRGF, RHEF and Upsilon, particularly version 0.7.0. The array implementations here follow the documented conventions with the differences described above. SunPy and sunkit-image are reference projects, not application runtime dependencies. See their [documentation](https://docs.sunpy.org/projects/sunkit-image/en/stable/) and [license](https://github.com/sunpy/sunkit-image/blob/main/LICENSE). |
+| [sunkit-image](https://github.com/sunpy/sunkit-image), the SunPy community and contributors | Numerical implementation reference for MGN, FNRGF, RHEF and Upsilon, particularly version 0.7.0. The array implementations here follow the documented conventions with application-specific masks, mappings and layer encoding. SunPy and sunkit-image are reference projects, not application runtime dependencies. See their [documentation](https://docs.sunpy.org/projects/sunkit-image/en/stable/) and [license](https://github.com/sunpy/sunkit-image/blob/main/LICENSE). |
 | [watroo / wavelets](https://github.com/frederic-auchere/wavelets), Frédéric Auchère and contributors | Direct runtime backend for standard and bilateral WOW, B3-spline à trous decomposition and wavelet noise tools; pinned to `watroo==0.0.4`. The explicit-mask path is an application-specific normalized-starlet variant, not an identical implementation. See the upstream [MIT license](https://github.com/frederic-auchere/wavelets/blob/master/LICENSE.rst). |
 | [tse-tools / eclipsetools](https://github.com/naavis/eclipsetools), Samuli Vuorinen (`naavis`) | The optional RGB P1/P99 neutralization adapts `color_calibrate` from [revision `14ae3f7`](https://github.com/naavis/eclipsetools/blob/14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391/src/eclipsetools/commands/utils.py), adding explicit nonfinite-data handling and application integration. Copyright © 2025 Samuli Vuorinen; the [MIT notice is retained locally](docs/third-party/eclipsetools-MIT.txt). The upstream package is not required at runtime. |
-| [Agentic Eclipse Library (AEL)](https://github.com/PeterWar/Agentic-Eclipse-Library), Pere Guerra Serra (`PeterWar` / Peter War) | Acknowledged for the study of continuous radial statistics that inspired the independently implemented global continuous RHEF, and for research references concerning observed-pixel masks and adjustable corona layers. The comparison used AEL 1.3.2, [revision `5629b37`](https://github.com/PeterWar/Agentic-Eclipse-Library/tree/5629b37071ec87a32f3cf37b5ce6dfcc8b02ada1). AEL is MIT-licensed, copyright © 2026 Pere Guerra Serra; its package/modules are not bundled or required by this application. See the [comparison and attribution notes](docs/ael-filter-review.md) and [continuous RHEF implementation notes](docs/rhef-continuous.md). |
+| [Agentic Eclipse Library (AEL)](https://github.com/PeterWar/Agentic-Eclipse-Library), **Pere Guerra Serra** (`PeterWar` / Peter War) | **Source code copied and adapted from AEL 1.3.3** for ACHF **ISO 01, ISO 04 and Angular** in `core/ael_achf.py`: radial log-profile fitting, Gaussian/support routines, angular/polar processing and MAD/tanh layer encoding. The production PSB writer in `core/psb_export.py` also copies and adapts AEL’s low-level 16-bit document/layer routines. The research probe directly imports the installed AEL writer. Copyright © 2026 Pere Guerra Serra, MIT; [full attribution](ATTRIBUTIONS.md) and [retained license](docs/third-party/AEL-MIT.txt). Earlier research on continuous RHEF used AEL 1.3.2 as a reference; see [historical comparison](docs/ael-filter-review.md). The adapted ACHF and PSB code is bundled; the upstream package is not required for the application, but is required by the opt-in PSB probe. |
 | [EclipseForgeHDR](https://github.com/naugustin77/EclipseForgeHDR), `naugustin77` and contributors | Source-available research reference, reviewed at [revision `8d68626`](https://github.com/naugustin77/EclipseForgeHDR/tree/8d68626077bff056c8b8773a210b0226325b8699). Comparative reference for support-aware radial models and native-layer preview architecture. The new continuous FNRGF and verification workflow are independently implemented; no upstream source is bundled. See the [research notes](docs/external-filter-ideas-20261019.md) and [implementation checks](docs/filter-controls-20261019.md). |
 | [Eclipse_HDR](https://github.com/LaurentVoillot/Eclipse_HDR), Laurent Voillot | Reviewed at [revision `1d5b9b1`](https://github.com/LaurentVoillot/Eclipse_HDR/tree/1d5b9b10ce0320ad7a331fab65763d50fd3827c0). Comparative reference for radial-model continuity, tangential angular detail, processing masks and optional RHEF noise confidence. The application implements these ideas independently and does not bundle the upstream GPL scripts; see the [research notes](docs/external-filter-ideas-20261019.md). |
 | [GHS](https://github.com/mikec1485/GHS), David Payne and Mike Cranfield | Original GHS method, equations and PixInsight script. The scalar curve here is independently implemented from the [published mathematical specification](https://www.ghsastro.co.uk/doc/tools/GeneralizedHyperbolicStretch/GeneralizedHyperbolicStretch.html), with the author’s script used as a reference; upstream GPL source is not bundled. See [GHS implementation and tests](docs/ghs-reference-20261019.md). |
@@ -266,22 +137,21 @@ Eclipse Image Processor is developed by Francisco Bitto. Its enhancement tools b
 | FNRGF | **Hana Druckmüllerová, Huw Morgan and Shadia Rifai Habbal (2011)**, *Enhancing Coronal Structures with the Fourier Normalizing-radial-graded Filter*, The Astrophysical Journal **737**, 88. [DOI: 10.1088/0004-637X/737/2/88](https://doi.org/10.1088/0004-637X/737/2/88). Fourier radial normalization; numerical conventions also informed by [sunkit-image FNRGF](https://docs.sunpy.org/projects/sunkit-image/en/stable/api/sunkit_image.radial.fnrgf.html), which also cites Hana Druckmüllerová’s doctoral thesis, [*Application of Adaptive Filters in Processing of Solar Corona Images*](https://www.vut.cz/studenti/zav-prace?zp_id=69016). |
 | MGN | **Huw Morgan and Miloslav Druckmüller (2014)**, *Multi-scale Gaussian normalization for solar image processing*, Solar Physics **289**, 2945–2955. [DOI: 10.1007/s11207-014-0523-9](https://doi.org/10.1007/s11207-014-0523-9); [author preprint](https://arxiv.org/abs/1403.6613). Scientific basis of the multiscale Gaussian normalization core. |
 | WOW | **Frédéric Auchère, Elie Soubrié, Gabriel Pelouze and Éric Buchlin (2023)**, *Image enhancement with wavelet-optimized whitening*, Astronomy & Astrophysics **670**, A66. [DOI: 10.1051/0004-6361/202245345](https://doi.org/10.1051/0004-6361/202245345); [open-access paper](https://www.aanda.org/articles/aa/full_html/2023/02/aa45345-22/aa45345-22.html); [author preprint](https://arxiv.org/abs/2212.10134). Scientific basis of standard/bilateral whitening and significance-based denoising supplied by watroo. |
-| RHEF and Upsilon | **Chris R. Gilly and Steven R. Cranmer (2025)**, *Visualization of High Dynamic Range Solar Imagery and the Radial Histogram Equalizing Filter*, Solar Physics **300**, 174. [DOI: 10.1007/s11207-025-02578-x](https://doi.org/10.1007/s11207-025-02578-x); [author preprint](https://arxiv.org/abs/2511.02798). Credit for radial histogram equalization and the Upsilon redistribution function. The compatible mode follows sunkit-image's ranking/branch conventions; the continuous mode adds the AEL-inspired interpolation described above. |
+| RHEF and Upsilon | **Chris R. Gilly and Steven R. Cranmer (2025)**, *Visualization of High Dynamic Range Solar Imagery and the Radial Histogram Equalizing Filter*, Solar Physics **300**, 174. [DOI: 10.1007/s11207-025-02578-x](https://doi.org/10.1007/s11207-025-02578-x); [author preprint](https://arxiv.org/abs/2511.02798). Credit for radial histogram equalization and the Upsilon redistribution function. The compatible mode follows sunkit-image's ranking/branch conventions; the continuous mode adds AEL-inspired interpolation (see the continuous RHEF notes). |
 | Larson–Sekanina | **S. M. Larson and Z. Sekanina (1984)**, *Coma morphology and dust-emission pattern of periodic Comet Halley. I. High-resolution images taken at Mount Wilson in 1910*, The Astronomical Journal **89**, 571–578. [DOI: 10.1086/113551](https://doi.org/10.1086/113551); [original paper via NASA ADS](https://articles.adsabs.harvard.edu/pdf/1984AJ.....89..571L). Credit for the radial/rotational shift-difference method. This application implements a symmetric signed-difference operator for solar-corona enhancement, with its own sampling, support masks, strength blend and Photoshop layer encoding; it does not reproduce PixInsight-specific extensions. |
-| ACHF / adaptive circular high-pass | **Miloslav Druckmüller, Vojtech Rušin and Milan Minarovjech (2006)**, *A new numerical method of total solar eclipse photography processing*, Contributions of the Astronomical Observatory Skalnaté Pleso **36**, 131–148. [Original paper](https://www.astro.sk/caosp/Eedition/FullTexts/vol36no3/pp131-148.pdf), §4.2, equation (7). The application independently implements variable-kernel principles with its own symmetric acceptance, gain and background parameters; it does not reproduce Corona 3.0. |
+| ACHF / adaptive circular high-pass | **Miloslav Druckmüller, Vojtech Rušin and Milan Minarovjech (2006)**, *A new numerical method of total solar eclipse photography processing*, Contributions of the Astronomical Observatory Skalnaté Pleso **36**, 131–148. [Original paper](https://www.astro.sk/caosp/Eedition/FullTexts/vol36no3/pp131-148.pdf), §4.2, equation (7). The adaptive variant independently implements variable-kernel principles with its own symmetric acceptance, gain and background parameters; it does not reproduce Corona 3.0. The separate AEL ISO 01, ISO 04 and Angular variants contain code copied and adapted from Pere Guerra Serra’s AEL implementation, as credited above. |
 | GHS | **David Payne and Mike Cranfield**, *GeneralizedHyperbolicStretch*, [official method and equations, §5.2](https://www.ghsastro.co.uk/doc/tools/GeneralizedHyperbolicStretch/GeneralizedHyperbolicStretch.html) and [original script](https://github.com/mikec1485/GHS). Credit for the five-parameter stretch, symmetry and tangent protections. This is a documented mathematical method/software reference; no separate journal-paper citation is implied. |
 | NRGF background | **Huw Morgan, Shadia Rifai Habbal and Richard Woo (2006)**, *The Depiction of Coronal Structure in White Light Images*, Solar Physics **236**, 263–272. [DOI: 10.1007/s11207-006-0113-6](https://doi.org/10.1007/s11207-006-0113-6); [author preprint](https://arxiv.org/abs/astro-ph/0602174). Foundational radial-normalization reference used in the research review; a separate NRGF stage is not currently exposed in the application. |
 
 ### Other processing and presentation credits
 
 - **Gaussian filtering, histogram ranking, Asinh and logarithmic stretches** are established image-processing techniques. Their application-specific composition and controls are implemented here using NumPy and SciPy; no single new scientific authorship is claimed for these standard operations.
-- **Radial Noise Gate and Edge-preserving Denoise** use application-specific recipes. The Edge-preserving Denoise section mixes Gaussian smoothing according to gradient weights; it is not a canonical bilateral filter. The bilateral WOW backend is separately credited to Auchère and collaborators above.
-- **Tangential Detail:** credit to Laurent Voillot’s Eclipse_HDR for the angular-blur residual approach studied during implementation; the support normalization, periodic sampling, threshold and radial blend here are independently implemented. USM is retained only in legacy APIs.
+- **Tangential Detail:** credit to Laurent Voillot’s Eclipse_HDR for the angular-blur residual approach studied during implementation; the support normalization, periodic sampling, threshold and radial blend here are independently implemented.
 - **Color/Overlay compositing:** the reference layer reconstruction uses the nonseparable `SetLum` / `ClipColor` and Overlay blending conventions documented in [W3C Compositing and Blending Level 1](https://www.w3.org/TR/compositing-1/). The Photoshop JSX applies native blend modes; Adobe Photoshop is a separate product.
 
 ### Supporting open-source libraries
 
-Thanks to the maintainers and contributors of [Python](https://github.com/python/cpython), [Qt / PySide6](https://code.qt.io/cgit/pyside/pyside-setup.git/), [NumPy](https://github.com/numpy/numpy), [SciPy](https://github.com/scipy/scipy), [OpenCV](https://github.com/opencv/opencv), [Pillow](https://github.com/python-pillow/Pillow), [Astropy](https://github.com/astropy/astropy), [xisf](https://pypi.org/project/xisf/) and [tifffile](https://github.com/cgohlke/tifffile). Their roles are listed under Requirements and installation. The optional camera-noise development script also uses [rawpy](https://github.com/letmaik/rawpy).
+Thanks to the maintainers and contributors of [Python](https://github.com/python/cpython), [Qt / PySide6](https://code.qt.io/cgit/pyside/pyside-setup.git/), [NumPy](https://github.com/numpy/numpy), [SciPy](https://github.com/scipy/scipy), [OpenCV](https://github.com/opencv/opencv), [Pillow](https://github.com/python-pillow/Pillow), [Astropy](https://github.com/astropy/astropy), [xisf](https://pypi.org/project/xisf/) [tifffile](https://github.com/cgohlke/tifffile) and [psd-tools](https://github.com/psd-tools/psd-tools) (PSB structures and verification, MIT). Their roles are summarized under Install and launch. The optional camera-noise development script also uses [rawpy](https://github.com/letmaik/rawpy).
 
 Each upstream project retains its own copyright and license. Scientific citations and acknowledgments supplement those notices; this repository's MIT license does not relicense its dependencies. Reference comparisons and independent adaptations do not imply endorsement or identical numerical output.
 
@@ -289,6 +159,6 @@ Each upstream project retains its own copyright and license. Scientific citation
 
 Report reproducible problems through [GitHub Issues](https://github.com/fbitto/Eclipse-Image-Processor/issues), including Python and dependency versions, operating system, filter settings and terminal errors.
 
-When citing the software, identify Francisco Bitto, *Eclipse Image Processor*, **v0.5.0** (or the exact release/commit used) and the repository URL. Include the relevant scientific-method citations above for the filters used.
+When citing the software, identify Francisco Bitto, *Eclipse Image Processor*, **v0.6.0** (or the exact release/commit used) and the repository URL. Include the relevant scientific-method citations above for the filters used.
 
 Licensed under the [MIT License](LICENSE).

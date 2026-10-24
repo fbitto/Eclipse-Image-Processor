@@ -9,7 +9,7 @@ from core.filters import FilterWorker
 
 class ExportSpatialScaleTests(unittest.TestCase):
     def parameters(self, target, **overrides):
-        p = dict(sx=750, sy=750, sr=200, bilateral_d=3, usm_radius=5,
+        p = dict(sx=750, sy=750, sr=200, bilateral_d=3,
                  achf_kernel=5, rhef_bin_px=1, fnrgf_nbins=80,
                  wow_scales=8, wow_denoise=[1, 2, 3], wow_str=32,
                  achf_threshold=10, mgn_gam=30)
@@ -18,8 +18,7 @@ class ExportSpatialScaleTests(unittest.TestCase):
 
     def test_native_export_preserves_physical_widths_and_dimensionless_controls(self):
         p = self.parameters(3000)
-        self.assertEqual(p["bilateral_d"] / 10, 1)  # preview effective sigma 0.5
-        self.assertEqual(p["usm_radius"] / 10, 1)
+        self.assertNotIn("bilateral_d", p)
         self.assertEqual(p["achf_kernel"], 10)
         self.assertEqual(p["rhef_bin_px"], 2)
         self.assertEqual(p["fnrgf_nbins"], 160)
@@ -27,10 +26,21 @@ class ExportSpatialScaleTests(unittest.TestCase):
         self.assertEqual(p["wow_denoise"], [1, 1, 2, 3])
         self.assertEqual((p["wow_str"], p["achf_threshold"], p["mgn_gam"]), (32, 10, 30))
 
+    def test_mgn_uses_native_pixel_sigmas_independent_of_preview_size(self):
+        sigmas=(1.25,2.5,5,10,20,40)
+        p=dict(sx=100,sy=100,sr=20,mgn_sigmas=sigmas,mgn_weights=(1,)*6)
+        for preview in ((1500,1500),(750,750)):
+            native=prepare_parameters(p,(3000,3000),preview,(3000,3000))
+            self.assertEqual(native['mgn_sigmas'],sigmas)
+            small=prepare_parameters(p,(3000,3000),preview,preview)
+            np.testing.assert_allclose(small['mgn_sigmas'],np.array(sigmas)*preview[0]/3000)
+            self.assertEqual(small['mgn_weights'],(1,)*6)
+        self.assertEqual(p['mgn_sigmas'],sigmas)
+
     def test_noninteger_resize_and_preview_auto(self):
         p = self.parameters(2560)
         self.assertEqual(p["wow_scales"], 9)
-        self.assertAlmostEqual(p["mgn_sigmas"][0], 1.25 * 2560 / 1500)
+        self.assertAlmostEqual(p["mgn_sigmas"][0], 1.25 * 2560 / 3000)
         self.assertEqual(self.parameters(3000, wow_scales=0)["wow_scales"], 9)
         self.assertEqual(self.parameters(1500)["wow_denoise"], [1, 2, 3])
         self.assertEqual(self.parameters(1500)["wow_scales"], 8)

@@ -17,7 +17,7 @@ def filter_calls(worker, strength=50):
         "RHEF": lambda a: worker.run_rhef_native(a, strength, 10, 35, 32, 32, 8),
         "MGN": lambda a: worker.run_mgn_native(a, strength, 32, 70, 70, 3),
         "WOW": lambda a: worker.run_wow_native(a, strength, 3),
-        "USM": lambda a: worker.run_usm(a, strength, 10, 2),
+        "tangential": lambda a: worker.run_tangential(a, strength, 32, 32, 8),
         "ACHF": lambda a: worker.run_achf(a, strength, 20, 20, 32, 32, 8),
     }
 
@@ -118,7 +118,7 @@ class FilterStabilityTests(unittest.TestCase):
             mgn_enabled=True, mgn_str=10, mgn_gam=32,
             wow_enabled=True, wow_str=10, wow_scales=3, wow_denoise=[1, 2, 3],
             rhef_enabled=True, rhef_str=10, rhef_rad=10, rhef_upsilon=35,
-            usm_enabled=True, usm_str=10, usm_radius=10, usm_sigma=2,
+            tangential_enabled=True, tangential_str=10, tangential_arc=10, tangential_gain=2,
             achf_enabled=True, achf_str=10, achf_kernel=20, achf_boost=20,
             sx=32, sy=32, sr=8,
         )

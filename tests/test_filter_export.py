@@ -16,6 +16,36 @@ from gui.app import EclipseProcessorApp
 
 
 class FilterExportTests(unittest.TestCase):
+    def test_final_images_are_written_only_after_layers_succeed(self):
+        image=np.ones((8,10),np.float32)
+        with tempfile.TemporaryDirectory() as tmp:
+            destination=Path(tmp)/'final.tif'
+            jpeg=Path(tmp)/'final_preview.jpg'
+            def layers(*args, **kwargs):
+                self.assertFalse(destination.exists())
+                self.assertFalse(jpeg.exists())
+                return Path(tmp)/'layers'
+            updates=[]
+            with patch('core.export.export_layer_package',side_effect=layers) as package:
+                export_images(image,{}, {},str(destination),'source.fits',
+                              export_layers=True,processed=image,progress=lambda value,label:updates.append((value,label)))
+            self.assertEqual([label for _,label in updates],[
+                'Preparing export','Calculating filters','Writing layer package',
+                'Composing final image','Writing TIFF','Writing JPEG','Export complete'])
+            self.assertEqual(updates[0][0],0)
+            self.assertEqual(updates[-1][0],100)
+            self.assertEqual([value for value,_ in updates],sorted(value for value,_ in updates))
+            package.assert_called_once()
+            self.assertTrue(destination.exists())
+            self.assertTrue(jpeg.exists())
+            failed=Path(tmp)/'failed.tif'
+            with patch('core.export.export_layer_package',side_effect=ValueError('layer failure')):
+                with self.assertRaisesRegex(ValueError,'layer failure'):
+                    export_images(image,{}, {},str(failed),'source.fits',
+                                  export_layers=True,processed=image)
+            self.assertFalse(failed.exists())
+            self.assertFalse((Path(tmp)/'failed_preview.jpg').exists())
+
     def test_scaled_kernels_bins_and_real_16bit_tiff_and_jpeg(self):
         image = np.random.default_rng(81).uniform(100, 5000, (128, 160)).astype(np.float32)
         enabled = {"noise_gate", "fnrgf", "mgn"}
@@ -25,11 +55,10 @@ class FilterExportTests(unittest.TestCase):
             collect_display_parameters=lambda: dict(mode="asinh", strength=12, blend=.65),
             colour_data=lambda: (None, None, None),
             chk_export_layers=Mock(isChecked=lambda: True),
-            chk_export_linear=Mock(isChecked=lambda: False),
             combo_input_state=Mock(currentData=lambda: "unknown"), full_source_rgb=None,
             txt_x=Mock(text=lambda: "80"), txt_y=Mock(text=lambda: "64"), txt_r=Mock(text=lambda: "16"),
         )
-        for name in ("pre_stretch", "noise_gate", "bilateral", "fnrgf", "mgn", "wow", "rhef", "usm", "achf"):
+        for name in ("pre_stretch", "noise_gate", "bilateral", "fnrgf", "mgn", "wow", "rhef", "tangential", "achf"):
             setattr(window, f"sec_{name}", Mock(is_filter_active=lambda n=name: n in enabled))
         values = dict(noise_gate_str=10, noise_gate_thr=10,
                       fnrgf_str=32, fnrgf_ord=6, fnrgf_seg=4, fnrgf_cut=0,
@@ -65,8 +94,8 @@ class FilterExportTests(unittest.TestCase):
                               window.collect_display_parameters(), str(path), 'original.tif',
                               scale_factor=2., export_layers=True)
             self.assertTrue(path.is_file(), window.status_label.setText.call_args)
-            self.assertEqual(gate.call_args.kwargs["spatial_scale"], 2)
-            self.assertEqual(mgn.call_args.kwargs["sigmas"], (2.5, 5, 10, 20, 40, 80))
+            gate.assert_not_called()
+            self.assertEqual(mgn.call_args.kwargs["sigmas"], (1.25, 2.5, 5, 10, 20, 40))
             self.assertEqual(fnrgf.call_args.args[8], 40)
             exported = tifffile.imread(path)
             self.assertEqual(exported.dtype, np.uint16)
@@ -83,9 +112,9 @@ class FilterExportTests(unittest.TestCase):
             np.testing.assert_array_equal(exported, (expected * 65535).astype(np.uint16))
             package = path.with_name("export_PS_layers")
             manifest = json.loads((package / "recipe.json").read_text())
-            self.assertEqual([r["filter"] for r in manifest["layers"]], ["base", "fnrgf", "mgn", "rhef"])
+            self.assertEqual([r["filter"] for r in manifest["layers"]], ["base", "fnrgf", "rhef", "mgn"])
             self.assertEqual([r["file"] for r in manifest["layers"]],
-                             ["01_BASE_Normal.tif", "02_FNRGF_Overlay.tif", "03_MGN_Overlay.tif", "04_RHEF_Overlay.tif"])
+                             ["01_BASE_Normal.tif", "02_FNRGF_Overlay.tif", "03_RHEF_Overlay.tif", "04_MGN_Overlay.tif"])
             self.assertTrue((package / "Load_layers_Photoshop.jsx").is_file())
             instructions = (package / "Layers.md").read_text()
             self.assertIn('File > Scripts > Browse > Load_layers_Photoshop.jsx', instructions)

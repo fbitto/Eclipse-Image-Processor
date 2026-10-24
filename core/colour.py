@@ -10,13 +10,24 @@ def neutralize_tse(rgb, white=1.):
     14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391 (MIT).
     Stride 10, joint (0,1) selection, P1/P99, green-reference ratios,
     shared negative shift and clipping match the reference for normalized data.
+    Pass white=None for floating HDR in arbitrary units: use a shared finite
+    RGB maximum as a working scale, not a measured saturation/white level.
     This neutralizes assumed sky/corona colour; it is not an ICC calibration.
     """
     a = np.asarray(rgb, dtype=float)
-    if a.ndim != 3 or a.shape[-1] != 3 or not np.isfinite(white) or white <= 0:
-        raise ValueError('Colour calibration needs RGB and a positive input white')
-    a = a/white
+    if a.ndim != 3 or a.shape[-1] != 3:
+        raise ValueError('Colour calibration needs an RGB image')
     valid = np.isfinite(a).all(axis=-1)
+    automatic = white is None
+    if automatic:
+        if not valid.any():
+            raise ValueError('Colour calibration needs finite RGB observations')
+        # One common scale preserves channel ratios and arbitrary input units.
+        maximum = float(np.max(a,where=valid[...,None],initial=-np.inf))
+        white = maximum * (1 + 1e-6)
+    if not np.isfinite(white) or white <= 0:
+        raise ValueError('Colour calibration needs a positive input white or positive HDR observations')
+    a = a/white
     small = a[::10, ::10]
     selected = small[np.isfinite(small).all(axis=-1) & (small > 0).all(axis=-1) & (small < 1).all(axis=-1)]
     if len(selected) < 2:
@@ -33,7 +44,8 @@ def neutralize_tse(rgb, white=1.):
     minimum = min(float(corrected[valid].min()), 0.)
     corrected = np.where(valid[..., None], np.clip((corrected-minimum)/(1-minimum), 0, 1), np.nan)
     report = dict(method='tse-tools P1/P99 neutralization', reference_revision='14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391',
-                  white=float(white), background=background.tolist(), foreground=foreground.tolist(),
+                  white=float(white), white_source=('shared observed maximum with headroom' if automatic else 'declared input white'),
+                  background=background.tolist(), foreground=foreground.tolist(),
                   ratios=ratios.tolist(), negative_shift=minimum, sampled_pixels=len(selected), stride=10,
                   assumption='Declared linear input; neutral background and corona; not photometric/ICC calibration')
     return corrected.astype(np.float32), report

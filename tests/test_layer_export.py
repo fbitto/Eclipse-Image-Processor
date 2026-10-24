@@ -19,7 +19,7 @@ class LayerExportTests(unittest.TestCase):
         # ExtendScript Layer.blendMode uses COLORBLEND, unlike ColorBlendMode.COLOR.
         script = photoshop_loader([dict(file='RGB.tif', mode='Color', opacity_255=255, visible=True)])
         self.assertEqual(set(re.findall(r'BlendMode\.(\w+)', script)),
-                         {'NORMAL', 'OVERLAY', 'COLORBLEND', 'LINEARLIGHT'})
+                         {'NORMAL', 'OVERLAY', 'COLORBLEND', 'LINEARLIGHT', 'MULTIPLY'})
 
     def test_radial_application_and_outer_limit_are_exported_as_alpha_domain(self):
         p = dict(sx=10., sy=10., sr=2., fnrgf_rad=15, fnrgf_rmax=30, rhef_rad=20)
@@ -61,15 +61,15 @@ class LayerExportTests(unittest.TestCase):
         worker = Mock()
         worker.run_pre_asinh.side_effect = lambda a, k: a * 2
         worker.run_mgn_native.side_effect = lambda a, *args, **kw: a ** 2
-        worker.run_usm.side_effect = lambda a, *args: a + np.arange(64).reshape(8, 8) % 3
+        worker.run_tangential.side_effect = lambda a, *args, **kwargs: a + np.arange(64).reshape(8, 8) % 3
         p = dict(sx=4., sy=4., sr=1., pre_stretch_enabled=True,
                  pre_stretch_val=5., mgn_enabled=True, mgn_str=20, mgn_gam=32,
-                 usm_enabled=True, usm_str=30, usm_radius=10, usm_sigma=1.)
+                 tangential_enabled=True, tangential_str=30, tangential_arc=10, tangential_gain=1.)
         with tempfile.TemporaryDirectory() as tmp:
             export_layer_package(worker, source, p, {}, 'Original name.NEF', Path(tmp) / 'layers')
-        self.assertEqual(worker.run_pre_asinh.call_count, 1)
-        for method in (worker.run_mgn_native, worker.run_usm):
-            np.testing.assert_array_equal(method.call_args.args[0], source * 2)
+        worker.run_pre_asinh.assert_not_called()
+        for method in (worker.run_mgn_native, worker.run_tangential):
+            np.testing.assert_array_equal(method.call_args.args[0], source)
             self.assertEqual(method.call_args.args[1], 100)
         np.testing.assert_array_equal(source, np.linspace(1, 5, 64).reshape(8, 8).astype(np.float32))
         self.assertEqual(p['mgn_str'], 20)
@@ -77,8 +77,8 @@ class LayerExportTests(unittest.TestCase):
     def test_disk_alpha_finite_files_and_quantized_recomposition(self):
         yy, xx = np.mgrid[:64, :80]
         source = (1 + np.exp(-np.hypot(xx-40, yy-32)/10) + .001*np.sin(xx)).astype(np.float32)
-        p = dict(sx=40., sy=32., sr=8., usm_enabled=True, usm_str=25,
-                 usm_radius=10, usm_sigma=2., mgn_enabled=True, mgn_str=10, mgn_gam=32)
+        p = dict(sx=40., sy=32., sr=8., tangential_enabled=True, tangential_str=25,
+                 tangential_arc=10, tangential_gain=2., mgn_enabled=True, mgn_str=10, mgn_gam=32)
         display = dict(mode='asinh', strength=10., blend=.8)
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / 'layers'

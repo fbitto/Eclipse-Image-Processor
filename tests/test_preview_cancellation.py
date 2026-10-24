@@ -144,7 +144,7 @@ class CancellationTests(unittest.TestCase):
                 while time.monotonic() < deadline and (finished.count() < 1 or w.is_processing):
                     self.app.processEvents()
                     time.sleep(.01)
-                self.assertEqual(calls, [10, 27])
+                self.assertEqual(calls, [100, 100])
                 self.assertEqual(finished.count(), 1)
                 self.assertFalse(w.is_processing)
                 self.assertFalse(w.recalculation_timer.isActive())

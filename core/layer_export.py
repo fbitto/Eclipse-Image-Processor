@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import shutil
 import tempfile
+import time
 
 import numpy as np
 import tifffile
@@ -19,8 +20,8 @@ from .pipeline import execute_pipeline
 from .presentation import stretch_image
 from .image_data import observed_image, recipe_parameters
 
-FILTERS = ('fnrgf', 'mgn', 'wow', 'rhef', 'usm', 'tangential', 'larson_sekanina', 'achf')
-PREPARATION = ('pre_stretch', 'noise_gate', 'bilateral')
+FILTERS = ('fnrgf', 'rhef', 'mgn', 'wow', 'tangential', 'larson_sekanina', 'achf')
+REMOVED_PREPARATION = ('pre_stretch', 'noise_gate', 'bilateral')
 
 
 def photoshop_loader(records):
@@ -65,7 +66,7 @@ def photoshop_loader(records):
                     result.activeLayer = result.layers[0];
                 }
                 result.activeLayer.name = entry.file.replace(/\\.tif$/i, '');
-                result.activeLayer.blendMode = entry.mode === 'Color' ? BlendMode.COLORBLEND : (entry.mode === 'Normal' ? BlendMode.NORMAL : (entry.mode === 'Linear Light' ? BlendMode.LINEARLIGHT : BlendMode.OVERLAY));
+                result.activeLayer.blendMode = entry.mode === 'Color' ? BlendMode.COLORBLEND : (entry.mode === 'Normal' ? BlendMode.NORMAL : (entry.mode === 'Linear Light' ? BlendMode.LINEARLIGHT : (entry.mode === 'Multiply' ? BlendMode.MULTIPLY : BlendMode.OVERLAY)));
                 result.activeLayer.opacity = entry.opacity_255 * 100 / 255;
                 result.activeLayer.visible = entry.visible;
             } finally {
@@ -180,6 +181,12 @@ def export_layer_package(worker, source, params, display, original_path, destina
     Source is the application's monochrome image, with optional missing-data mask. Its original
     transfer function/colour cannot be inferred. No RGB/ICC calibration is claimed.
     """
+    if params.get("layered_model", False):
+        from .layer_package import export_layered_package
+        return export_layered_package(worker, source, params, display, original_path, destination, rgb, colour_report)
+    package_start = time.perf_counter()
+    params = {key: value for key, value in params.items()
+              if not key.startswith(REMOVED_PREPARATION)}
     source, valid = observed_image(source, params.get("valid_mask"))
     source = source.astype(np.float32)
     params = dict(params, valid_mask=valid)
@@ -204,11 +211,11 @@ def export_layer_package(worker, source, params, display, original_path, destina
         preparation = dict(params)
         for name in FILTERS:
             preparation[name + '_enabled'] = False
-        prepared = execute_pipeline(worker, source, preparation)
+        prepared = execute_pipeline(worker, source, preparation, process_label="LAYERS INPUT")
         tifffile.imwrite(stage / f'{stem}_SOURCE_float32.tif', source,
                          compression='zlib', metadata={'role': 'Loaded monochrome input; transfer function unspecified'})
         tifffile.imwrite(stage / f'{stem}_PREPARED_float32.tif', prepared.astype(np.float32),
-                         compression='zlib', metadata={'role': 'Common preparation; may be nonlinear if pre-stretch enabled'})
+                         compression='zlib', metadata={'role': 'Original input; no pre-stretch or preliminary denoising'})
 
         tifffile.imwrite(stage / f'{stem}_VALID.tif', valid.astype(np.uint8)*255,
                          compression='zlib', metadata={'role': 'Observed-data validity; 255 observed, 0 missing'})
@@ -224,68 +231,110 @@ def export_layer_package(worker, source, params, display, original_path, destina
         records.append(dict(order=1, file=base_file, filter='base', mode='Normal',
                             opacity=1., opacity_255=255, visible=True))
         composite = base16.astype(np.float64) / 65535
-        for name in FILTERS:
-            if not params.get(name + '_enabled', False) or params.get(name + '_str', 0) == 0:
+        export_all = params.get('export_achf_variants', False)
+        export_ael = export_all or params.get('export_achf_ael_variants', False)
+        branches = [(name,None) for name in FILTERS if name != 'achf' or not export_ael or params.get('achf_variant','adaptive') == 'adaptive']
+        if export_all:
+            branches = [(name,None) for name in FILTERS if name != 'achf']
+            branches.append(('achf','adaptive'))
+        if export_ael:
+            from .ael_achf import AEL_PRESETS
+            branches.extend(('achf',variant) for variant in AEL_PRESETS)
+        for name, variant in branches:
+            layer_params = dict(params)
+            if variant == 'adaptive':
+                layer_params.update(achf_enabled=True, achf_variant='adaptive',
+                                    achf_str=params.get('achf_adaptive_strength', params.get('achf_str', 10)))
+            elif variant is not None:
+                from .ael_achf import AEL_PRESETS
+                settings = dict(AEL_PRESETS[variant])
+                settings.update(params.get('achf_variants', {}).get(variant, {}))
+                layer_params.update(achf_enabled=True, achf_variant=variant,
+                                    achf_str=settings['strength'], achf_ael_parameters=settings)
+            if not layer_params.get(name + '_enabled', False) or (layer_params.get(name + '_str', 0) == 0 and variant is None):
                 continue
             branch = dict(preparation)
-            for key in PREPARATION:
-                branch[key + '_enabled'] = False
+            branch.update(layer_params)
+            for family in FILTERS:
+                branch[family+'_enabled'] = False
             branch[name + '_enabled'] = True
             branch[name + '_str'] = 100
             # FNRGF limb protection belongs in layer alpha, not baked into RGB.
             branch['fnrgf_apply_mask'] = 0
-            if name == 'larson_sekanina':
+            timing_name = (layer_params.get('achf_variant', 'adaptive') if name == 'achf' else name).upper()
+            filter_start = time.perf_counter()
+            ael_achf = name == 'achf' and layer_params.get('achf_variant') in ('ael_iso_01','ael_iso_04','ael_angular_4')
+            if ael_achf:
+                from .ael_achf import ael_achf_layer
+                filtered, ael_mapping = ael_achf_layer(
+                    prepared, layer_params['sx'], layer_params['sy'], layer_params['sr'],
+                    valid & statistics, layer_params.get('achf_ael_scale', 1.),
+                    layer_params['achf_variant'], layer_params.get('achf_ael_parameters'))
+            elif name == 'larson_sekanina':
                 from .filters import larson_sekanina_residual
                 # Preserve faint residuals without subtracting a rounded float32 base.
                 filtered = larson_sekanina_residual(
-                    prepared, params['sx'], params['sy'], params['sr'],
-                    params.get('larson_sekanina_radial', 0.),
-                    params.get('larson_sekanina_angular', 1.), valid & statistics)
+                    prepared, layer_params['sx'], layer_params['sy'], layer_params['sr'],
+                    layer_params.get('larson_sekanina_radial', 0.),
+                    layer_params.get('larson_sekanina_angular', 1.), valid & statistics)
             else:
-                filtered = execute_pipeline(worker, prepared.copy(), branch)
-            # USM carries its base; ACHF carries background * input.
+                filtered = execute_pipeline(worker, prepared.copy(), branch, process_label=f"LAYER {timing_name}")
+            print(f"[LAYER {timing_name}: FILTER] Done in {time.perf_counter()-filter_start:.3f}s")
+            encoding_start = time.perf_counter()
+            # Tangential carries its base; ACHF carries background * input.
             # Extract only their signed sharpening residuals.
             # Other operators provide mapped normalized structure; remove DC below.
-            if name in ('usm', 'tangential'):
+            if name == 'tangential':
                 values = filtered - prepared
-            elif name == 'achf':
-                values = filtered - float(params.get('achf_background', 10)) / 100 * prepared
+            elif name == 'achf' and not ael_achf:
+                values = filtered - float(layer_params.get('achf_background', 10)) / 100 * prepared
             else:
                 values = filtered
-            domain = branch_domain(source.shape, params, name) & valid & statistics
-            if name == 'rhef' and params.get('rhef_mode') == 'continuous':
+            domain = branch_domain(source.shape, layer_params, name) & valid & statistics
+            if ael_achf:
+                domain &= np.isfinite(filtered) & (prepared > 0)
+            if name == 'rhef' and layer_params.get('rhef_mode') == 'continuous':
                 domain &= prepared > 0
             mode = 'Overlay'
-            if name == 'larson_sekanina':
+            if ael_achf:
+                layer = np.where(domain, filtered, .5)
+                mapping = ael_mapping
+            elif name == 'larson_sekanina':
                 layer, mapping = linear_detail_layer(values, domain, np.ptp(prepared[valid]))
                 mode = 'Linear Light'
             else:
                 layer, mapping = neutral_layer(values, domain)
             alpha = domain.astype(np.float64)
-            if name == 'fnrgf' and params.get('fnrgf_apply_mask', 0):
+            if name == 'fnrgf' and layer_params.get('fnrgf_apply_mask', 0):
                 yy, xx = np.ogrid[:source.shape[0], :source.shape[1]]
-                r = np.hypot(xx - params['sx'], yy - params['sy']) / params['sr']
+                r = np.hypot(xx - layer_params['sx'], yy - layer_params['sy']) / layer_params['sr']
                 protection = np.clip(1 - np.abs(r - 1) / .05, 0, 1)
-                alpha *= 1 - float(params['fnrgf_apply_mask']) / 100 * protection
+                alpha *= 1 - float(layer_params['fnrgf_apply_mask']) / 100 * protection
             # Recommended contribution, not the old chain's Strength blend.
-            opacity = min(.35, float(params[name + '_str']) / 100) * float(display.get('blend', 1))
+            opacity = min(.35, float(layer_params[name + '_str']) / 100) * float(display.get('blend', 1))
             opacity_255 = round(opacity * 255)
             layer16, alpha16 = to_u16(layer), to_u16(alpha)
             order = len(records) + 1
-            label = name.upper()
+            label = ('ACHF_AEL_ANGULAR' if layer_params['achf_variant'] == 'ael_angular_4'
+                     else 'ACHF_'+layer_params['achf_variant'].upper()) if ael_achf else name.upper()
             filename = f'{order:02d}_{label}_{mode.replace(" ", "")}.tif'
             rgba = np.empty((*source.shape, 4), dtype=np.uint16)
             rgba[..., :3] = layer16[..., None]
             rgba[..., 3] = alpha16
+            print(f"[LAYER {timing_name}: ENCODING] Done in {time.perf_counter()-encoding_start:.3f}s")
+            write_start = time.perf_counter()
             tifffile.imwrite(stage / filename, rgba, photometric='rgb',
                              extrasamples=['unassalpha'], compression='zlib', metadata=None)
+            print(f"[LAYER {timing_name}: TIFF WRITE] Done in {time.perf_counter()-write_start:.3f}s")
+            blend_start = time.perf_counter()
             blend = linear_light if mode == 'Linear Light' else overlay
             composite = blend(composite, layer16.astype(float) / 65535,
                                 alpha16.astype(float) / 65535, opacity_255 / 255)
-            records.append(dict(order=order, file=filename, filter=name, mode=mode,
+            print(f"[LAYER {timing_name}: COMPOSITE] Done in {time.perf_counter()-blend_start:.3f}s")
+            records.append(dict(order=order, file=filename, filter=name, variant=layer_params.get('achf_variant') if name == 'achf' else None, mode=mode,
                                 opacity=opacity, opacity_255=opacity_255, visible=opacity_255 > 0,
                                 normalization=mapping, operator_strength=100,
-                                signal=('signed sharpening residual' if name in ('usm', 'tangential', 'larson_sekanina', 'achf')
+                                signal=('AEL log-luminance multiscale detail' if ael_achf else 'signed sharpening residual' if name in ('tangential', 'larson_sekanina', 'achf')
                                         else 'full-strength structure output in mapped input units'),
                                 input='PREPARED_float32', domain='Outside lunar disc and filter application domain'))
         if rgb is not None:
@@ -325,7 +374,7 @@ def export_layer_package(worker, source, params, display, original_path, destina
                         alpha='Unassociated; input lunar disc excluded from enhancement layers',
                         composite='Independent branches, distinct from sequential pipeline final',
                         stretch='Base only; no stretch or gamma after layer composition',
-                        normalization='Larson-Sekanina: zero-centred linear residual; other detail: median-centred tanh',
+                        normalization='Larson-Sekanina: zero-centred linear residual; AEL ACHF: upstream MAD/tanh without median subtraction; other detail: median-centred tanh',
                         opacity='min(Strength/100, 0.35) * Reveal; quantized to 1/255',
                         limitations=['Statistics exclusions are recorded separately from missing-data validity.',
                                      'Masked WOW is a normalized-starlet variant, not byte-equivalent to watroo.',
@@ -353,6 +402,7 @@ def export_layer_package(worker, source, params, display, original_path, destina
                   'Maximum quantization error and Photoshop color management must be checked in Photoshop.']
         (stage / 'Layers.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
         stage.rename(destination)
+        print(f"[LAYERS PACKAGE: TOTAL] Done in {time.perf_counter()-package_start:.3f}s; {len(records)} layers")
         return destination
     except Exception:
         shutil.rmtree(stage)

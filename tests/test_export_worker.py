@@ -18,6 +18,19 @@ class ExportWorkerTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_missing_attribute_reports_full_console_traceback(self):
+        import io
+        from contextlib import redirect_stderr
+        from gui.export_worker import ExportThread
+        thread=ExportThread({})
+        output=io.StringIO()
+        with patch('gui.export_worker.export_images',side_effect=AttributeError("'LayerEngine' object has no attribute 'prepare'")):
+            with redirect_stderr(output):
+                thread.run()
+        self.assertIn("has no attribute 'prepare'",thread.error)
+        self.assertIn('Traceback (most recent call last)',output.getvalue())
+        self.assertIn("has no attribute 'prepare'",output.getvalue())
+
     def test_snapshot_worker_keeps_event_loop_running_and_handles_failure(self):
         for fail in (False, True):
             w = EclipseProcessorApp()
@@ -31,6 +44,7 @@ class ExportWorkerTests(unittest.TestCase):
             captured = []
             def export(**request):
                 captured.append(request)
+                request["progress"](35,"Calculating filters")
                 entered.set()
                 if not release.wait(3):
                     raise AssertionError('Test did not release export')
@@ -48,16 +62,23 @@ class ExportWorkerTests(unittest.TestCase):
                     QTimer.singleShot(0, lambda: ticks.append('responsive'))
                     QTest.qWait(30)
                     self.assertEqual(ticks, ['responsive'])
+                    self.assertEqual(w.export_progress.value(),35)
+                    self.assertIn('Calculating filters',w.export_progress.format())
                     # Work owns a source copy and a captured recipe.
                     a[:] = 9
                     np.testing.assert_array_equal(captured[0]['source'], 1)
                     self.assertEqual(captured[0]['parameters']['sx'], 20)
+                    self.assertFalse(captured[0].get('export_linear', False))
+                    self.assertEqual(captured[0]['layers_format'],'psb')
+                    self.assertFalse(hasattr(w, 'chk_export_linear'))
                     release.set()
                     self.assertTrue(w._export_thread.wait(3000))
                     self.app.processEvents()
                     self.assertIsNone(w._export_thread)
+                    self.assertEqual(w.export_progress.format(),'Export failed' if fail else 'Export complete')
                     self.assertTrue(w.control_sidebar.isEnabled())
                     self.assertIn('simulated write failure' if fail else 'Exported test.tiff', w.status_label.text())
+                    self.assertIn('simulated write failure' if fail else 'Exported test.tiff', w.status_label.toolTip())
             finally:
                 release.set()
                 w.close()

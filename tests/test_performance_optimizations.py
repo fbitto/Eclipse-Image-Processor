@@ -41,9 +41,9 @@ class OptimizationTests(unittest.TestCase):
                 if masked:
                     return MaskedWorker(FilterWorker(), valid).run_mgn_native(a, 37, 32, 70, 70, 3, (1., 2., 4.))
                 return mgn_normalize(a, sigma=(1., 2., 4.))
-            with patch('core.filters.CPU_CORES', 1):
+            with patch('core.filters.filter_cpu_budget', return_value=1):
                 expected = run()
-            with patch('core.filters.CPU_CORES', 4):
+            with patch('core.filters.filter_cpu_budget', return_value=4):
                 actual = run()
             np.testing.assert_array_equal(actual, expected)
 
@@ -63,7 +63,7 @@ class OptimizationTests(unittest.TestCase):
                     mgn_normalize(a)
             except ProcessingCancelled:
                 outcomes.append('cancelled')
-        with patch('core.filters.CPU_CORES', 4), patch('core.filters.gaussian_filter', side_effect=slow):
+        with patch('core.filters.filter_cpu_budget', return_value=4), patch('core.filters.gaussian_filter', side_effect=slow):
             thread = Thread(target=run)
             thread.start()
             try:
@@ -94,7 +94,7 @@ class OptimizationTests(unittest.TestCase):
                     MaskedWorker(FilterWorker(), valid).run_mgn_native(a, 100, 32, 70, 70, 3, (1., 2., 4.))
             except ProcessingCancelled:
                 outcomes.append('cancelled')
-        with patch('core.filters.CPU_CORES', 4), patch('core.masked_filters.gaussian_filter', side_effect=slow):
+        with patch('core.filters.filter_cpu_budget', return_value=4), patch('core.masked_filters.gaussian_filter', side_effect=slow):
             thread = Thread(target=run)
             thread.start()
             try:

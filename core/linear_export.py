@@ -89,12 +89,12 @@ def export_linear_sources(mono, rgb, original_path, destination, input_state='un
         (stage/'sources.json').write_text(json.dumps(dict(metadata, files=files,
             luminance='0.299 R + 0.587 G + 0.114 B in source units; no photometric calibration',
             missing_pixels=int((~valid).sum())), indent=2), encoding='utf-8')
-        note = ('La entrada se ha declarado lineal.' if input_state == 'linear' else
-                'La entrada no está declarada lineal: los archivos INPUT conservan su transferencia original.')
-        (stage/'LEEME.txt').write_text(note + '\nRGB y L sin filtros, estirado ni normalización. '
-            'No se ha invertido ninguna curva de entrada. Los valores y NaN se conservan en float32.\n'
-            'VALID indica datos observados (255) y ausentes (0).\n'
-            'La luminancia es una combinación de canales, no una calibración de brillo físico.\n', encoding='utf-8')
+        note = ('The input was declared linear.' if input_state == 'linear' else
+                'The input was not declared linear: INPUT files retain their original transfer function.')
+        (stage/'README.txt').write_text(note + '\nRGB and luminance without filtering, stretching or normalization. '
+            'No input transfer curve was inverted. Values and NaNs are retained as float32.\n'
+            'VALID marks observed (255) and missing (0) samples.\n'
+            'Luminance is a channel combination, not a physical brightness calibration.\n', encoding='utf-8')
         stage.rename(destination)
         return destination
     except Exception:

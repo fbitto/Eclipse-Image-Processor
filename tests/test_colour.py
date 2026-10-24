@@ -46,6 +46,27 @@ class ColourTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             neutralize_tse(np.ones((30, 30, 3))*2)
 
+    def test_float_hdr_uses_one_scale_and_is_invariant_to_input_units(self):
+        rgb = (self.rgb.astype(float)*20000-1000).astype(np.float32)
+        rgb[0,0] = np.nan
+        original = rgb.copy()
+        expected, report = neutralize_tse(rgb,white=None)
+        self.assertIn('shared observed maximum',report['white_source'])
+        self.assertGreater(report['sampled_pixels'],2)
+        self.assertTrue(np.isnan(expected[0,0]).all())
+        self.assertTrue(np.isfinite(expected[1:]).all())
+        for scale in (1e-8, .1, 65535.):
+            actual, scaled_report = neutralize_tse(rgb*scale,white=None)
+            np.testing.assert_allclose(actual,expected,atol=3e-7)
+            np.testing.assert_allclose(scaled_report['ratios'],report['ratios'],rtol=1e-6)
+        np.testing.assert_array_equal(rgb,original)
+        with self.assertRaises(ValueError):
+            neutralize_tse(np.full((30,30,3),np.nan),white=None)
+        with self.assertRaises(ValueError):
+            neutralize_tse(np.zeros((30,30,3)),white=None)
+        with self.assertRaises(ValueError):
+            neutralize_tse(np.ones((30,30,3))*2,white=None)
+
     def test_colour_blend_preserves_luminosity_and_is_in_gamut(self):
         rng = np.random.default_rng(7)
         colours = rng.uniform(0, 1, (80, 100, 3))
@@ -58,7 +79,7 @@ class ColourTests(unittest.TestCase):
         self.assertTrue(np.isfinite(display).all())
 
     def test_exported_color_layer_matches_combined_and_loader_mode(self):
-        params = dict(sx=50., sy=40., sr=10., usm_enabled=True, usm_str=15, usm_radius=10, usm_sigma=2)
+        params = dict(sx=50., sy=40., sr=10., tangential_enabled=True, tangential_str=15, tangential_arc=10, tangential_gain=2)
         display = dict(mode='asinh', strength=10, blend=1)
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp)/'layers'

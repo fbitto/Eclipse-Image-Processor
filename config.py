@@ -1,4 +1,6 @@
-# config.py - Global configuration and styling for Eclipse Image Processor v0.5.0
+# config.py - Global configuration and styling for Eclipse Image Processor v0.6.0
+
+APP_VERSION = "0.6.0"
 
 import os
 
@@ -65,11 +67,6 @@ FILTER_DEFAULTS = {
     'canny_threshold1': 50.0,
     'canny_threshold2': 150.0,
     'canny_aperturesize': 3,
-    
-    # Unsharp Mask (Sharpening)
-    'unsharp_enabled': False,
-    'unsharp_sigma': 1.0,
-    'unsharp_strength': 1.5,
     
     # Contrast Enhancement
     'contrast_enabled': False,

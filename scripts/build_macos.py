@@ -6,11 +6,11 @@ Run from the repository root: .venv/bin/python scripts/build_macos.py
 from pathlib import Path
 import argparse
 import os
+import plistlib
 import subprocess
 import sys
 import tempfile
 
-from PIL import Image
 
 
 def main():
@@ -20,19 +20,15 @@ def main():
     if sys.platform != "darwin":
         raise SystemExit("Build the macOS application on macOS.")
     root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0,str(root))
+    from config import APP_VERSION
     build = root / "build" / "macos"
-    iconset = build / "RealceCoronal.iconset"
-    iconset.mkdir(parents=True, exist_ok=True)
-    source = root / "assets" / "icon-options" / "03-realce-coronal.png"
-    with Image.open(source) as image:
-        image = image.convert("RGBA")
-        for size in (16, 32, 128, 256, 512):
-            for density in (1, 2):
-                suffix = "@2x" if density == 2 else ""
-                image.resize((size * density, size * density), Image.Resampling.LANCZOS).save(
-                    iconset / f"icon_{size}x{size}{suffix}.png")
-    icon = build / "RealceCoronal.icns"
-    subprocess.run(["/usr/bin/iconutil", "-c", "icns", str(iconset), "-o", str(icon)], check=True)
+    build.mkdir(parents=True,exist_ok=True)
+    assets=root/'assets'
+    icon=assets/'Eclipse_Image_Processor.icns'
+    for resource in (icon,assets/'Eclipse_Image_Processor.png'):
+        if not resource.is_file():
+            raise FileNotFoundError(resource)
 
     # Keep caches and generated spec files inside the ignored build directory.
     environment = os.environ.copy()
@@ -43,11 +39,22 @@ def main():
         "--icon", str(icon), "--osx-bundle-identifier", "com.fbitto.realcecoronal",
         "--specpath", str(build), "--workpath", str(build / "work"),
         "--distpath", str(root / "dist"),
-        "--add-data", f"{source}:assets/icon-options",
+        "--add-data", f"{assets / 'Eclipse_Image_Processor.png'}:assets",
+        "--add-data", f"{root / 'docs' / 'third-party'}:docs/third-party",
+        "--add-data", f"{root / 'ATTRIBUTIONS.md'}:.",
+        "--add-data", f"{root / 'LICENSE'}:.",
         "--collect-all", "watroo",
+        "--collect-all", "psd_tools",
         "--hidden-import", "PIL.TiffImagePlugin",
         str(root / "main.py"),
     ], cwd=root, env=environment, check=True)
+    plist_path=root/'dist'/'Eclipse Image Processor.app'/'Contents'/'Info.plist'
+    with plist_path.open('rb') as stream:
+        metadata=plistlib.load(stream)
+    metadata.update(CFBundleShortVersionString=APP_VERSION,CFBundleVersion=APP_VERSION)
+    with plist_path.open('wb') as stream:
+        plistlib.dump(metadata,stream)
+    subprocess.run(["/usr/bin/codesign","--force","--deep","--sign","-",str(plist_path.parents[1])],check=True)
     print(f"Application ready: {root / 'dist' / 'Eclipse Image Processor.app'}")
     if args.dmg:
         app = root / "dist" / "Eclipse Image Processor.app"

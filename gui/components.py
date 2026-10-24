@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
+    QStyle,
     QVBoxLayout,
     QWidget,
     QToolTip,
@@ -287,22 +288,30 @@ class ClickableLabel(QLabel):
             self.native_h = native_h
         self.update()
 
+    def _pixmap_rect(self):
+        """Use QLabel's alignment and logical pixel size for drawing and clicks."""
+        rect = self.contentsRect()
+        margin = self.margin()
+        rect.adjust(margin, margin, -margin, -margin)
+        return QStyle.alignedRect(self.layoutDirection(), self.alignment(),
+                                  self.pixmap().deviceIndependentSize().toSize(), rect)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             pix = self.pixmap()
             if pix is None or pix.isNull() or not self.native_w or self.native_w <= 0:
                 return
 
-            w_widget, h_widget = self.width(), self.height()
-            w_pix, h_pix = pix.width(), pix.height()
-            bx = (w_widget - w_pix) // 2
-            by = (h_widget - h_pix) // 2
+            rect = self._pixmap_rect()
+            w_pix, h_pix = rect.width(), rect.height()
+            bx, by = rect.x(), rect.y()
 
             pos = event.position().toPoint()
             if bx <= pos.x() <= bx + w_pix and by <= pos.y() <= by + h_pix:
-                scale = w_pix / float(self.native_w)
-                orig_x = int((pos.x() - bx) / scale)
-                orig_y = int((pos.y() - by) / scale)
+                scale_x = w_pix / float(self.native_w)
+                scale_y = h_pix / float(self.native_h)
+                orig_x = min(self.native_w - 1, max(0, round((pos.x() - bx + 0.5) / scale_x - 0.5)))
+                orig_y = min(self.native_h - 1, max(0, round((pos.y() - by + 0.5) / scale_y - 0.5)))
                 # Qt maps Command on macOS to ControlModifier by default.
                 if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                     self.circle_center_requested.emit(orig_x, orig_y)
@@ -316,24 +325,25 @@ class ClickableLabel(QLabel):
             return
 
         if self.circle_x is not None and self.circle_y is not None and self.circle_r is not None:
-            w_widget, h_widget = self.width(), self.height()
-            w_pix, h_pix = pix.width(), pix.height()
-            bx = (w_widget - w_pix) // 2
-            by = (h_widget - h_pix) // 2
-            scale = w_pix / float(self.native_w)
+            rect = self._pixmap_rect()
+            w_pix, h_pix = rect.width(), rect.height()
+            bx, by = rect.x(), rect.y()
+            scale_x = w_pix / float(self.native_w)
+            scale_y = h_pix / float(self.native_h)
 
-            screen_x = int(self.circle_x * scale) + bx
-            screen_y = int(self.circle_y * scale) + by
-            screen_r = int(self.circle_r * scale)
+            # Match resize pixel centers, preserving subpixel limb geometry.
+            screen_x = (self.circle_x + 0.5) * scale_x + bx
+            screen_y = (self.circle_y + 0.5) * scale_y + by
 
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             pen = QPen(QColor(255, 50, 50, 220), 2, Qt.PenStyle.SolidLine)
             painter.setPen(pen)
 
-            painter.drawEllipse(QPoint(screen_x, screen_y), screen_r, screen_r)
-            painter.drawLine(screen_x - 6, screen_y, screen_x + 6, screen_y)
-            painter.drawLine(screen_x, screen_y - 6, screen_x, screen_y + 6)
+            painter.drawEllipse(QPointF(screen_x, screen_y),
+                                self.circle_r * scale_x, self.circle_r * scale_y)
+            painter.drawLine(QPointF(screen_x - 6, screen_y), QPointF(screen_x + 6, screen_y))
+            painter.drawLine(QPointF(screen_x, screen_y - 6), QPointF(screen_x, screen_y + 6))
 
 
 class CollapsibleSection(QWidget):

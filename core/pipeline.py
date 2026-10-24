@@ -6,7 +6,7 @@ import numpy as np
 
 
 def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
-    """Geometry is supplied in full-res pixels; spatial controls in preview pixels.
+    """Geometry and MGN sigmas use full-res pixels; other spatial controls use preview pixels.
 
     Scale X/Y independently using OpenCV's pixel-centre convention. Circular
     radii and kernels use the geometric mean scale for rounded aspect ratios.
@@ -15,19 +15,19 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
     shapes = (full_shape, preview_shape, target_shape)
     if any(len(shape) != 2 or not np.isfinite(shape).all() or min(shape) <= 0 for shape in shapes):
         raise ValueError("Resolution shapes must contain two positive finite dimensions")
-    p = deepcopy(parameters)
+    p = deepcopy({key: value for key, value in parameters.items()
+                  if not key.startswith(("pre_stretch", "noise_gate", "bilateral"))})
     sy, sx = target_shape[0] / full_shape[0], target_shape[1] / full_shape[1]
     p["sx"] = (p["sx"] + .5) * sx - .5
     p["sy"] = (p["sy"] + .5) * sy - .5
     p["sr"] *= float(np.sqrt(sx * sy))
     scale = float(np.sqrt(target_shape[0] / preview_shape[0] * target_shape[1] / preview_shape[1]))
     p["spatial_scale"] = scale
-    for key in ("bilateral_d", "usm_radius", "achf_kernel", "rhef_bin_px",
+    p["achf_ael_scale"] = float(np.sqrt(sx * sy))
+    for key in ("achf_kernel", "rhef_bin_px",
                 "fnrgf_smooth", "fnrgf_fade", "tangential_fade", "larson_sekanina_radial", "statistics_guard_px"):
         if key in p:
-            # Apply pixel floors before resizing, preserving the preview footprint.
-            value = max(5.0, p[key]) if key in ("bilateral_d", "usm_radius") else p[key]
-            p[key] = value * scale
+            p[key] *= scale
     if "fnrgf_bin_px" in p:
         from utils.helpers import recommended_radial_bins
         p["fnrgf_nbins"] = recommended_radial_bins(
@@ -55,18 +55,22 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
             # fine bands inherit the finest threshold instead of disabling noise control.
             levels = [levels[0]] * offset + levels if offset >= 0 else levels[-offset:]
             p["wow_denoise"] = levels[:p["wow_scales"]]
-    p["mgn_sigmas"] = tuple(s * scale for s in p.get("mgn_sigmas", (1.25, 2.5, 5, 10, 20, 40)))
+    p["mgn_sigmas"] = tuple(s * p["achf_ael_scale"] for s in p.get("mgn_sigmas", (1.25, 2.5, 5, 10, 20, 40)))
     return p
 
 
-def execute_pipeline(worker, raw_image, params):
+def execute_pipeline(worker, raw_image, params, *, process_label="PIPELINE", verbose=True):
+    if params.get("layered_model",False):
+        from .layer_engine import engine_for
+        return engine_for(worker).render(worker,raw_image,params,params.get("layer_display",{}))
     from .filters import finite_image, CPU_CORES
     check_cancelled()
     if raw_image is None:
         raise ValueError("No image supplied")
 
     pipeline_start = time.time()
-    print(f"\n{'='*80}\n[PIPELINE] Execution start (Native Engine; {CPU_CORES} CPUs available) - Shape: {raw_image.shape}\n{'='*80}")
+    if verbose:
+        print(f"\n{'='*80}\n[{process_label}] Execution start (Native Engine; {CPU_CORES} CPUs available) - Shape: {raw_image.shape}\n{'='*80}")
 
     p = params
     valid = p.get("valid_mask")
@@ -92,39 +96,7 @@ def execute_pipeline(worker, raw_image, params):
         worker = StatisticsWorker(base_worker, support)
 
     check_cancelled()
-    # STEP 0: PRE-STRETCH (ASINH / LOGARITHMIC)
-    if p.get("pre_stretch_enabled", False):
-        mode = p.get("pre_stretch_mode", "asinh")
-        val = p.get("pre_stretch_val", 10.0)
-        step_start = time.time()
-        if mode == "log":
-            img = worker.run_pre_log(img, val)
-            print(f"[PRE-STRETCH: LOG] Done in {time.time() - step_start:.3f}s (K=10^{val:.1f})")
-        else:
-            img = worker.run_pre_asinh(img, val)
-            print(f"[PRE-STRETCH: ASINH] Done in {time.time() - step_start:.3f}s (Factor={val})")
-
-    check_cancelled()
-    # STEP 0B: RADIAL NOISE GATE
-    if p.get("noise_gate_enabled", False):
-        step_start = time.time()
-        img = worker.run_radial_noise_gate(
-            img, p["noise_gate_str"], p["noise_gate_thr"], p["sx"], p["sy"], p["sr"], spatial_scale=p.get("spatial_scale", 1.0),
-            local_sigma=p.get('noise_gate_sigma', 3.), gate_sigma=p.get('noise_gate_smooth', 2.)
-        )
-        print(f"[NOISE GATE] Done in {time.time() - step_start:.3f}s")
-
-    check_cancelled()
-    # STEP 0C: BILATERAL DENOISE
-    if p.get("bilateral_enabled", False):
-        step_start = time.time()
-        img = worker.run_bilateral_denoise(
-            img, p["bilateral_str"], p["bilateral_d"], p["bilateral_sc"], p["bilateral_ss"]
-        )
-        print(f"[BILATERAL] Done in {time.time() - step_start:.3f}s")
-
-    check_cancelled()
-    # STEP 1A: NATIVE FNRGF ENGINE (MULTI-THREADED)
+    # FNRGF: radial normalization
     if p.get("fnrgf_enabled", False):
         step_start = time.time()
         img = worker.run_fnrgf_native(
@@ -148,10 +120,25 @@ def execute_pipeline(worker, raw_image, params):
             mean_attenuation_range=(1., p.get('fnrgf_mean_tail', 0.)),
             std_attenuation_range=(1., p.get('fnrgf_width_tail', 0.)),
         )
-        print(f"[FNRGF NATIVE] Done in {time.time() - step_start:.3f}s")
+        if verbose:
+            print(f"[{process_label}: FNRGF NATIVE] Done in {time.time() - step_start:.3f}s")
 
     check_cancelled()
-    # STEP 2A: NATIVE MGN ENGINE (MULTI-SCALE GAUSSIAN NORMALIZATION)
+    # RHEF: radial histogram equalization
+    if p.get("rhef_enabled", False):
+        step_start = time.time()
+        img = worker.run_rhef_native(
+            img, p["rhef_str"], p["rhef_rad"], p["rhef_upsilon"], p["sx"], p["sy"], p["sr"],
+            bin_px=p.get("rhef_bin_px", 1.0),
+            mode=p.get("rhef_mode", "legacy"), upsilon_h_val=p.get('rhef_upsilon_high'),
+            min_count=p.get('rhef_min_count', 12), quantile_count=p.get('rhef_quantiles', 257),
+            noise_confidence=p.get('rhef_noise_confidence', 0.),
+        )
+        if verbose:
+            print(f"[{process_label}: RHEF NATIVE] Done in {time.time() - step_start:.3f}s")
+
+    check_cancelled()
+    # MGN: multiscale Gaussian normalization
     if p.get("mgn_enabled", False):
         step_start = time.time()
         img = worker.run_mgn_native(
@@ -164,10 +151,11 @@ def execute_pipeline(worker, raw_image, params):
             sigmas=p.get("mgn_sigmas", (1.25, 2.5, 5, 10, 20, 40)),
             weights=p.get('mgn_weights'),
         )
-        print(f"[MGN NATIVE] Done in {time.time() - step_start:.3f}s")
+        if verbose:
+            print(f"[{process_label}: MGN NATIVE] Done in {time.time() - step_start:.3f}s")
 
     check_cancelled()
-    # STEP 2B: NATIVE WOW ENGINE (A TROUS WAVELETS WHITENING)
+    # WOW: wavelet whitening
     if p.get("wow_enabled", False):
         step_start = time.time()
         img = worker.run_wow_native(
@@ -175,28 +163,8 @@ def execute_pipeline(worker, raw_image, params):
             denoise_coefficients=p.get("wow_denoise", []),
             bilateral=p.get("wow_bilateral"),
         )
-        print(f"[WOW NATIVE] Done in {time.time() - step_start:.3f}s")
-
-    check_cancelled()
-    # STEP 2C: NATIVE RHEF ENGINE
-    if p.get("rhef_enabled", False):
-        step_start = time.time()
-        img = worker.run_rhef_native(
-            img, p["rhef_str"], p["rhef_rad"], p["rhef_upsilon"], p["sx"], p["sy"], p["sr"],
-            bin_px=p.get("rhef_bin_px", 1.0),
-            mode=p.get("rhef_mode", "legacy"), upsilon_h_val=p.get('rhef_upsilon_high'),
-            min_count=p.get('rhef_min_count', 12), quantile_count=p.get('rhef_quantiles', 257),
-            noise_confidence=p.get('rhef_noise_confidence', 0.),
-        )
-        print(f"[RHEF NATIVE] Done in {time.time() - step_start:.3f}s")
-
-    check_cancelled()
-    # STEP 3: UNSHARP MASK
-    # Compatibility for older API recipes; the UI exposes tangential detail.
-    if p.get("usm_enabled", False):
-        step_start = time.time()
-        img = worker.run_usm(img, p["usm_str"], p["usm_radius"], p["usm_sigma"])
-        print(f"[USM] Done in {time.time() - step_start:.3f}s")
+        if verbose:
+            print(f"[{process_label}: WOW NATIVE] Done in {time.time() - step_start:.3f}s")
 
     check_cancelled()
     if p.get('tangential_enabled', False):
@@ -206,7 +174,8 @@ def execute_pipeline(worker, raw_image, params):
             arc_sigma=p.get('tangential_arc', 3.), gain=p.get('tangential_gain', 1.),
             denoise=p.get('tangential_denoise', 0.), inner_radius=p.get('tangential_inner', 1.),
             outer_radius=p.get('tangential_outer', 0.), fade_px=p.get('tangential_fade', 8.))
-        print(f"[TANGENTIAL DETAIL] Done in {time.time() - step_start:.3f}s")
+        if verbose:
+            print(f"[{process_label}: TANGENTIAL DETAIL] Done in {time.time() - step_start:.3f}s")
 
     check_cancelled()
     if p.get('larson_sekanina_enabled', False):
@@ -215,23 +184,40 @@ def execute_pipeline(worker, raw_image, params):
             img, p['larson_sekanina_str'], p['sx'], p['sy'], p['sr'],
             radial_increment=p.get('larson_sekanina_radial', 0.),
             angular_increment=p.get('larson_sekanina_angular', 1.))
-        print(f"[LARSON-SEKANINA] Done in {time.time() - step_start:.3f}s")
+        if verbose:
+            print(f"[{process_label}: LARSON-SEKANINA] Done in {time.time() - step_start:.3f}s")
 
     check_cancelled()
-    # STEP 4: ACHF (SYMMETRIC VARIABLE KERNEL)
+    # ACHF: final enhancement stage
     if p.get("achf_enabled", False):
         step_start = time.time()
-        img = worker.run_achf(
-            img, p["achf_str"], p["achf_kernel"], p["achf_boost"], p["sx"], p["sy"], p["sr"],
-            intensity_threshold=p.get("achf_threshold", 10),
-            background=p.get("achf_background", 10),
-            spatial_scale=p.get("spatial_scale", 1.0),
-        )
-        print(f"[ACHF] Done in {time.time() - step_start:.3f}s")
+        if p.get('achf_variant', 'adaptive') in ('ael_iso_01','ael_iso_04','ael_angular_4'):
+            from .ael_achf import apply_ael_achf
+            support = np.isfinite(raw_image)
+            if valid is not None:
+                support &= valid
+            if (p.get('statistics_exclude_lunar', False) or p.get('statistics_exclude_bright', False)
+                    or p.get('statistics_mask') is not None):
+                support &= worker.support
+            img = apply_ael_achf(img, p['achf_str'], p['sx'], p['sy'], p['sr'],
+                                 support, p.get('achf_ael_scale', 1.), p['achf_variant'],
+                                 p.get('achf_ael_parameters'))
+        elif p.get('achf_variant', 'adaptive') == 'adaptive':
+            img = worker.run_achf(
+                img, p["achf_str"], p["achf_kernel"], p["achf_boost"], p["sx"], p["sy"], p["sr"],
+                intensity_threshold=p.get("achf_threshold", 10),
+                background=p.get("achf_background", 10),
+                spatial_scale=p.get("spatial_scale", 1.0),
+            )
+        else:
+            raise ValueError('Unknown ACHF variant')
+        if verbose:
+            print(f"[{process_label}: ACHF {p.get('achf_variant', 'adaptive')}] Done in {time.time() - step_start:.3f}s")
 
     check_cancelled()
     finite_image(img)
-    print(f"[PIPELINE] Complete. Total time: {time.time() - pipeline_start:.3f}s\n{'='*80}\n")
+    if verbose:
+        print(f"[{process_label}] Complete. Total time: {time.time() - pipeline_start:.3f}s\n{'='*80}\n")
     if valid is not None and not valid.all():
         img = np.where(valid, img, np.nan).astype(np.float32)
     return img

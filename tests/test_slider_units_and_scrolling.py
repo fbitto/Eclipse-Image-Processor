@@ -26,6 +26,28 @@ class SliderInteractionTests(unittest.TestCase):
         self.window.deleteLater()
         self.app.processEvents()
 
+    def test_removed_preparation_controls_are_absent(self):
+        for name in ("sec_pre_stretch", "sec_noise_gate", "sec_bilateral"):
+            self.assertFalse(hasattr(self.window, name))
+        import numpy as np
+        self.window.full_raw_image=np.ones((64,64),np.float32)
+        self.window.preview_image=self.window.full_raw_image.copy()
+        params=self.window.collect_filter_parameters((64, 64))
+        self.assertFalse(any(key.startswith(("pre_stretch", "noise_gate", "bilateral")) for key in params))
+
+    def test_log_k_uses_compact_labels_without_changing_filter_value(self):
+        w = self.window
+        w.combo_stretch_mode.setCurrentIndex(1)
+        for tick in range(w.sl_stretch.minimum(), w.sl_stretch.maximum()+1):
+            w.sl_stretch.setValue(tick)
+            editor = w.sl_stretch.value_label
+            self.assertEqual(editor.text(), f"{10 ** (tick / 10):.3g}")
+            self.assertLess(editor.fontMetrics().horizontalAdvance(editor.text()), editor.width()-8)
+        w.sl_stretch.setValue(27)
+        self.assertEqual(w.sl_stretch.value_label.text(), '501')
+        w.sl_stretch.value_label.editingFinished.emit()
+        self.assertEqual(w.sl_stretch.value(), 27)
+
     def test_all_controls_use_wheel_safe_widgets_and_unencoded_labels(self):
         sliders = self.window.findChildren(QSlider)
         self.assertGreater(len(sliders), 70)
@@ -108,7 +130,7 @@ class SliderInteractionTests(unittest.TestCase):
 
     def test_long_parameter_labels_put_parenthetical_units_on_second_line(self):
         w = self.window
-        self.assertEqual(w.sl_mgn_sigmas[0].title_label.text(), 'Scale 1 sigma\n(preview px)')
+        self.assertEqual(w.sl_mgn_sigmas[0].title_label.text(), 'Scale 1 sigma\n(native px)')
         self.assertEqual(w.sl_mgn_trunc.title_label.text(), 'Kernel Truncation\n(Sigmas)')
         self.assertEqual(w.sl_fnrgf_str.title_label.text(), 'Strength (%)')
         from gui.factories import update_slider_display
@@ -148,7 +170,6 @@ class SliderInteractionTests(unittest.TestCase):
     def test_known_physical_values_and_finest_symmetry_step(self):
         w = self.window
         for name, expected in {
-            'noise_gate_thr': '0.1', 'bilateral_d': '0.5', 'bilateral_ss': '0.5',
             'fnrgf_rad': '1', 'mgn_gam': '3.2', 'mgn_k': '0.7', 'mgn_h': '0.7',
             'rhef_upsilon': '0.35', 'rhef_bin': '1', 'achf_kernel': '2',
             'achf_boost': '2',
@@ -162,10 +183,9 @@ class SliderInteractionTests(unittest.TestCase):
 
     def test_log_modes_display_actual_k_and_refresh_at_unchanged_tick(self):
         w = self.window
-        for combo, slider in ((w.combo_pre_mode, w.sl_pre_stretch),
-                              (w.combo_stretch_mode, w.sl_stretch)):
+        for combo, slider in ((w.combo_stretch_mode, w.sl_stretch),):
             combo.setCurrentIndex(1)
-            for tick, expected in ((0, '1'), (10, '10'), (20, '100'), (60, '1000000')):
+            for tick, expected in ((0, '1'), (10, '10'), (20, '100'), (60, '1e+06')):
                 slider.setValue(tick)
                 self.assertEqual(slider.value_label.text(), expected)
             slider.setValue(10)

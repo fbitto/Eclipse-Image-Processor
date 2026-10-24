@@ -10,10 +10,11 @@
 #     "tifffile>=2026.9.20",
 #     "xisf>=0.9.7",
 #     "watroo==0.0.4",
+#     "psd-tools==1.26.0",
 # ]
 # ///
 """
-Eclipse Image Processor v0.5.0 - Application entry point
+Eclipse Image Processor v0.6.0 - Application entry point
 Modular structure for token-efficient development.
 """
 
@@ -22,22 +23,23 @@ import sys
 
 # CPU optimization MUST come before numpy imports
 CPU_CORES = os.cpu_count() or 4
-os.environ["OMP_NUM_THREADS"] = str(CPU_CORES)
-os.environ["OPENBLAS_NUM_THREADS"] = str(CPU_CORES)
-os.environ["MKL_NUM_THREADS"] = str(CPU_CORES)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(CPU_CORES)
-os.environ["NUMEXPR_NUM_THREADS"] = str(CPU_CORES)
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import ctypes
 import cv2
 
-cv2.setNumThreads(CPU_CORES)
+# Layers and filter helpers own CPU parallelism; avoid nested native pools.
+cv2.setNumThreads(min(2, CPU_CORES))
 cv2.setUseOptimized(True)
 
 from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QToolTip
 
-from config import LIGHTROOM_QSS
+from config import APP_VERSION, LIGHTROOM_QSS
 from gui.app import EclipseProcessorApp
 from utils.helpers import application_icon_path, resource_path
 
@@ -45,10 +47,12 @@ from utils.helpers import application_icon_path, resource_path
 def main():
     """Launch the application."""
     if sys.platform == "win32":
-        myappid = "astronomy.eclipse.filters.v1_3"
+        # Keep the Windows application identity stable across releases.
+        myappid = "astronomy.eclipse.imageprocessor"
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
     app = QApplication(sys.argv)
+    app.setApplicationVersion(APP_VERSION)
     app.setApplicationName("Eclipse Image Processor")
     app.setApplicationDisplayName("Eclipse Image Processor")
     app.setStyle("Fusion")
@@ -65,8 +69,8 @@ def main():
 
     window = EclipseProcessorApp()
     if QSystemTrayIcon.isSystemTrayAvailable():
-        # The small PNG is also readable by the macOS menu bar icon renderer.
-        tray = QSystemTrayIcon(QIcon(resource_path("assets/icon-options/03-realce-coronal.png")), window)
+        # Qt reads PNG reliably for the macOS menu bar and Windows notification area.
+        tray = QSystemTrayIcon(QIcon(resource_path("assets/Eclipse_Image_Processor.png")), window)
         tray.setToolTip("Eclipse Image Processor")
         menu = QMenu(window)
 

@@ -1,18 +1,19 @@
 """
 FilterWorker: Native NumPy/SciPy coronal enhancement engine.
 
-Numerical enhancement operators (plus historical USM compatibility):
+Numerical enhancement operators:
   - PRE-STRETCH: Asinh & Logarithmic
   - DENOISING: Radial Noise Gate, Bilateral
   - RADIAL: FNRGF, RHEF
   - MULTI-SCALE: MGN, WOW
-  - DETAIL: Tangential angular residual, classic Larson-Sekanina, ACHF; legacy USM API
+  - DETAIL: Tangential angular residual, classic Larson-Sekanina, ACHF
 """
 
 import os
 import time
 from threading import Event
 from .cancellation import ProcessingCancelled, cancellation_scope, check_cancelled, cancellation_check
+from .parallelism import filter_cpu_budget
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from typing import Optional, Tuple
@@ -72,7 +73,7 @@ def ordered_scale_results(function, items, image):
     approximately five image-sized scratch arrays per worker budget 512 MiB.
     Each task receives the caller's cancellation context, never a shared context.
     """
-    workers = min(4, CPU_CORES, max(1, (512*1024**2)//max(1, image.nbytes*5)))
+    workers = min(4, filter_cpu_budget(), max(1, (512*1024**2)//max(1, image.nbytes*5)))
     if image.size < 262144 or workers == 1:
         for item in items:
             check_cancelled()
@@ -344,7 +345,7 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
         width = np.where(width > 0, width, 1.0)
         out[target] = (flat[target]-mean)/width
 
-    with ThreadPoolExecutor(max_workers=CPU_CORES) as executor:
+    with ThreadPoolExecutor(max_workers=filter_cpu_budget()) as executor:
         list(executor.map(process_bin, range(len(edges)-1)))
     return out.reshape(a.shape)
 
@@ -435,6 +436,9 @@ class FilterWorker(QObject):
             self.failed.emit(str(error))
 
     def _process_pipeline(self, raw_image: np.ndarray, params: dict):
+        if params.get("layered_model", False):
+            from .layer_engine import engine_for
+            return engine_for(self).render(self, raw_image, params, params.get("layer_display", {}))
         from .pipeline import execute_pipeline
         return execute_pipeline(self, raw_image, params)
 
@@ -712,19 +716,6 @@ class FilterWorker(QObject):
         if not np.isfinite(filtered).all():
             raise ValueError("WOW produced nonfinite output")
         return blend_filter_result(image, filtered, strength)
-
-    def run_usm(
-        self, img: np.ndarray, strength: float, radius_param: float, sigma_param: float
-    ) -> np.ndarray:
-        if strength == 0:
-            return img.copy()
-        a = finite_image(img)
-        radius = max(0.5, float(radius_param) / 10)
-        sigma = max(0.1, float(sigma_param))
-        blurred = gaussian_filter(a, sigma=radius)
-        sharpened = np.clip(a + (a - blurred) * sigma, a.min(), a.max())
-        alpha = float(strength) / 100
-        return ((1 - alpha) * a + alpha * sharpened).astype(np.float32)
 
     def run_tangential(self, img, strength, sun_x, sun_y, sun_r,
                        arc_sigma=3., gain=1., denoise=0., inner_radius=1.,

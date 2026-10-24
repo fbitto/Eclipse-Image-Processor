@@ -140,11 +140,11 @@ class ControlAndVerificationTests(unittest.TestCase):
             p.update(wow_enabled=True, wow_str=50, wow_bilateral=bilateral)
             self.assertTrue(np.isfinite(execute_pipeline(FilterWorker(),w.raw_image,p)).all())
 
-    def test_signature_includes_masks_and_display_does_not_change_numeric_recipe(self):
+    def test_composite_signature_includes_masks_and_display_settings(self):
         w=self.window;p=w.collect_filter_parameters(w.raw_image.shape)
         first=parameter_signature(p)
         w.sl_stretch.setValue(25)
-        self.assertEqual(first,parameter_signature(w.collect_filter_parameters(w.raw_image.shape)))
+        self.assertNotEqual(first,parameter_signature(w.collect_filter_parameters(w.raw_image.shape)))
         altered=dict(p);altered['valid_mask']=p['valid_mask'].copy();altered['valid_mask'][0,0]=False
         self.assertNotEqual(first,parameter_signature(altered))
 
@@ -165,8 +165,9 @@ class ControlAndVerificationTests(unittest.TestCase):
         w.dispatch_pipeline_request();a,p=requests[0]
         self.assertIs(a,w.full_raw_image)
         result=execute_pipeline(FilterWorker(),a,p);w.on_processing_finished(result)
-        expected=render_presentation(result,full,w.collect_display_parameters())
-        expected=set_luminosity(colour_layer(w.full_source_rgb,full,w.collect_display_parameters()),expected)
+        expected=result
+        from core.layer_engine import colour_display
+        expected=set_luminosity(colour_display(w.full_source_rgb,full,w.collect_display_parameters()),expected)
         reduced=cv2.resize(expected,(48,40),interpolation=cv2.INTER_AREA)
         np.testing.assert_allclose(w.last_preview_presentation,reduced,atol=1e-7)
         w.chk_export_layers.setChecked(False)
@@ -176,7 +177,7 @@ class ControlAndVerificationTests(unittest.TestCase):
                 w.export_image_action()
                 self.assertTrue(w._export_thread.wait(30000))
                 self.app.processEvents()
-            np.testing.assert_array_equal(tifffile.imread(path),np.clip(expected*65535,0,65535).astype(np.uint16))
+            np.testing.assert_array_equal(tifffile.imread(path),np.rint(np.clip(expected,0,1)*65535).astype(np.uint16))
             self.assertEqual(cv2.imread(str(path.with_name('actual_preview.jpg'))).shape,(*full.shape,3))
         # Numeric settings invalidate this cache, whereas display controls do not.
         signature=parameter_signature(w.collect_filter_parameters(full.shape))
@@ -202,7 +203,7 @@ class ControlAndVerificationTests(unittest.TestCase):
 
     def test_achf_background_one_and_zero_gain_are_exact_identity(self):
         w=self.window;w.sl_achf_background.setValue(100);w.sl_achf_boost.setValue(0);w.sl_achf_str.setValue(100)
-        p=w.collect_filter_parameters(w.raw_image.shape);p['achf_enabled']=True
+        p=w.collect_filter_parameters(w.raw_image.shape);p['achf_enabled']=True;p['layered_model']=False
         np.testing.assert_array_equal(execute_pipeline(FilterWorker(),w.raw_image,p),w.raw_image)
 
     def test_presentation_keyboard_changes_render_without_reprocessing(self):

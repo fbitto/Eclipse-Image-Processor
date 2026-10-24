@@ -27,7 +27,7 @@ def parameters(valid):
                 mgn_enabled=True, mgn_str=10, mgn_gam=32,
                 rhef_enabled=True, rhef_str=10, rhef_rad=10, rhef_upsilon=35, rhef_mode='continuous',
                 wow_enabled=True, wow_str=10, wow_scales=3, wow_denoise=[1, 2, 3], wow_bilateral=1,
-                usm_enabled=True, usm_str=10, usm_radius=10, usm_sigma=2,
+                tangential_enabled=True, tangential_str=10, tangential_arc=10, tangential_gain=2,
                 achf_enabled=True, achf_str=10, achf_kernel=10, achf_boost=20)
 
 
@@ -60,9 +60,9 @@ class MaskedImageTests(unittest.TestCase):
         for bilateral in (None, 1):
             smooth = worker.starlet_blur(image, 4, bilateral)
             np.testing.assert_allclose(smooth[self.valid], 7., atol=1e-12)
-        for name in ('mgn', 'wow', 'usm', 'achf', 'fnrgf', 'rhef'):
+        for name in ('mgn', 'wow', 'tangential', 'achf', 'fnrgf', 'rhef'):
             p = parameters(self.valid)
-            for other in ('pre_stretch', 'noise_gate', 'bilateral', 'mgn', 'wow', 'usm', 'achf', 'fnrgf', 'rhef'):
+            for other in ('pre_stretch', 'noise_gate', 'bilateral', 'mgn', 'wow', 'tangential', 'achf', 'fnrgf', 'rhef'):
                 p[other+'_enabled'] = other == name
             result = execute_pipeline(FilterWorker(), np.where(self.valid, 7., np.nan), p)
             self.assertTrue(np.isfinite(result[self.valid]).all())
@@ -151,10 +151,7 @@ class MaskedImageTests(unittest.TestCase):
                 np.testing.assert_allclose(window.full_raw_image, image, rtol=2e-7, equal_nan=True)
                 np.testing.assert_array_equal(np.isfinite(window.full_raw_image), np.isfinite(image))
                 np.testing.assert_allclose([int(window.txt_x.text()), int(window.txt_y.text()), int(window.txt_r.text())], (140,90,23), atol=1)
-                self.assertFalse(window.chk_export_linear.isChecked())
-                self.assertFalse(window.combo_input_state.isHidden())  # RGB needs transfer-state control.
-                window.chk_export_linear.setChecked(True)
-                self.assertFalse(window.combo_input_state.isHidden())
+                self.assertFalse(window.combo_input_state.isHidden())  # All sources need transfer-state control.
                 window.combo_input_state.setCurrentIndex(1)
                 # This normalized-float fixture is deliberately above white=1;
                 # this test checks missing-data export without neutralization.
@@ -168,14 +165,13 @@ class MaskedImageTests(unittest.TestCase):
                 self.assertTrue(result.is_file(), window.status_label.text())
                 final = tifffile.imread(result)
                 self.assertEqual(final.dtype, np.uint16)
-                self.assertEqual(final.shape, (160, 240, 4))
-                np.testing.assert_array_equal(final[..., 3] > 0, np.isfinite(image))
-                self.assertTrue((Path(tmp)/'final_PS_layers'/'recipe.json').is_file())
-                sources = Path(tmp)/'final_sources'
-                np.testing.assert_array_equal(
-                    tifffile.imread(sources/'realistic_LINEAR_RGB_float32.tif'),
-                    np.repeat(image[..., None], 3, axis=2))
-                np.testing.assert_array_equal(
-                    tifffile.imread(sources/'realistic_LINEAR_L_float32.tif'), window.full_raw_image)
+                self.assertEqual(final.shape, (160, 240, 3))
+                self.assertTrue((final[~np.isfinite(image)] == 0).all())
+                self.assertTrue((Path(tmp)/'final_PS_layers.psb').is_file())
+                from psd_tools import PSDImage
+                psb = PSDImage.open(Path(tmp)/'final_PS_layers.psb')
+                self.assertEqual(psb.depth,16)
+                self.assertEqual(psb._record.header.channels,3)
+                self.assertFalse((Path(tmp)/'final_sources').exists())
         finally:
             window.close()

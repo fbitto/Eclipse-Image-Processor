@@ -8,7 +8,7 @@ from core.pipeline import execute_pipeline, prepare_parameters
 
 class SharedPipelineTests(unittest.TestCase):
     def test_rectangular_pixel_centres_and_resolution_units(self):
-        source = dict(sx=103.7, sy=58.1, sr=20., bilateral_d=10, usm_radius=20,
+        source = dict(sx=103.7, sy=58.1, sr=20., bilateral_d=10, tangential_arc=20,
                       achf_kernel=30, rhef_bin_px=2, fnrgf_nbins=80, rhef_mode="continuous")
         preview = prepare_parameters(source, (121, 207), (60, 103), (60, 103))
         full = prepare_parameters(source, (121, 207), (60, 103), (121, 207))
@@ -24,8 +24,8 @@ class SharedPipelineTests(unittest.TestCase):
         image = np.ones((32, 32), np.float32)
         worker = Mock()
         order = []
-        methods = ("run_pre_log", "run_radial_noise_gate", "run_bilateral_denoise", "run_fnrgf_native",
-                   "run_mgn_native", "run_wow_native", "run_rhef_native", "run_usm", "run_achf")
+        methods = ("run_fnrgf_native",
+                   "run_rhef_native", "run_mgn_native", "run_wow_native", "run_tangential", "run_larson_sekanina", "run_achf")
         for name in methods:
             getattr(worker, name).side_effect = lambda a, *args, name=name, **kwargs: (order.append(name) or a.copy())
         p = dict(sx=16, sy=16, sr=4, pre_stretch_enabled=True, pre_stretch_mode="log", pre_stretch_val=1,
@@ -34,10 +34,14 @@ class SharedPipelineTests(unittest.TestCase):
                  fnrgf_enabled=True, fnrgf_str=10, fnrgf_ord=6, fnrgf_seg=16, fnrgf_cut=0, fnrgf_rad=10,
                  mgn_enabled=True, mgn_str=10, mgn_gam=32, wow_enabled=True, wow_str=10,
                  rhef_enabled=True, rhef_str=10, rhef_rad=10, rhef_upsilon=35, rhef_mode="continuous",
-                 usm_enabled=True, usm_str=10, usm_radius=10, usm_sigma=2,
+                 tangential_enabled=True, tangential_str=10, tangential_arc=10, tangential_gain=2,
+                 larson_sekanina_enabled=True, larson_sekanina_str=10,
                  achf_enabled=True, achf_str=10, achf_kernel=10, achf_boost=20)
         np.testing.assert_array_equal(execute_pipeline(worker, image, p), image)
         self.assertEqual(order, list(methods))
+        worker.run_pre_log.assert_not_called()
+        worker.run_radial_noise_gate.assert_not_called()
+        worker.run_bilateral_denoise.assert_not_called()
         self.assertEqual(worker.run_rhef_native.call_args.kwargs["mode"], "continuous")
 
     def test_qt_preview_and_synchronous_export_have_identical_results(self):

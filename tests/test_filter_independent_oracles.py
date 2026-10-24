@@ -1,4 +1,4 @@
-"""Independent, slow spatial oracles for signed ACHF and clipped USM.
+"""Independent, slow spatial oracles for signed ACHF.
 
 Small deterministic inputs keep the scalar implementation independent of the
 vectorized shift/slice machinery and exercise partial support at image borders.
@@ -72,17 +72,6 @@ class IndependentOracleTests(unittest.TestCase):
             expected = scalar_achf(image, 1.2, 100., 3., .2, labels, scale)
             actual = adaptive_circular_highpass(image, 1.2, 100., gain=3., background=.2, spatial_scale=scale)
             np.testing.assert_allclose(actual, expected, atol=1e-6, rtol=1e-6)
-
-    def test_usm_matches_direct_convolution_and_clipping(self):
-        worker = FilterWorker()
-        image = np.random.default_rng(12).uniform(-2, 5, (7, 11))
-        for radius_param in (5., 13., 27.):
-            blurred = explicit_gaussian(image, radius_param/10)
-            sharpened = np.clip(image+2*(image-blurred), image.min(), image.max())
-            for strength in (0, 17, 100):
-                expected = (1-strength/100)*image+strength/100*sharpened
-                actual = worker.run_usm(image, strength, radius_param, 2)
-                np.testing.assert_allclose(actual, expected, atol=5e-7, rtol=2e-7)
 
     def test_pre_stretches_match_scalar_formulas_and_preserve_extrema(self):
         worker = FilterWorker()

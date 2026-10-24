@@ -5,9 +5,7 @@ from .factories import create_slider_float, create_slider, update_slider_display
 
 # attribute, recipe key, title, min, max, default, divisor, help
 CONTROLS = {
-    'noise_gate': [
-        ('noise_gate_sigma', 'noise_gate_sigma', 'Local sigma (preview px)', 5, 200, 30, 10., 'Gaussian sigma for local signal and residual spread, in preview pixels; scaled on export.'),
-        ('noise_gate_smooth', 'noise_gate_smooth', 'Gate sigma (preview px)', 0, 200, 20, 10., 'Gaussian sigma for the attenuation map; zero disables gate smoothing.')],
+
     'fnrgf': [
         ('fnrgf_smooth', 'fnrgf_smooth', 'Model smoothing (preview px)', 0, 640, 80, 10., 'Radial Gaussian sigma of the continuous background model, not the final image. Zero disables smoothing.'),
         ('fnrgf_fade', 'fnrgf_fade', 'Boundary fade (preview px)', 0, 1280, 80, 10., 'Continuous mode: smooth application at the inner and outer radii without changing observed-data validity.'),
@@ -88,7 +86,7 @@ def add_controls(window):
     window.sl_mgn_sigmas, window.sl_mgn_weights = [], []
     for index, sigma in enumerate((1.25, 2.5, 5, 10, 20, 40)):
         for collection, title, maximum, default, help_text in (
-            (window.sl_mgn_sigmas, 'sigma (preview px)', 12800, round(sigma*100), 'Gaussian scale in preview pixels, scaled for export. Each of the six scales is independently adjustable.'),
+            (window.sl_mgn_sigmas, 'sigma (native px)', 12800, round(sigma*100), 'Gaussian scale in original-image pixels. Reduced proportionally for fast preview; used directly at full resolution.'),
             (window.sl_mgn_weights, 'weight', 200, 100, 'Nonnegative weight of this local MGN scale. Zero disables its contribution; normalization still divides by six scales.')):
             slider, _ = create_slider_float(f'Scale {index+1} {title}', 25 if collection is window.sl_mgn_sigmas else 0,
                                             maximum, default, 100., window.sec_mgn.content_layout,
@@ -193,3 +191,82 @@ def add_advanced_mode(window, header_layout):
     window.chk_rhef_symmetric.toggled.connect(update_custom_values)
     window.chk_advanced.toggled.connect(update_visibility)
     update_visibility(False)
+
+
+def add_achf_variants(window):
+    """One persistent panel per AEL variant; switching never overwrites edits."""
+    from PySide6.QtWidgets import QWidget, QVBoxLayout
+    from core.ael_achf import AEL_PRESETS
+    window.achf_ael_controls = {}
+    for variant, preset in AEL_PRESETS.items():
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0,0,0,0)
+        controls = dict(panel=panel)
+        controls['enabled']=QCheckBox('Include in composition')
+        controls['enabled'].setToolTip('Enable this variant independently of the other ACHF layers; cached results are retained when disabled.')
+        controls['enabled'].toggled.connect(window.on_filter_toggled)
+        layout.addWidget(controls['enabled'])
+        controls['opacity'], _=create_slider('Opacity (%)',0,100,50,layout,
+            tooltip='Overlay opacity; changing this only recomposes cached layers.')
+        controls['opacity'].setProperty('mix_only',True)
+        controls['opacity'].valueChanged.connect(window.on_layer_mix_changed)
+        controls['strength'], _ = create_slider('Strength (%)',0,100,preset['strength'],layout,
+            tooltip="Strength controls this variant's encoded detail contrast before blending; opacity independently controls the mixture.",
+            on_release_callback=window.dispatch_pipeline_request_if_auto)
+        if 'sigmas' in preset:
+            controls['sigmas'] = []
+            for i, value in enumerate(preset['sigmas']):
+                slider, _ = create_slider_float(f'Scale {i+1} sigma (native px)',1,1280,round(10*value),10.,layout,
+                    tooltip='Gaussian sigma at full source resolution. Fast preview adapts the footprint.',
+                    on_release_callback=window.dispatch_pipeline_request_if_auto)
+                controls['sigmas'].append(slider)
+        else:
+            controls['angular_sigma'], _ = create_slider_float('Angular sigma (degrees)',1,300,10,10.,layout,
+                tooltip='Gaussian angular width along circles around the reference center, in degrees.',
+                on_release_callback=window.dispatch_pipeline_request_if_auto)
+        controls['outer_sigma'], _ = create_slider_float('Final smoothing (native px)',0,640,
+            round(10*preset['outer_sigma']),10.,layout,
+            tooltip='Gaussian sigma after detail extraction; zero disables it.',
+            on_release_callback=window.dispatch_pipeline_request_if_auto)
+        window.achf_ael_controls[variant] = controls
+        window.sec_achf.content_layout.addWidget(panel)
+
+
+def collect_achf_variants(window):
+    result = {}
+    for variant, controls in window.achf_ael_controls.items():
+        settings = dict(strength=controls['strength'].value(),outer_sigma=controls['outer_sigma'].value()/10.,
+                        opacity=controls['opacity'].value(),enabled=controls['enabled'].isChecked())
+        if 'sigmas' in controls:
+            settings['sigmas'] = [slider.value()/10. for slider in controls['sigmas']]
+        else:
+            settings['angular_sigma'] = controls['angular_sigma'].value()/10.
+        result[variant] = settings
+    return result
+
+
+def add_layer_opacities(window):
+    """Opacity rows precede Strength; changes only request cached composition."""
+    from .factories import create_slider
+    for name in ('fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
+        layout=(window.achf_adaptive_panel.layout() if name == 'achf'
+                else getattr(window,'sec_'+name).content_layout)
+        strength=getattr(window,'sl_'+name+'_str')
+        help_text='Strength controls encoded layer contrast before blending; changing it updates this filter only.'
+        for control in (strength,strength.title_label,strength.value_label):
+            control.setToolTip(help_text)
+        mode='Multiply' if name == 'fnrgf' else 'Linear Light' if name == 'larson_sekanina' else 'Overlay'
+        slider,_=create_slider('Opacity (%)',0,100,50,layout,
+            tooltip=f'{mode} layer opacity. Changes only the composition; preserves calculated filters.')
+        slider.setProperty('mix_only',True)
+        slider.valueChanged.connect(window.on_layer_mix_changed)
+        row=slider.parameter_row
+        layout.removeWidget(row)
+        layout.insertWidget(0,row)
+        setattr(window,'sl_'+name+'_opacity',slider)
+    window.chk_achf_adaptive=QCheckBox('Include Adaptive in composition')
+    window.chk_achf_adaptive.setToolTip('Include the adaptive ACHF layer; the other variants can be enabled independently.')
+    window.chk_achf_adaptive.setChecked(True)
+    window.chk_achf_adaptive.toggled.connect(window.on_filter_toggled)
+    window.achf_adaptive_panel.layout().insertWidget(0,window.chk_achf_adaptive)
