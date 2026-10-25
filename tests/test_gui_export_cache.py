@@ -31,6 +31,7 @@ class NativeExportCacheTests(unittest.TestCase):
         w.chk_verify_preview.setChecked(True)
         for name in ('fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
             getattr(w,'sec_'+name).chk_active.setChecked(True)
+        w.chk_achf_adaptive.setChecked(True)
         self.calls=[]
         original=LayerEngine._calculate
         def calculate(engine,worker,source,params,name,variant):

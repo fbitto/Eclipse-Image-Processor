@@ -31,10 +31,81 @@ def capture_settings(window):
                 auto_calculate=window.auto_calculate)
 
 
+
+def filter_widgets(window):
+    from core.layer_engine import ORDER
+    sections=[getattr(window,'sec_'+name) for name in (*ORDER,'achf')]
+    return {name:widget for name,widget in controls(window).items()
+            if any(section.isAncestorOf(widget) for section in sections)}
+
+
+def initialize_filter_defaults(window):
+    """Capture factory parameters once, with the requested AEL composition and 25/75 alternatives."""
+    from core.layer_engine import ORDER
+    settings=capture_settings(window)
+    names=filter_widgets(window)
+    values={name:record for name,record in settings['controls'].items() if name in names}
+    for name in ORDER+('achf',):
+        values['sl_'+name+'_str']['value']=25
+        values['sl_'+name+'_opacity']['value']=75
+    for variant in window.achf_ael_controls:
+        values[f'achf_ael_controls.{variant}.strength']['value']=25
+        values[f'achf_ael_controls.{variant}.opacity']['value']=75
+        values[f'achf_ael_controls.{variant}.enabled']['value']=False
+    values['chk_achf_adaptive']['value']=False
+    for name,opacity in (('nrgf',40),('wow',35)):
+        values['sl_'+name+'_str']['value']=100
+        values['sl_'+name+'_opacity']['value']=opacity
+    for variant in ('ael_iso_04','ael_angular_4'):
+        values[f'achf_ael_controls.{variant}.strength']['value']=100
+        values[f'achf_ael_controls.{variant}.opacity']['value']=10
+    values['sl_wow_scales']['value']=6
+    values['sl_wow_noise_floor']['value']=30
+    for name,index in (('combo_wow_bilateral',2),('combo_achf_variant',2)):
+        values[name]=dict(kind='combo',value=index,text=names[name].itemText(index))
+    window._filter_defaults=values
+    for name,record in values.items():
+        if record['kind']=='slider':names[name].setProperty('reset_value',record['value'])
+    reset_filter_defaults(window,ael=False)
+
+
+def reset_filter_defaults(window, *, ael=False):
+    """Never carry filter edits or inclusion flags from the preceding image/project."""
+    from core.layer_engine import ORDER
+    widgets=filter_widgets(window)
+    previous=window.auto_calculate
+    window.auto_calculate=False
+    try:
+        values=window._filter_defaults
+        for name,record in values.items():
+            if record['kind']=='combo':widgets[name].setCurrentIndex(record['value'])
+        for _ in range(2):
+            for name,record in values.items():
+                if record['kind']=='slider':
+                    widget=widgets[name]
+                    if name=='sl_fnrgf_rmax' or name.startswith('sl_mgn_sigmas.'):
+                        widget.setMaximum(max(widget.maximum(),record['value']))
+                    widget.setValue(record['value'])
+        for name,record in values.items():
+            if record['kind']=='check':widgets[name].setChecked(record['value'])
+        for variant in ('ael_iso_04','ael_angular_4'):
+            window.achf_ael_controls[variant]['enabled'].setChecked(ael)
+        for name in ORDER+('achf',):
+            section=getattr(window,'sec_'+name)
+            section.chk_active.setChecked(ael and name in ('fnrgf','mgn','wow','achf'))
+        window.update_wow_controls()
+    finally:
+        window.auto_calculate=previous
+        window.recalculation_timer.stop()
+        window.presentation_timer.stop()
+
+
 def validate_settings(window,settings):
     widgets=controls(window)
     values=settings.get('controls')
-    if not isinstance(values,dict) or set(values)-{'chk_export_achf_ael'}!=set(widgets):
+    optional=set(filter_widgets(window)) | {'chk_color_correction'}
+    if (not isinstance(values,dict) or set(values)-set(widgets)-{'chk_export_achf_ael'} or
+            set(widgets)-set(values)-optional):
         raise ValueError('Settings controls do not match this application version')
     for name,record in values.items():
         if name=='chk_export_achf_ael':continue
@@ -56,7 +127,9 @@ def validate_settings(window,settings):
     if type(settings.get('auto_calculate')) is not bool:raise ValueError('Invalid automatic calculation mode')
     sections=settings.get('sections')
     expected={n for n,w in vars(window).items() if isinstance(w,CollapsibleSection)}
-    if not isinstance(sections,dict) or set(sections)!=expected:raise ValueError('Invalid saved filter sections')
+    optional_sections={name for name in expected if name not in ('sec_geo','sec_stretch')}
+    if (not isinstance(sections,dict) or set(sections)-expected or expected-set(sections)-optional_sections):
+        raise ValueError('Invalid saved filter sections')
     for record in sections.values():
         if not isinstance(record,dict) or any(type(record.get(k)) is not bool for k in ('active','expanded')):
             raise ValueError('Invalid saved filter activation')
@@ -71,6 +144,8 @@ def restore_settings(window,settings):
     previous=window.auto_calculate
     window.auto_calculate=False
     try:
+        reset_filter_defaults(window,ael=False)
+        window.chk_color_correction.setChecked(False)
         for key,value in settings['geometry'].items():getattr(window,'txt_'+key).setText(value)
         # Selector callbacks establish slider ranges and variant-panel visibility.
         for name,record in values.items():

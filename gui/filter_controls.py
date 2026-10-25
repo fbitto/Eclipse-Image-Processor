@@ -5,7 +5,9 @@ from .factories import create_slider_float, create_slider, update_slider_display
 
 # attribute, recipe key, title, min, max, default, divisor, help
 CONTROLS = {
-
+    'nrgf': [
+        ('nrgf_min_count', 'nrgf_min_count', 'Minimum samples per ring', 2, 128, 12, 1., 'Annuli with fewer observed samples remain undefined; at least four consecutive usable annuli are needed.'),
+        ('nrgf_smooth_bins', 'nrgf_smooth_bins', 'Profile smoothing (rings)', 0, 100, 0, 10., 'Optional local quadratic smoothing of radial model nodes, never image pixels. AEL default is zero; smoothing may bias curved profiles.')],
     'fnrgf': [
         ('fnrgf_smooth', 'fnrgf_smooth', 'Model smoothing (preview px)', 0, 640, 80, 10., 'Radial Gaussian sigma of the continuous background model, not the final image. Zero disables smoothing.'),
         ('fnrgf_fade', 'fnrgf_fade', 'Boundary fade (preview px)', 0, 1280, 80, 10., 'Continuous mode: smooth application at the inner and outer radii without changing observed-data validity.'),
@@ -95,7 +97,9 @@ def add_controls(window):
     window.sl_wow_bilateral, _ = create_slider_float('Bilateral intensity scale', 1, 50, 10, 10.,
         window.sec_wow.content_layout, tooltip='Positive intensity sensitivity for the bilateral WOW backend (0.1 to 5); enabled only in edge-aware mode.',
         on_release_callback=window.dispatch_pipeline_request_if_auto)
-    window.combo_wow_bilateral.currentIndexChanged.connect(lambda i: window.sl_wow_bilateral.setEnabled(i == 1))
+    window.sl_wow_noise_floor, _ = create_slider_float('AEL noise floor', 0, 100, 30, 10.,
+        window.sec_wow.content_layout, tooltip='AEL regularization multiplier of measured noise in the whitening denominator. This is not a significance threshold.',
+        on_release_callback=window.dispatch_pipeline_request_if_auto)
 
 
 def collect_controls(window):
@@ -113,6 +117,8 @@ def collect_controls(window):
     params['mgn_sigmas'] = tuple(sl.value()/100 for sl in window.sl_mgn_sigmas)
     params['mgn_weights'] = tuple(sl.value()/100 for sl in window.sl_mgn_weights)
     params['wow_bilateral'] = window.sl_wow_bilateral.value()/10 if window.combo_wow_bilateral.currentIndex() else None
+    params['wow_mode'] = 'ael_bilateral' if window.combo_wow_bilateral.currentIndex() == 2 else 'native'
+    params['wow_noise_floor'] = window.sl_wow_noise_floor.value()/10
     return params
 
 
@@ -142,7 +148,7 @@ def add_advanced_mode(window, header_layout):
     header_layout.addWidget(window.lbl_advanced_values)
     advanced = [window.sl_mgn_trunc, *window.sl_mgn_sigmas, *window.sl_mgn_weights,
                 window.sl_wow_scales, *window.sl_wow_denoise,
-                window.combo_wow_bilateral, window.sl_wow_bilateral,
+                window.sl_wow_bilateral,
                 window.combo_rhef_mode, window.sl_rhef_rad, window.sl_rhef_bin,
                 window.chk_rhef_symmetric, window.chk_tangential_outer,
                 window.sl_achf_boost, window.sl_achf_background,
@@ -249,15 +255,15 @@ def collect_achf_variants(window):
 def add_layer_opacities(window):
     """Opacity rows precede Strength; changes only request cached composition."""
     from .factories import create_slider
-    for name in ('fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
+    for name in ('nrgf','fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
         layout=(window.achf_adaptive_panel.layout() if name == 'achf'
                 else getattr(window,'sec_'+name).content_layout)
         strength=getattr(window,'sl_'+name+'_str')
         help_text='Strength controls encoded layer contrast before blending; changing it updates this filter only.'
         for control in (strength,strength.title_label,strength.value_label):
             control.setToolTip(help_text)
-        mode='Multiply' if name == 'fnrgf' else 'Linear Light' if name == 'larson_sekanina' else 'Overlay'
-        slider,_=create_slider('Opacity (%)',0,100,50,layout,
+        mode='Multiply' if name in ('nrgf', 'fnrgf') else 'Linear Light' if name == 'larson_sekanina' else 'Overlay'
+        slider,_=create_slider('Opacity (%)',0,100,40 if name == 'nrgf' else 50,layout,
             tooltip=f'{mode} layer opacity. Changes only the composition; preserves calculated filters.')
         slider.setProperty('mix_only',True)
         slider.valueChanged.connect(window.on_layer_mix_changed)

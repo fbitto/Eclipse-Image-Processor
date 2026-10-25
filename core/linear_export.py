@@ -7,7 +7,7 @@ import tempfile
 import numpy as np
 import tifffile
 
-from .image_data import observed_image
+from .image_data import observed_image, zero_missing
 
 
 def split_source_channels(image):
@@ -69,10 +69,11 @@ def export_linear_sources(mono, rgb, original_path, destination, input_state='un
     files = []
     metadata = dict(source=str(original_path), input_state=input_state, normalization='none',
                     filters='none', stretch='none', units='Original loaded pixel units',
-                    colour='Source RGB retained without colour calibration or ICC assignment')
+                    colour='Source RGB retained without colour calibration or ICC assignment',
+                    missing_samples='Stored as zero; VALID identifies missing observations')
     try:
         name = f'{stem}_{label}_L_float32.tif'
-        tifffile.imwrite(stage/name, mono.astype(np.float32), photometric='minisblack',
+        tifffile.imwrite(stage/name, zero_missing(mono,valid).astype(np.float32), photometric='minisblack',
                          compression='zlib', metadata=metadata)
         files.append(name)
         if rgb is not None:
@@ -80,7 +81,7 @@ def export_linear_sources(mono, rgb, original_path, destination, input_state='un
             if rgb.shape != (*mono.shape, 3) or not np.isfinite(rgb[valid]).all():
                 raise ValueError('RGB must match source luminance and validity')
             name = f'{stem}_{label}_RGB_float32.tif'
-            tifffile.imwrite(stage/name, np.where(valid[..., None], rgb, np.nan),
+            tifffile.imwrite(stage/name, zero_missing(rgb,valid),
                              photometric='rgb', compression='zlib', metadata=metadata)
             files.append(name)
         name = f'{stem}_VALID.tif'
@@ -92,7 +93,7 @@ def export_linear_sources(mono, rgb, original_path, destination, input_state='un
         note = ('The input was declared linear.' if input_state == 'linear' else
                 'The input was not declared linear: INPUT files retain their original transfer function.')
         (stage/'README.txt').write_text(note + '\nRGB and luminance without filtering, stretching or normalization. '
-            'No input transfer curve was inverted. Values and NaNs are retained as float32.\n'
+            'No input transfer curve was inverted. Observed values retain their units; missing samples are stored as float32 zero.\n'
             'VALID marks observed (255) and missing (0) samples.\n'
             'Luminance is a channel combination, not a physical brightness calibration.\n', encoding='utf-8')
         stage.rename(destination)

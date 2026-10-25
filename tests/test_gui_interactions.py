@@ -129,16 +129,18 @@ class GuiInteractionTests(unittest.TestCase):
         self.assertFalse(self.window.chk_calibrate_colour.isEnabled())
         self.window.combo_input_state.setCurrentIndex(1)
         self.assertTrue(self.window.chk_calibrate_colour.isEnabled())
-        from unittest.mock import patch
-        with patch("gui.app.neutralize_tse") as calibrate, patch("gui.app.set_luminosity") as colorize:
+        from core.colour import neutralize_tse, set_luminosity
+        with patch("gui.app.neutralize_tse", wraps=neutralize_tse) as calibrate, patch("gui.app.set_luminosity", wraps=set_luminosity) as colorize:
             self.window.chk_calibrate_colour.setChecked(True)
             self.window.render_matrix_to_screen()
+            self.assertEqual(calibrate.call_count,1)
+            self.assertEqual(self.window.last_preview_presentation.ndim,3)
             self.window.show_original_mode = True
             self.window.render_matrix_to_screen()
             self.window.show_original_mode = False
-            calibrate.assert_not_called()
-            colorize.assert_not_called()
-            self.assertTrue(self.window.image_label.pixmap().toImage().isGrayscale())
+            self.assertEqual(calibrate.call_count,1)
+            self.assertGreaterEqual(colorize.call_count,2)
+            self.assertEqual(self.window.last_preview_presentation.shape,(64,64,3))
         calibrated, _, report = self.window.colour_data()
         self.assertIn("gain-only", report["method"])
         np.testing.assert_allclose(calibrated[..., 0], calibrated[..., 1], atol=1e-6)
@@ -152,7 +154,7 @@ class GuiInteractionTests(unittest.TestCase):
         self.assertEqual(report["method"], "none")
 
     def test_calibration_row_whitespace_toggles_once_per_click(self):
-        self.window.full_source_rgb = np.ones((64, 64, 3), np.float32)
+        self.window.full_source_rgb = np.repeat(np.linspace(.01,.9,64*64,dtype=np.float32).reshape(64,64,1),3,axis=-1)
         self.window.combo_input_state.setCurrentIndex(1)
         self.window.on_input_state_changed()
         checkbox = self.window.chk_calibrate_colour
@@ -410,7 +412,7 @@ class GuiInteractionTests(unittest.TestCase):
 
     def test_ael_achf_selection_reaches_preview_and_export(self):
         w = self.window
-        self.assertEqual(w.combo_achf_variant.currentData(), 'adaptive')
+        self.assertEqual(w.combo_achf_variant.currentData(), 'ael_iso_04')
         w.combo_achf_variant.setCurrentIndex(w.combo_achf_variant.findData('ael_iso_04'))
         for shape in (w.raw_image.shape, w.full_raw_image.shape):
             self.assertEqual(w.collect_filter_parameters(shape)['achf_variant'], 'ael_iso_04')
@@ -438,15 +440,15 @@ class GuiInteractionTests(unittest.TestCase):
             self.assertEqual(params['achf_str'],11+i)
             self.assertEqual(params['achf_ael_parameters']['outer_sigma'],(21+i)/10)
             self.assertEqual(set(params['achf_variants']),set(variants)|{'adaptive'})
-            self.assertEqual(params['achf_adaptive_strength'],10)
+            self.assertEqual(params['achf_adaptive_strength'],25)
         w.combo_achf_variant.setCurrentIndex(0)
-        self.assertEqual(w.sl_achf_str.value(),10)
+        self.assertEqual(w.sl_achf_str.value(),25)
 
     def test_achf_starts_with_full_background_retention(self):
         w = self.window
         self.assertEqual(w.sl_achf_background.value(), 100)
         self.assertFalse(w.sec_achf.is_filter_active())
-        self.assertEqual(w.sl_achf_str.value(), 10)
+        self.assertEqual(w.sl_achf_str.value(), 25)
         for shape in (w.raw_image.shape, w.full_raw_image.shape):
             self.assertEqual(w.collect_filter_parameters(shape)['achf_background'], 100)
 
@@ -455,6 +457,7 @@ class GuiInteractionTests(unittest.TestCase):
         from io import StringIO
         w = self.window
         w.auto_calculate = False
+        w.combo_achf_variant.setCurrentIndex(0)
         # A large radius exercises clamping of the automatically chosen support.
         w.full_raw_image = np.ones((1800, 2400), dtype=np.float32)
         w.preview_image = np.ones((900, 1200), dtype=np.float32)
@@ -471,7 +474,7 @@ class GuiInteractionTests(unittest.TestCase):
             QTest.mouseDClick(slider, Qt.MouseButton.LeftButton)
             self.assertEqual(slider.value(), expected)
         self.assertEqual(w.sl_achf_kernel.value(), w.sl_achf_kernel.maximum())
-        self.assertIn(f'Auto ({w.sl_wow_scales.maximum()} native scales', output.getvalue())
+        self.assertIn('WOW: 6 native scales', output.getvalue())
         self.assertIn('support radius = 20.0 preview px', output.getvalue())
         self.assertNotIn('arcsec/pixel', output.getvalue())
 
@@ -544,6 +547,7 @@ class GuiInteractionTests(unittest.TestCase):
 
     def test_basic_wow_noise_updates_every_scale_and_advanced_values_survive(self):
         w = self.window
+        w.combo_wow_bilateral.setCurrentIndex(1)
         self.assertEqual(w.sl_wow_noise.value(), 0)
         w.sl_wow_noise.setValue(23)
         self.assertTrue(all(s.value() == 23 for s in w.sl_wow_denoise))

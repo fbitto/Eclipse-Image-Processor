@@ -56,6 +56,9 @@ class MaskedWorker:
         return np.where(self.valid, np.log1p(k*self.norm(a))/np.log1p(k)
                         * self.span(a) + a[self.valid].min(), 0).astype(np.float32)
 
+    def run_nrgf_native(self, a, *args, **kwargs):
+        return np.where(self.valid, self.worker.run_nrgf_native(a, *args, valid=self.valid, **kwargs), 0)
+
     def run_fnrgf_native(self, a, *args, **kwargs):
         return np.where(self.valid, self.worker.run_fnrgf_native(a, *args, valid=self.valid, **kwargs), 0)
 

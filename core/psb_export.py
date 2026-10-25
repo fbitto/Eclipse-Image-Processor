@@ -144,7 +144,16 @@ def _black_composite(composite):
                    (composite[...,3:4].astype(np.float64)/65535)).astype(np.uint16)
 
 
-def verify_psb_package(path,package):
+def _correction_input(package,recipe,shape):
+    composite=_black_composite(_pixels(_package_path(package,recipe['combined']),shape))
+    mask_file=recipe.get('validity_file','VALID.tif')
+    valid=tifffile.imread(_package_path(package,mask_file))
+    if valid.shape!=shape:
+        raise ValueError('Color Correction validity must match PSB canvas')
+    return composite,valid>0,recipe.get('parameters',{})
+
+
+def verify_psb_package(path,package,*,color_correction=False):
     """Reopen PSB; check original channels, opaque black background and cached RGB exactly."""
     from psd_tools import PSDImage
     from psd_tools.constants import BlendMode,Resource
@@ -152,7 +161,7 @@ def verify_psb_package(path,package):
     doc = PSDImage.open(path)
     if (doc._record.header.version,doc.depth,doc.height,doc.width) != (2,16,*shape):
         raise ValueError('PSB header does not match the package')
-    if len(doc) != len(recipe['layers']) + 1:
+    if len(doc) != len(recipe['layers']) + 1 + bool(color_correction):
         raise ValueError('PSB layer count does not match the package')
     background=doc[0]
     if (background.name,background.blend_mode,background.opacity,bool(background.visible)) != (
@@ -194,15 +203,22 @@ def verify_psb_package(path,package):
             raise ValueError(f'PSB merged channel mismatch: {k}')
     if Resource.XMP_METADATA not in doc._record.image_resources:
         raise ValueError('PSB recipe metadata is missing')
+    correction_report=None
+    if color_correction:
+        from .color_correction import verify_color_correction
+        correction_report=verify_color_correction(doc,*_correction_input(package,recipe,shape))
     return dict(version=2,depth=16,shape=list(shape),layers=report,
-                exact_composite=True,merged_transparency=False,black_background=True,
+                exact_composite=not color_correction,exact_base_reference=True,
+                color_correction=correction_report,merged_transparency=False,black_background=True,
                 psd_tools=importlib.metadata.version('psd-tools'))
 
 
-def export_psb_package(package,destination):
+def export_psb_package(package,destination,*,color_correction=False):
     """Convert a layer package; publish only after verified writing, never overwrite."""
     total_start = time.perf_counter()
     package,recipe,shape = _package(package)
+    if color_correction and len(recipe['layers'])>32760:
+        raise ValueError('Color Correction exceeds the PSB layer-record limit')
     destination = Path(destination)
     if destination.exists():
         raise FileExistsError(destination)
@@ -232,6 +248,10 @@ def export_psb_package(package,destination):
     rec=doc._record
     composite = _pixels(_package_path(package,recipe['combined']),shape)
     composite = _black_composite(composite)
+    correction=None
+    if color_correction:
+        from .color_correction import add_color_correction
+        correction=add_color_correction(doc,*_correction_input(package,recipe,shape))
     rec.header.channels=3
     rec.image_data.compression=Compression.RAW
     rec.image_data.set_data([np.ascontiguousarray(composite[...,k]).astype('>u2').tobytes()
@@ -239,6 +259,8 @@ def export_psb_package(package,destination):
     _to_lr16(doc)
     provenance = dict(recipe=recipe,writer='AEL-derived PSB16 writer; Eclipse Image Processor',
                       psd_tools=importlib.metadata.version('psd-tools'),black_background=True)
+    if correction is not None:
+        provenance['color_correction']=correction
     xmp = ('<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
            '<rdf:Description rdf:about="" xmlns:eip="https://eclipse-image-processor/metadata/1/">'
            '<eip:recipe>'+escape(json.dumps(provenance,ensure_ascii=False))+'</eip:recipe>'
@@ -260,7 +282,7 @@ def export_psb_package(package,destination):
         del doc,rec
         gc.collect()
         verify_start = time.perf_counter()
-        report=verify_psb_package(temporary,package)
+        report=verify_psb_package(temporary,package,color_correction=color_correction)
         print(f"[PSB: VERIFY] Done in {time.perf_counter()-verify_start:.3f}s")
         check_cancelled()
         # Same-directory hard link publishes atomically and refuses a name collision.

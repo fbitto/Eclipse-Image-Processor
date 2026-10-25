@@ -36,7 +36,7 @@ from core.linear_export import split_source_channels
 from core.colour import neutralize_tse, colour_layer, set_luminosity
 from core.result_cache import parameter_signature
 from core.project_settings import read_settings, write_settings
-from gui.project_settings import capture_settings, restore_settings, validate_settings
+from gui.project_settings import capture_settings, restore_settings, validate_settings, initialize_filter_defaults, reset_filter_defaults
 from gui.filter_controls import add_controls, collect_controls, add_advanced_mode, add_achf_variants, collect_achf_variants, add_layer_opacities
 from core.image_data import resize_observed, normalize_observed
 from gui.components import BUTTON_STYLE, CHECKBOX_STYLE, ClickableLabel, CollapsibleSection, FullRowCheckBox, InWindowTooltips, ScrollSafeSlider, ScrollSafeComboBox
@@ -72,6 +72,7 @@ class EclipseProcessorApp(QMainWindow):
         self.full_source_rgb: Optional[np.ndarray] = None
         self.source_rgb_white = 1.
         self._colour_cache = None
+        self._preview_colour_cache = None
         self._full_cache = None
         self._export_thread = None
         self._running_full_job = False
@@ -109,6 +110,7 @@ class EclipseProcessorApp(QMainWindow):
         self.persistent_thread.start()
 
         self._build_ui()
+        initialize_filter_defaults(self)
         for checkbox in self.findChildren(QCheckBox):
             checkbox.setStyleSheet(CHECKBOX_STYLE)
             checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -131,7 +133,7 @@ class EclipseProcessorApp(QMainWindow):
         self.image_label.setStyleSheet("QLabel { background-color: #1c1c1c; border: 1px solid #333333; border-radius: 4px; }")
         self.image_label.image_clicked.connect(self.on_image_canvas_clicked)
         self.image_label.circle_center_requested.connect(self.on_circle_center_requested)
-        self.image_label.setToolTip("Fast preview is monochrome; full-resolution verification includes source colour. Ctrl-click (Command-click on macOS) to move the disk center. With the shadow picker enabled, click to sample the original linear base before display stretching.")
+        self.image_label.setToolTip("RGB inputs show source colour and optional calibration in both fast and full-resolution previews. Ctrl-click (Command-click on macOS) to move the disk center. With the shadow picker enabled, click to sample the original linear base before display stretching.")
         main_layout.addWidget(self.image_label, stretch=3)
 
         right_container = QWidget()
@@ -155,7 +157,7 @@ class EclipseProcessorApp(QMainWindow):
 
         btn_row = QHBoxLayout()
         self.btn_load = QPushButton("Open Image / Settings")
-        self.btn_load.setToolTip("Open a settings JSON to restore its original image and all adjustments, or open TIFF, FITS, XISF, PNG, JPEG or BMP. Filters use monochrome intensity; source RGB is retained for export. Missing samples remain excluded.")
+        self.btn_load.setToolTip("Open a settings JSON to restore its original image and all adjustments, or open TIFF, FITS, XISF, PNG, JPEG or BMP. Filters use monochrome intensity; source RGB is retained for preview and export. Missing samples remain excluded.")
         self.btn_load.clicked.connect(self.load_image_action)
         btn_row.addWidget(self.btn_load)
 
@@ -209,7 +211,7 @@ class EclipseProcessorApp(QMainWindow):
         self._build_geometry_section(control_layout)
         self._build_filters_section(control_layout)
         add_layer_opacities(self)
-        for section in (self.sec_fnrgf, self.sec_mgn, self.sec_wow, self.sec_rhef,
+        for section in (self.sec_nrgf, self.sec_fnrgf, self.sec_mgn, self.sec_wow, self.sec_rhef,
                         self.sec_tangential, self.sec_larson_sekanina, self.sec_achf):
             for slider in section.findChildren(QSlider):
                 if slider.property("mix_only"):
@@ -225,10 +227,11 @@ class EclipseProcessorApp(QMainWindow):
         for slider in (self.sl_stretch, self.sl_ghs_sp, self.sl_ghs_b, self.sl_ghs_lp, self.sl_ghs_hp,
                        self.sl_ghs_bp, self.sl_ghs_wp, self.sl_blend):
             slider.valueChanged.connect(lambda _: self.presentation_timer.start())
-        self.sl_wow_scales.valueChanged.connect(self.update_wow_controls)
+        self.sl_wow_scales.valueChanged.connect(lambda _: self.update_wow_controls())
         self.update_wow_controls()
         section_help = {
             self.sec_geo: "Set the disk center and reference radius in native image pixels for radial filtering and the circle overlay.",
+            self.sec_nrgf: "Normalizing Radial Graded Filter (AEL): continuous annular brightness and spread on linear input; independent Multiply layer. Undefined annuli stay transparent.",
             self.sec_fnrgf: "Fourier Normalizing Radial Gradient Filter: model annular brightness and spread as functions of angle.",
             self.sec_mgn: "Multi-scale Gaussian Normalization: combine local contrast at several scales with a global gamma image.",
             self.sec_wow: "Wavelets Optimized Whitening: normalize multiscale contrast with optional noise suppression.",
@@ -302,6 +305,25 @@ class EclipseProcessorApp(QMainWindow):
     def _build_filters_section(self, layout: QVBoxLayout):
         """Build radial, multiscale and sharpening filter sections."""
         radial_group = create_filter_group("RADIAL ENHANCEMENT", layout)
+        self.sec_nrgf = CollapsibleSection("NRGF", has_checkbox=True, is_expanded=False, is_active=False)
+        self.sl_nrgf_str, _ = create_slider(
+            'Strength (%)', 0, 100, 100, self.sec_nrgf.content_layout,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_nrgf, self.sl_nrgf_str))
+        self.sl_nrgf_rad, _ = create_slider_float(
+            'Inner radius (R)', 10, 25, 10, 10., self.sec_nrgf.content_layout,
+            tooltip='Exclude samples at or inside this reference disk radius from NRGF statistics and output. The whole observed rectangle beyond it is processed.',
+            on_release_callback=self.dispatch_pipeline_request_if_auto)
+        self.sl_nrgf_bin_px, _ = create_slider_float(
+            'Ring width (native px)', 5, 320, 20, 10., self.sec_nrgf.content_layout,
+            tooltip='Annular measurement width at original resolution. Fast preview scales it to the same physical footprint; no image smoothing.',
+            on_release_callback=self.dispatch_pipeline_request_if_auto)
+        self.combo_nrgf_statistics = ScrollSafeComboBox()
+        self.combo_nrgf_statistics.addItems(['Median / MAD (AEL)', 'Mean / STD'])
+        self.combo_nrgf_statistics.setToolTip('Robust AEL statistics or mean/standard deviation. Both use the continuous radial profile; only observed samples contribute.')
+        self.combo_nrgf_statistics.currentIndexChanged.connect(self.dispatch_pipeline_request_if_auto)
+        self.sec_nrgf.content_layout.addWidget(self.combo_nrgf_statistics)
+        self.sec_nrgf.toggled_active.connect(self.on_filter_toggled)
+        radial_group.addWidget(self.sec_nrgf)
         self.sec_fnrgf = CollapsibleSection("FNRGF", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_fnrgf_str, _ = create_slider(
             "Strength (%)", 0, 100, 10, self.sec_fnrgf.content_layout,
@@ -467,7 +489,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_wow_scales, _ = create_slider(
             "Native wavelet scales", 0, 10, 0, self.sec_wow.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow, self.sl_wow_str),
-            tooltip="Integer number of native-resolution wavelet scales, not a power of two. Auto selects the largest count supported by this panel (up to 10). The internal dilation doubles at each scale. Fast preview adapts physical bands approximately."
+            tooltip="Integer number of native-resolution wavelet scales, not a power of two. Auto uses six for AEL and the largest supported count for native WOW (up to 10). The internal dilation doubles at each scale. Fast preview adapts physical bands approximately."
         )
         self.sl_wow_scales.setProperty("zero_label", "Auto")
         update_slider_display(self.sl_wow_scales)
@@ -482,10 +504,11 @@ class EclipseProcessorApp(QMainWindow):
             )
             self.sl_wow_denoise.append(slider)
         self.combo_wow_bilateral = ScrollSafeComboBox()
-        self.combo_wow_bilateral.addItems(["Standard WOW", "Edge-aware WOW (adjustable bilateral)"])
-        self.combo_wow_bilateral.setToolTip("Choose standard or edge-aware wavelet averaging. Missing-data or statistics exclusions use the observed-support starlet variant recorded in the export recipe.")
+        self.combo_wow_bilateral.addItems(["Standard WOW", "Edge-aware WOW (adjustable bilateral)", "AEL bilateral"])
+        self.combo_wow_bilateral.setToolTip("Standard and adjustable edge-aware WOW use the existing backend. AEL bilateral uses a log-luminance radial residual, symmetric observed starlet pairs and its own noise floor. No mode fills missing data.")
         self.combo_wow_bilateral.setCurrentIndex(1)
         self.combo_wow_bilateral.currentIndexChanged.connect(self.dispatch_pipeline_request_if_auto)
+        self.combo_wow_bilateral.currentIndexChanged.connect(lambda _: self.update_wow_controls())
         self.sec_wow.content_layout.addWidget(self.combo_wow_bilateral)
         self.sec_wow.toggled_active.connect(lambda active: self.on_filter_toggled(active, self.sl_wow_str))
         multiscale_group.addWidget(self.sec_wow)
@@ -651,6 +674,14 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_layers_format.addItem("TIFF layers + Photoshop script", "tiff")
         self.combo_layers_format.setToolTip("PSB writes a verified layered file directly. TIFF keeps the individual layers and JSX import script as an alternative. Includes all active ACHF variants.")
         layout.addWidget(self.combo_layers_format)
+        self.chk_color_correction = QCheckBox('Add Color Correction to PSB (sRGB)')
+        self.chk_color_correction.setToolTip('PSB only: editable gradient map, color balance and sky saturation in a Normal 50% group. Photoshop renders the correction; preview and TIFF/JPEG stay unchanged. Initial masks need review.')
+        layout.addWidget(self.chk_color_correction)
+        def update_correction_option():
+            self.chk_color_correction.setEnabled(self.chk_export_layers.isChecked() and self.combo_layers_format.currentData()=='psb')
+        self.chk_export_layers.toggled.connect(update_correction_option)
+        self.combo_layers_format.currentIndexChanged.connect(update_correction_option)
+        update_correction_option()
         self.combo_input_state = ScrollSafeComboBox()
         # Use a Qt list rather than the native macOS popup, whose light item
         # background can conflict with our inherited dark-theme text colours.
@@ -697,17 +728,17 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_input_state.setToolTip("Linear is assumed by default, not automatically confirmed. Change this if the source was already stretched. This declaration also controls color calibration; it does not undo stretching.")
         self.combo_input_state.setVisible(False)
         self.chk_calibrate_colour = FullRowCheckBox("Calibrate color")
-        self.chk_calibrate_colour.setToolTip("Requires linear RGB. Assumes neutral channel spans: balances P99 minus P1 using gains only, without subtracting backgrounds. A common highlight scale preserves channel ratios. This is not photometric or ICC calibration. Applies to colour verification and export; fast preview stays monochrome. Preserves the original sources.")
+        self.chk_calibrate_colour.setToolTip("Requires linear RGB. Assumes neutral channel spans: balances P99 minus P1 using gains only, without subtracting backgrounds. A common highlight scale preserves channel ratios. This is not photometric or ICC calibration. Applies to fast preview, verification and export. Preserves the original sources.")
         self.chk_calibrate_colour.setEnabled(False)
         self.chk_calibrate_colour.setChecked(True)
         self.chk_calibrate_colour.toggled.connect(self.on_colour_changed)
         self.combo_input_state.currentIndexChanged.connect(self.on_input_state_changed)
         self.lbl_colour_hint = QLabel("Color calibration requires an RGB image.")
-        self.lbl_colour_hint.setToolTip("Color calibration is available only for RGB input explicitly declared linear. It is calculated for colour verification/export and does not change numerical luminance filters.")
+        self.lbl_colour_hint.setToolTip("Color calibration is available only for RGB input explicitly declared linear. Native-image calibration is shared by fast preview, verification and export; it does not change numerical luminance filters.")
         self.lbl_colour_hint.setWordWrap(True)
         self.lbl_colour_hint.setStyleSheet("color: #aaaaaa; font-size: 10px;")
         self.btn_export = QPushButton("Export Final Image")
-        self.btn_export.setToolTip("Save the full-resolution layer composition and a matching JPEG preview, using the same base stretch, modes and opacities. Color and optional calibration also appear in the verification preview; checked options add separate layer packages.")
+        self.btn_export.setToolTip("Save the full-resolution layer composition and a matching JPEG preview, using the same base stretch, modes and opacities. Color and optional calibration also appear in both preview modes; checked options add separate layer packages.")
         self.btn_export.clicked.connect(self.export_image_action)
         self.btn_save_settings = QPushButton("Save Settings Only")
         self.btn_save_settings.setToolTip("Save current adjustments to JSON without calculating filters or exporting images. The original image is required when reopening the JSON.")
@@ -793,7 +824,7 @@ class EclipseProcessorApp(QMainWindow):
         self.chk_calibrate_colour.setEnabled(allowed)
         self.lbl_colour_hint.setText(
             "Color calibration requires an RGB image." if self.full_source_rgb is None else
-            "Color calibration is shown in verification and export." if allowed else
+            "Color calibration is shown in preview and export." if allowed else
             "Select 'Input: linear' below to enable color calibration.")
         if not allowed:
             self.chk_calibrate_colour.setChecked(False)
@@ -801,22 +832,31 @@ class EclipseProcessorApp(QMainWindow):
     def on_colour_changed(self, *_):
         """Update presentation colour without invalidating the numerical cache."""
         self._colour_cache = None
-        if self._full_cache is not None and self.chk_verify_preview.isChecked():
-            self.render_matrix_to_screen()
+        self._preview_colour_cache = None
+        self.render_matrix_to_screen()
 
-    def colour_data(self, original=False):
-        """Prepare native colour for export or the verification preview."""
+    def colour_data(self, original=False, preview=False):
+        """Share native calibration; reduce observed RGB once for fast presentation."""
         if self.full_source_rgb is None:
             return None, None, None
         if original:
-            return self.full_source_rgb, None, dict(method="none")
-        if self._colour_cache is None:
-            rgb = self.full_source_rgb
-            report = dict(method="none")
-            if self.chk_calibrate_colour.isChecked():
-                rgb, report = neutralize_tse(rgb, self.source_rgb_white)
-            self._colour_cache = (rgb, None, report)
-        return self._colour_cache
+            rgb, report = self.full_source_rgb, dict(method="none")
+        else:
+            if self._colour_cache is None:
+                rgb = self.full_source_rgb
+                report = dict(method="none")
+                if self.chk_calibrate_colour.isChecked():
+                    rgb, report = neutralize_tse(rgb, self.source_rgb_white)
+                self._colour_cache = (rgb, None, report)
+            rgb, _, report = self._colour_cache
+        shape=self.raw_image.shape[:2] if preview else rgb.shape[:2]
+        if shape!=rgb.shape[:2]:
+            cached=self._preview_colour_cache
+            if cached is None or cached[0] is not rgb or cached[1]!=shape:
+                reduced=np.stack([resize_observed(rgb[...,c],(shape[1],shape[0])) for c in range(3)],axis=-1)
+                self._preview_colour_cache=(rgb,shape,reduced)
+            rgb=self._preview_colour_cache[2]
+        return rgb,None,report
 
     def apply_ghs(self, mat: np.ndarray, D: float, SP: float, b: float, BP: float = 0., LP: float = 0., HP: float = 1., WP: float = 1.) -> np.ndarray:
         """Compatibility wrapper for the shared presentation transform."""
@@ -972,6 +1012,11 @@ class EclipseProcessorApp(QMainWindow):
     def collect_filter_parameters(self, target_shape):
         """Snapshot UI once; prepare the same recipe for preview or export."""
         params = {
+            "nrgf_enabled": self.sec_nrgf.is_filter_active(),
+            "nrgf_str": self.sl_nrgf_str.value(),
+            "nrgf_rad": self.sl_nrgf_rad.value(),
+            "nrgf_bin_px": self.sl_nrgf_bin_px.value()/10.,
+            "nrgf_robust": self.combo_nrgf_statistics.currentIndex() == 0,
             "fnrgf_enabled": self.sec_fnrgf.is_filter_active(),
             "fnrgf_str": self.sl_fnrgf_str.value(),
             "fnrgf_ord": self.sl_fnrgf_ord.value(),
@@ -997,7 +1042,7 @@ class EclipseProcessorApp(QMainWindow):
             "rhef_bin_px": self.sl_rhef_bin.value()/10.0,
             "wow_enabled": self.sec_wow.is_filter_active(),
             "wow_str": self.sl_wow_str.value(),
-            "wow_scales": self.sl_wow_scales.value() or self.sl_wow_scales.maximum(),
+            "wow_scales": self.sl_wow_scales.value() or (6 if self.combo_wow_bilateral.currentIndex() == 2 else self.sl_wow_scales.maximum()),
             "wow_native_scales": True,
             "wow_denoise": [slider.value()/10 for slider in self.sl_wow_denoise if slider.isEnabled()],
             "wow_bilateral": 1 if self.combo_wow_bilateral.currentIndex() else None,
@@ -1019,7 +1064,7 @@ class EclipseProcessorApp(QMainWindow):
         variants = collect_achf_variants(self)
         params['layered_model'] = True
         params['layer_display'] = self.collect_display_parameters()
-        for name in ('fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
+        for name in ('nrgf','fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
             params[name+'_opacity'] = getattr(self,'sl_'+name+'_opacity').value()
         variants['adaptive'] = dict(enabled=self.chk_achf_adaptive.isChecked(),
                                     opacity=self.sl_achf_opacity.value(),strength=self.sl_achf_str.value())
@@ -1111,19 +1156,27 @@ class EclipseProcessorApp(QMainWindow):
         self._dispatch_pending_preview()
         self._log_processing_end("PIPELINE", "Complete")
 
-    def update_wow_controls(self):
+    def update_wow_controls(self, *, preserve_settings=False):
         shape = self.full_raw_image.shape if self.full_raw_image is not None else (5120, 5120)
         maximum = max(1, min(10, int(np.round(np.log2(min(shape)/5.)))))
+        ael = self.combo_wow_bilateral.currentIndex() == 2
+        if ael:
+            maximum = 10
+        if preserve_settings:
+            maximum = max(maximum, self.sl_wow_scales.value())
         previous = self.sl_wow_scales.blockSignals(True)
         self.sl_wow_scales.setMaximum(maximum)
         self.sl_wow_scales.blockSignals(previous)
         update_slider_display(self.sl_wow_scales)
         self.sec_wow.chk_active.setEnabled(min(shape) >= 10)
-        if min(shape) < 10:
+        if min(shape) < 10 and not preserve_settings:
             self.sec_wow.chk_active.setChecked(False)
-        count = self.sl_wow_scales.value() or maximum
+        count = self.sl_wow_scales.value() or (6 if ael else maximum)
         for index, slider in enumerate(self.sl_wow_denoise):
-            slider.setEnabled(index < count)
+            slider.setEnabled(not ael and index < count)
+        self.sl_wow_noise.setEnabled(not ael)
+        self.sl_wow_noise_floor.setEnabled(ael)
+        self.sl_wow_bilateral.setEnabled(self.combo_wow_bilateral.currentIndex() == 1)
 
     def apply_recommended_parameters_to_gui(self, r_full: float, w_full: int, h_full: int):
         """Auto-populate sliders based on image resolution."""
@@ -1151,7 +1204,7 @@ class EclipseProcessorApp(QMainWindow):
             (self.sl_fnrgf_seg, (2 * rec_fnrgf_ord).bit_length()),
             (self.sl_fnrgf_bin_px, 4),
             (self.sl_fnrgf_rmax, int(round(rec_fnrgf_rmax * 10.0))),
-            (self.sl_wow_scales, 0),  # automatic, dimension-dependent scales
+            (self.sl_wow_scales, 6 if self.combo_wow_bilateral.currentIndex() == 2 else 0),
             (self.sl_achf_kernel, int(round(rec_achf_kernel_px * 10.0))),
         )
         for slider, value in adaptive_defaults:
@@ -1166,7 +1219,7 @@ class EclipseProcessorApp(QMainWindow):
         print(f"   • Full image: {w_full} × {h_full} px")
         print("   • Reference disk geometry may enclose missing data; no astrometric scale inferred.")
         print(f"   • FNRGF: order = {self.sl_fnrgf_ord.value()} | sectors = {2**self.sl_fnrgf_seg.value()} | rings = {rec_fnrgf_nbins} (full resolution) | outer radius = {rec_fnrgf_rmax:.1f} reference radii")
-        print(f"   • WOW: Auto ({self.sl_wow_scales.maximum()} native scales; fast preview adapts the bands)")
+        print(f"   • WOW: {self.sl_wow_scales.value() or 'Auto'} native scales; fast preview adapts the bands")
         print(f"   • ACHF: support radius = {self.sl_achf_kernel.value()/10:.1f} preview px")
         print(f"{'='*80}\n")
 
@@ -1344,6 +1397,7 @@ class EclipseProcessorApp(QMainWindow):
             return
 
         try:
+            first_image = self.full_raw_image is None
             project=None
             if file_path.lower().endswith('.json'):
                 image_path,project=read_settings(file_path)
@@ -1399,6 +1453,7 @@ class EclipseProcessorApp(QMainWindow):
             self.full_source_rgb = source_rgb
             self.source_rgb_white = white
             self._colour_cache = None
+            self._preview_colour_cache = None
             # Restore the requested defaults without rendering the previous image
             # or scheduling a worker until the new source and geometry are ready.
             for control in (self.combo_input_state, self.chk_calibrate_colour, self.chk_verify_preview):
@@ -1444,11 +1499,16 @@ class EclipseProcessorApp(QMainWindow):
             self.txt_y.setText(str(cy_full))
             self.txt_r.setText(str(r_full))
 
-            self.apply_recommended_parameters_to_gui(r_full, w_full, h_full)
-            self.update_wow_controls()
+            if project is None and first_image:
+                reset_filter_defaults(self, ael=True)
+                self.apply_recommended_parameters_to_gui(r_full, w_full, h_full)
+                self.combo_stretch_mode.setCurrentIndex(1)
+                self.sl_stretch.setValue(30)  # Log K = 10 ** (ticks / 10) = 1000.
+                self.sl_stretch.setProperty('reset_value', 30)
             if project is not None:
                 restore_settings(self,project)
                 cx_full,cy_full,r_full=(int(getattr(self,"txt_"+key).text()) for key in ("x","y","r"))
+            self.update_wow_controls(preserve_settings=project is None and not first_image)
 
             self.render_matrix_to_screen()
             self.dispatch_pipeline_request_if_auto()
@@ -1512,6 +1572,7 @@ class EclipseProcessorApp(QMainWindow):
                 source_rgb=self.full_source_rgb,
                 calibrate_colour=self.chk_calibrate_colour.isChecked(), white=self.source_rgb_white,
                 export_layers=self.chk_export_layers.isChecked(), layers_format=self.combo_layers_format.currentData(),
+                color_correction=self.chk_color_correction.isEnabled() and self.chk_color_correction.isChecked(),
                 input_state=self.combo_input_state.currentData(), processed=processed,
                 project_settings=capture_settings(self))
             request["layer_cache"] = engine_for(self.filter_worker).snapshot(self.full_raw_image,request["source"])
@@ -1578,29 +1639,36 @@ class EclipseProcessorApp(QMainWindow):
             final_norm=(proc_mat if getattr(self,'_has_layer_result',False) else stretch_image(orig_mat,display))
 
         cache = self._full_cache
-        if (self.chk_verify_preview.isChecked() and cache is not None
-                and cache[0] is self.full_raw_image and cache[3] == self._preview_revision):
+        native=(self.chk_verify_preview.isChecked() and cache is not None
+                and cache[0] is self.full_raw_image and cache[3] == self._preview_revision)
+        if native:
             # Apply every nonlinear display operation BEFORE reducing the result.
             native_params=self.collect_filter_parameters(self.full_raw_image.shape)
             final_norm=engine_for(self.filter_worker).render(
                 self.filter_worker,self.full_raw_image,native_params,display,calculate=False)
             if final_norm is None:
                 final_norm=cache[2]
-            try:
-                rgb, _, _ = self.colour_data(original=self.show_original_mode)
-            except ValueError as error:
-                blocked = self.chk_calibrate_colour.blockSignals(True)
-                self.chk_calibrate_colour.setChecked(False)
-                self.chk_calibrate_colour.blockSignals(blocked)
-                self._colour_cache = None
-                rgb = self.full_source_rgb
-                self.status_label.setText(f'Status: Colour neutralization disabled — {error}')
-                self.status_label.setStyleSheet('color: #ff3333; font-weight: bold;')
-            if rgb is not None:
-                final_norm = set_luminosity(colour_display(rgb, self.full_raw_image, display), final_norm)
-                final_norm = np.stack([resize_observed(final_norm[..., c], (self.raw_image.shape[1], self.raw_image.shape[0])) for c in range(3)], axis=-1)
-            else:
-                final_norm = resize_observed(final_norm, (self.raw_image.shape[1], self.raw_image.shape[0]))
+        try:
+            rgb, _, _ = self.colour_data(original=self.show_original_mode,preview=not native)
+        except ValueError as error:
+            blocked = self.chk_calibrate_colour.blockSignals(True)
+            self.chk_calibrate_colour.setChecked(False)
+            self.chk_calibrate_colour.blockSignals(blocked)
+            self._colour_cache = None
+            self._preview_colour_cache = None
+            rgb, _, _ = self.colour_data(original=True,preview=not native)
+            self.status_label.setText(f'Status: Colour neutralization disabled — {error}')
+            self.status_label.setStyleSheet('color: #ff3333; font-weight: bold;')
+        if rgb is not None:
+            final_norm = set_luminosity(colour_display(rgb, self.full_raw_image if native else orig_mat, display), final_norm)
+        from core.presentation_edges import finish_presentation
+        edge_source=self.full_raw_image if native else orig_mat
+        edge_params=native_params if native else self.collect_filter_parameters(orig_mat.shape)
+        final_norm=finish_presentation(final_norm,engine_for(self.filter_worker).edge_alpha(edge_source,edge_params))
+        if native:
+            size=(self.raw_image.shape[1],self.raw_image.shape[0])
+            final_norm=(np.stack([resize_observed(final_norm[...,c],size) for c in range(3)],axis=-1)
+                        if rgb is not None else resize_observed(final_norm,size))
 
         self.last_preview_presentation = final_norm
         display_img = np.clip(final_norm * 255.0, 0, 255).astype(np.uint8)

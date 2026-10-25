@@ -41,3 +41,14 @@ def resize_observed(image, size):
 def recipe_parameters(params):
     """Masks are image data, stored separately, never embedded in JSON metadata."""
     return {k: v for k, v in params.items() if k not in ('valid_mask', 'statistics_mask')}
+
+
+def zero_missing(image, valid=None):
+    """Finite export copy; VALID, not the stored zero, identifies missing samples."""
+    result=np.nan_to_num(image,nan=0.,posinf=0.,neginf=0.)
+    if valid is not None:
+        mask=np.asarray(valid,bool)
+        if result.shape[:2]!=mask.shape:
+            raise ValueError('Export validity must match image')
+        result=np.where(mask[...,None] if result.ndim==3 else mask,result,0)
+    return result

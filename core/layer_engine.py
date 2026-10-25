@@ -17,7 +17,7 @@ from .image_data import observed_image
 from .result_cache import parameter_signature
 from .presentation import stretch_image
 
-ORDER = ('fnrgf', 'rhef', 'mgn', 'wow', 'tangential', 'larson_sekanina')
+ORDER = ('nrgf', 'fnrgf', 'rhef', 'mgn', 'wow', 'tangential', 'larson_sekanina')
 VARIANTS = ('adaptive', 'ael_iso_01', 'ael_iso_04', 'ael_angular_4')
 LABELS = dict(adaptive='ACHF_ADAPTIVE', ael_iso_01='ACHF_AEL_ISO_01',
               ael_iso_04='ACHF_AEL_ISO_04', ael_angular_4='ACHF_AEL_ANGULAR')
@@ -47,7 +47,7 @@ def requests(params, include_all=False):
 
 
 def opacity(name, params, enabled=True):
-    value=float(params.get(name+'_opacity',50)) / 100
+    value=float(params.get(name+'_opacity',40 if name == 'nrgf' else 50)) / 100
     if not np.isfinite(value) or not 0 <= value <= 1:
         raise ValueError('Layer opacity must be between 0 and 100 percent')
     return round(value*255)/255 if enabled and params.get(name+'_str',100) != 0 else 0.
@@ -112,6 +112,24 @@ class LayerEngine:
             self.sources.move_to_end(identity)
             return self.sources[identity][1]
 
+    def edge_alpha(self, source, params):
+        """Cache display-only edge coverage independently of filter and colour edits."""
+        from .presentation_edges import black_edge_alpha
+        scale=params.get('nrgf_scale',1.)
+        signature=parameter_signature(dict(valid=params.get('valid_mask'),scale=scale,
+                                            geometry={k:params.get(k) for k in ('sx','sy','sr')}))
+        entries=self._entries(source)
+        slot=('display_edge',None)
+        with self._lock:
+            cached=entries.get(slot)
+        if cached is not None and cached[0]==signature:
+            return cached[1]
+        alpha=black_edge_alpha(source,params.get('valid_mask'),scale,params)
+        check_cancelled()
+        with self._lock:
+            entries[slot]=(signature,alpha)
+        return alpha
+
     def layer(self, worker, source, params, name, variant=None, calculate=True):
         # A key contains only this filter's controls and shared spatial/support data.
         shared=('sx','sy','sr','spatial_scale','valid_mask','statistics_mask')
@@ -167,7 +185,14 @@ class LayerEngine:
         p['fnrgf_apply_mask']=0
         filter_start=time.perf_counter()
         ael=name == 'achf' and variant != 'adaptive'
-        if ael:
+        ael_wow=name == 'wow' and p.get('wow_mode') == 'ael_bilateral'
+        if name == 'nrgf':
+            from .nrgf import nrgf_layer
+            values, mapping = nrgf_layer(prepared, p, valid & statistics)
+        elif ael_wow:
+            from .ael_wow import ael_wow_layer
+            values, mapping = ael_wow_layer(prepared, p, valid & statistics)
+        elif ael:
             from .ael_achf import ael_achf_layer
             values,mapping=ael_achf_layer(prepared,p['sx'],p['sy'],p['sr'],valid & statistics,
                 p.get('achf_ael_scale',1.),variant,p.get('achf_ael_parameters'))
@@ -182,10 +207,14 @@ class LayerEngine:
         filter_seconds=time.perf_counter()-filter_start
         encoding_start=time.perf_counter()
         domain=branch_domain(source.shape,p,name) & valid & statistics
-        if ael or (name == 'rhef' and p.get('rhef_mode') == 'continuous'):
+        if name == 'nrgf':
+            domain &= np.isfinite(values)
+        if ael or ael_wow or (name == 'rhef' and p.get('rhef_mode') == 'continuous'):
             domain &= (prepared>0) & np.isfinite(values)
-        mode='Multiply' if name == 'fnrgf' else 'Linear Light' if name == 'larson_sekanina' else 'Overlay'
-        if ael:
+        mode='Multiply' if name in ('nrgf', 'fnrgf') else 'Linear Light' if name == 'larson_sekanina' else 'Overlay'
+        if name == 'nrgf':
+            image=np.where(domain, values, 1.)
+        elif ael or ael_wow:
             image=np.where(domain,values,.5)
         elif name == 'larson_sekanina':
             image,mapping=linear_detail_layer(values,domain,np.ptp(prepared[valid]))

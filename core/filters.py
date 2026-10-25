@@ -4,7 +4,7 @@ FilterWorker: Native NumPy/SciPy coronal enhancement engine.
 Numerical enhancement operators:
   - PRE-STRETCH: Asinh & Logarithmic
   - DENOISING: Radial Noise Gate, Bilateral
-  - RADIAL: FNRGF, RHEF
+  - RADIAL: NRGF, FNRGF, RHEF
   - MULTI-SCALE: MGN, WOW
   - DETAIL: Tangential angular residual, classic Larson-Sekanina, ACHF
 """
@@ -511,6 +511,19 @@ class FilterWorker(QObject):
         alpha = float(strength) / 100
         return ((1 - alpha) * a + alpha * denoised).astype(np.float32)
 
+
+    def run_nrgf_native(self, img, strength, sun_x, sun_y, sun_r, valid=None, **parameters):
+        """AEL NRGF Multiply in input units; excluded/undefined samples retain input."""
+        from .nrgf import nrgf_layer
+        if not np.isfinite(strength) or not 0 <= strength <= 100:
+            raise ValueError('NRGF strength must be between 0 and 100')
+        if strength == 0:
+            return img.copy()
+        layer, _ = nrgf_layer(img, dict(parameters, sx=sun_x, sy=sun_y, sr=sun_r), valid)
+        result = np.array(img, dtype=np.float32, copy=True)
+        use = np.isfinite(layer)
+        result[use] *= 1 + strength/100*(layer[use]-1)
+        return result
 
     def run_fnrgf_native(
         self, img, strength, order_fourier, angular_segments, cutoff_val,

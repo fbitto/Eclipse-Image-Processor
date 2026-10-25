@@ -101,6 +101,7 @@ class ControlAndVerificationTests(unittest.TestCase):
 
     def test_dynamic_constraints_and_no_silent_inactive_values(self):
         w=self.window
+        w.combo_wow_bilateral.setCurrentIndex(1)
         w.sl_fnrgf_seg.setValue(9);w.sl_fnrgf_ord.setValue(20)
         self.assertEqual(w.sl_fnrgf_seg.value(),9)
         self.assertGreaterEqual(2**w.sl_fnrgf_seg.minimum(),2*w.sl_fnrgf_ord.value()+1)
@@ -120,6 +121,7 @@ class ControlAndVerificationTests(unittest.TestCase):
 
     def test_each_mgn_scale_and_native_wow_threshold_is_wired(self):
         w=self.window
+        w.combo_wow_bilateral.setCurrentIndex(1)
         for collection, key, divisor in ((w.sl_mgn_sigmas, 'mgn_sigmas', 100), (w.sl_mgn_weights, 'mgn_weights', 100)):
             for index, slider in enumerate(collection):
                 original=slider.value()
@@ -203,6 +205,7 @@ class ControlAndVerificationTests(unittest.TestCase):
 
     def test_achf_background_one_and_zero_gain_are_exact_identity(self):
         w=self.window;w.sl_achf_background.setValue(100);w.sl_achf_boost.setValue(0);w.sl_achf_str.setValue(100)
+        w.combo_achf_variant.setCurrentIndex(0)
         p=w.collect_filter_parameters(w.raw_image.shape);p['achf_enabled']=True;p['layered_model']=False
         np.testing.assert_array_equal(execute_pipeline(FilterWorker(),w.raw_image,p),w.raw_image)
 

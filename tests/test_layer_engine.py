@@ -159,6 +159,8 @@ class IndependentLayerTests(unittest.TestCase):
         # Use the real MGN and masked-support path.
         display=dict(self.display,blend=.7)
         actual=execute_pipeline(worker,source,dict(p,layer_display=display))
+        from core.presentation_edges import finish_presentation
+        actual=finish_presentation(actual,worker.layer_engine.edge_alpha(source,p))
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);package=root/'layers'
             export_layer_package(worker,source,p,display,'source.fits',package)

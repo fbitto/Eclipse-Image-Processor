@@ -142,6 +142,8 @@ class SliderInteractionTests(unittest.TestCase):
         from gui.filter_controls import collect_controls
         w = self.window
         w.combo_rhef_mode.setCurrentIndex(1)
+        w.combo_wow_bilateral.setCurrentIndex(1)
+        w.sl_wow_scales.setValue(0)
         for count in (17, 32, 33, 257, 1025):
             w.sl_rhef_quantiles.value_label.setText(str(count))
             w.sl_rhef_quantiles.value_label.editingFinished.emit()

@@ -24,6 +24,7 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
     scale = float(np.sqrt(target_shape[0] / preview_shape[0] * target_shape[1] / preview_shape[1]))
     p["spatial_scale"] = scale
     p["achf_ael_scale"] = float(np.sqrt(sx * sy))
+    p["nrgf_scale"] = float(np.sqrt(sx * sy))
     for key in ("achf_kernel", "rhef_bin_px",
                 "fnrgf_smooth", "fnrgf_fade", "tangential_fade", "larson_sekanina_radial", "statistics_guard_px"):
         if key in p:
@@ -49,6 +50,8 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
         wavelet_scale = float(np.sqrt(target_shape[0]/reference_shape[0]*target_shape[1]/reference_shape[1]))
         offset = int(np.floor(np.log2(wavelet_scale) + 0.5))
         p["wow_scales"] = int(np.clip(count + offset, 1, target_max))
+        if p.get('wow_mode') == 'ael_bilateral':
+            p['wow_scales'] = int(np.clip(int(requested or 6) + offset, 1, 10))
         levels = list(p.get("wow_denoise", []))
         if levels:
             # Keep thresholds attached to the same physical bands. Newly added
@@ -94,6 +97,13 @@ def execute_pipeline(worker, raw_image, params, *, process_label="PIPELINE", ver
         from .masked_filters import MaskedWorker
         base_worker = worker.worker if isinstance(worker, MaskedWorker) else worker
         worker = StatisticsWorker(base_worker, support)
+
+    check_cancelled()
+    if p.get('nrgf_enabled', False):
+        img = worker.run_nrgf_native(
+            img, p.get('nrgf_str', 100), p['sx'], p['sy'], p['sr'],
+            **{key: value for key, value in p.items()
+               if key.startswith('nrgf_') and key not in ('nrgf_enabled', 'nrgf_str', 'nrgf_opacity')})
 
     check_cancelled()
     # FNRGF: radial normalization
@@ -156,13 +166,30 @@ def execute_pipeline(worker, raw_image, params, *, process_label="PIPELINE", ver
 
     check_cancelled()
     # WOW: wavelet whitening
-    if p.get("wow_enabled", False):
+    if p.get("wow_enabled", False) and not (p.get('wow_mode') == 'ael_bilateral' and p.get('wow_str') == 0):
         step_start = time.time()
-        img = worker.run_wow_native(
-            img, p["wow_str"], p.get("wow_scales"),
-            denoise_coefficients=p.get("wow_denoise", []),
-            bilateral=p.get("wow_bilateral"),
-        )
+        if p.get('wow_mode') == 'ael_bilateral':
+            from .ael_wow import ael_wow_layer
+            strength=float(p['wow_str'])
+            if not np.isfinite(strength) or not 0 <= strength <= 100:
+                raise ValueError('AEL WOW strength must be between 0 and 100')
+            support=np.isfinite(raw_image) & (valid if valid is not None else True)
+            if (p.get('statistics_exclude_lunar', False) or p.get('statistics_exclude_bright', False)
+                    or p.get('statistics_mask') is not None):
+                support &= worker.support
+            layer,_=ael_wow_layer(img,p,support)
+            from .layer_export import overlay
+            observed=np.isfinite(layer)
+            low,high=float(img[observed].min()),float(img[observed].max())
+            if high > low:
+                base=(img[observed]-low)/(high-low)
+                img[observed]=low+(high-low)*overlay(base,layer[observed],1.,strength/100)
+        else:
+            img = worker.run_wow_native(
+                img, p["wow_str"], p.get("wow_scales"),
+                denoise_coefficients=p.get("wow_denoise", []),
+                bilateral=p.get("wow_bilateral"),
+            )
         if verbose:
             print(f"[{process_label}: WOW NATIVE] Done in {time.time() - step_start:.3f}s")
 

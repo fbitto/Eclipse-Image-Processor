@@ -18,9 +18,9 @@ import tifffile
 from .colour import colour_layer, set_luminosity
 from .pipeline import execute_pipeline
 from .presentation import stretch_image
-from .image_data import observed_image, recipe_parameters
+from .image_data import observed_image, recipe_parameters, zero_missing
 
-FILTERS = ('fnrgf', 'rhef', 'mgn', 'wow', 'tangential', 'larson_sekanina', 'achf')
+FILTERS = ('nrgf', 'fnrgf', 'rhef', 'mgn', 'wow', 'tangential', 'larson_sekanina', 'achf')
 REMOVED_PREPARATION = ('pre_stretch', 'noise_gate', 'bilateral')
 
 
@@ -91,7 +91,21 @@ def photoshop_loader(records):
 
 
 def to_u16(a):
-    return np.rint(np.clip(a, 0, 1) * 65535).astype(np.uint16)
+    return np.rint(np.clip(zero_missing(a), 0, 1) * 65535).astype(np.uint16)
+
+
+def write_edge_layer(stage, records, alpha):
+    """Editable black Normal overlay above detail and source colour layers."""
+    if alpha is None:
+        return
+    from .presentation_edges import EDGE_WIDTH_NATIVE_PX
+    filename=f'{len(records)+1:02d}_EDGE_ANTIALIAS_Normal.tif'
+    rgba=np.zeros((*alpha.shape,4),np.uint16)
+    rgba[...,3]=alpha
+    tifffile.imwrite(stage/filename,rgba,photometric='rgb',extrasamples=['unassalpha'],compression='zlib',metadata=None)
+    records.append(dict(order=len(records)+1,file=filename,name='Edge Antialias',filter='edge_antialias',
+                        mode='Normal',opacity=1.,opacity_255=255,visible=True,
+                        width_native_px=EDGE_WIDTH_NATIVE_PX,role='Display-only lunar/missing boundary fade to opaque black'))
 
 
 def neutral_layer(values, valid):
@@ -164,6 +178,8 @@ def branch_domain(shape, params, name):
     if not np.isfinite(sr) or sr <= 0:
         raise ValueError('Layer export needs a positive disk radius')
     domain = radius > sr
+    if name == 'nrgf':
+        domain &= radius > float(params.get('nrgf_rad', 10)) / 10 * sr
     if name in ('fnrgf', 'rhef'):
         domain &= radius >= float(params[name + '_rad']) / 10 * sr
     if name == 'tangential':
@@ -212,9 +228,9 @@ def export_layer_package(worker, source, params, display, original_path, destina
         for name in FILTERS:
             preparation[name + '_enabled'] = False
         prepared = execute_pipeline(worker, source, preparation, process_label="LAYERS INPUT")
-        tifffile.imwrite(stage / f'{stem}_SOURCE_float32.tif', source,
+        tifffile.imwrite(stage / f'{stem}_SOURCE_float32.tif', zero_missing(source,valid),
                          compression='zlib', metadata={'role': 'Loaded monochrome input; transfer function unspecified'})
-        tifffile.imwrite(stage / f'{stem}_PREPARED_float32.tif', prepared.astype(np.float32),
+        tifffile.imwrite(stage / f'{stem}_PREPARED_float32.tif', zero_missing(prepared,valid).astype(np.float32),
                          compression='zlib', metadata={'role': 'Original input; no pre-stretch or preliminary denoising'})
 
         tifffile.imwrite(stage / f'{stem}_VALID.tif', valid.astype(np.uint8)*255,
@@ -264,7 +280,14 @@ def export_layer_package(worker, source, params, display, original_path, destina
             timing_name = (layer_params.get('achf_variant', 'adaptive') if name == 'achf' else name).upper()
             filter_start = time.perf_counter()
             ael_achf = name == 'achf' and layer_params.get('achf_variant') in ('ael_iso_01','ael_iso_04','ael_angular_4')
-            if ael_achf:
+            ael_wow = name == 'wow' and layer_params.get('wow_mode') == 'ael_bilateral'
+            if name == 'nrgf':
+                from .nrgf import nrgf_layer
+                filtered, ael_mapping = nrgf_layer(prepared, layer_params, valid & statistics)
+            elif ael_wow:
+                from .ael_wow import ael_wow_layer
+                filtered, ael_mapping = ael_wow_layer(prepared, layer_params, valid & statistics)
+            elif ael_achf:
                 from .ael_achf import ael_achf_layer
                 filtered, ael_mapping = ael_achf_layer(
                     prepared, layer_params['sx'], layer_params['sy'], layer_params['sr'],
@@ -291,12 +314,17 @@ def export_layer_package(worker, source, params, display, original_path, destina
             else:
                 values = filtered
             domain = branch_domain(source.shape, layer_params, name) & valid & statistics
-            if ael_achf:
+            if name == 'nrgf':
+                domain &= np.isfinite(filtered)
+            if ael_achf or ael_wow:
                 domain &= np.isfinite(filtered) & (prepared > 0)
             if name == 'rhef' and layer_params.get('rhef_mode') == 'continuous':
                 domain &= prepared > 0
             mode = 'Overlay'
-            if ael_achf:
+            if name == 'nrgf':
+                layer, mapping = np.where(domain, filtered, 1.), ael_mapping
+                mode = 'Multiply'
+            elif ael_achf or ael_wow:
                 layer = np.where(domain, filtered, .5)
                 mapping = ael_mapping
             elif name == 'larson_sekanina':
@@ -312,6 +340,10 @@ def export_layer_package(worker, source, params, display, original_path, destina
                 alpha *= 1 - float(layer_params['fnrgf_apply_mask']) / 100 * protection
             # Recommended contribution, not the old chain's Strength blend.
             opacity = min(.35, float(layer_params[name + '_str']) / 100) * float(display.get('blend', 1))
+            if name == 'nrgf' or ael_wow:
+                neutral = 1. if name == 'nrgf' else .5
+                layer = neutral + (layer-neutral)*float(layer_params[name+'_str'])/100
+                opacity = float(layer_params.get(name+'_opacity', 40 if name == 'nrgf' else 35))/100*float(display.get('blend', 1))
             opacity_255 = round(opacity * 255)
             layer16, alpha16 = to_u16(layer), to_u16(alpha)
             order = len(records) + 1
@@ -327,19 +359,23 @@ def export_layer_package(worker, source, params, display, original_path, destina
                              extrasamples=['unassalpha'], compression='zlib', metadata=None)
             print(f"[LAYER {timing_name}: TIFF WRITE] Done in {time.perf_counter()-write_start:.3f}s")
             blend_start = time.perf_counter()
-            blend = linear_light if mode == 'Linear Light' else overlay
-            composite = blend(composite, layer16.astype(float) / 65535,
-                                alpha16.astype(float) / 65535, opacity_255 / 255)
+            if mode == 'Multiply':
+                weight = alpha16.astype(float)/65535*(opacity_255/255)
+                composite *= 1 + (layer16.astype(float)/65535-1)*weight
+            else:
+                blend = linear_light if mode == 'Linear Light' else overlay
+                composite = blend(composite, layer16.astype(float) / 65535,
+                                    alpha16.astype(float) / 65535, opacity_255 / 255)
             print(f"[LAYER {timing_name}: COMPOSITE] Done in {time.perf_counter()-blend_start:.3f}s")
             records.append(dict(order=order, file=filename, filter=name, variant=layer_params.get('achf_variant') if name == 'achf' else None, mode=mode,
                                 opacity=opacity, opacity_255=opacity_255, visible=opacity_255 > 0,
-                                normalization=mapping, operator_strength=100,
-                                signal=('AEL log-luminance multiscale detail' if ael_achf else 'signed sharpening residual' if name in ('tangential', 'larson_sekanina', 'achf')
+                                normalization=mapping, operator_strength=layer_params[name+'_str'] if name == 'nrgf' or ael_wow else 100,
+                                signal=('AEL continuous radial-normalized linear luminance' if name == 'nrgf' else 'AEL log-luminance multiscale detail' if ael_achf or ael_wow else 'signed sharpening residual' if name in ('tangential', 'larson_sekanina', 'achf')
                                         else 'full-strength structure output in mapped input units'),
                                 input='PREPARED_float32', domain='Outside lunar disc and filter application domain'))
         if rgb is not None:
             tifffile.imwrite(stage/f'{stem}_RGB_COLOUR_INPUT_float32.tif',
-                             np.where(valid[..., None], rgb, np.nan).astype(np.float32),
+                             zero_missing(rgb,valid).astype(np.float32),
                              photometric='rgb', compression='zlib',
                              metadata={'role': 'Colour working input; optional neutralization applied',
                                        'colour_calibration': colour_report})
@@ -352,20 +388,23 @@ def export_layer_package(worker, source, params, display, original_path, destina
             composite_rgb = set_luminosity(rgb_layer.astype(float)/65535, composite)
         else:
             composite_rgb = np.repeat(composite[..., None], 3, axis=2)
+        from .layer_engine import engine_for
+        from .presentation_edges import finish_presentation
+        edge=engine_for(worker).edge_alpha(source,params)
+        write_edge_layer(stage,records,edge)
+        composite_rgb=finish_presentation(composite_rgb,edge)
         combined_file = f'{stem}_PS_COMBINED.tif'
         combined_rgb = to_u16(composite_rgb)
-        if not valid.all():
-            combined_rgb = np.concatenate([combined_rgb, (valid.astype(np.uint16)*65535)[..., None]], axis=2)
         tifffile.imwrite(stage / combined_file, combined_rgb, photometric='rgb',
-                         extrasamples=['unassalpha'] if not valid.all() else None,
                          compression='zlib', metadata=None)
         for record in records:
             with (stage / record['file']).open('rb') as stream:
                 record['sha256'] = hashlib.file_digest(stream, 'sha256').hexdigest()
         manifest = dict(schema=1, source=str(original_path), shape=list(source.shape),
-                        working_image_sha256=hashlib.sha256(source.tobytes()).hexdigest(),
+                        working_image_sha256=hashlib.sha256(zero_missing(source,valid).tobytes()).hexdigest(),
                         parameters=recipe_parameters(params), display=display, layers=records,
                         validity_file=f'{stem}_VALID.tif', statistics_file=f'{stem}_STATISTICS_SUPPORT.tif', missing_pixels=int((~valid).sum()),
+                        missing_samples='Stored as zero in numerical exports; VALID retains original missing-data identity',
                         masked_wow='Observed-only normalized starlet variant' if not statistics.all() else None,
                         combined=combined_file, order='bottom_to_top',
                         colour='RGB Color layer over mono detail; no calibrated ICC' if rgb is not None else 'Monochrome equal-channel RGB; no calibrated ICC',
@@ -396,7 +435,8 @@ def export_layer_package(worker, source, params, display, original_path, destina
                  'Recommended opacities are conservative starting points; they do not reproduce sequential pipeline Strength.', '',
                  '| Order | File | Blend mode | Effective opacity |', '|---|---|---|---|']
         lines += [f"| {r['order']} | {r['file']} | {r['mode']} | {100*r['opacity_255']/255:.4f}% |" for r in records]
-        lines += ['', 'Missing data are excluded from calculations and retained as NaN or zero alpha.',
+        lines += ['', 'Missing data are excluded from calculations. Numerical exports store zero; VALID retains their identity.',
+                  'Edge Antialias is a display-only black overlay; no missing radiance is reconstructed.',
                   'For masked inputs, WOW uses a support-normalized starlet variant that differs from the unmasked backend.',
                   'Theoretical neutral gray 0.5 is quantized to 32768/65535 in TIFF. These values are not radiance.',
                   'Maximum quantization error and Photoshop color management must be checked in Photoshop.']

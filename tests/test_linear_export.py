@@ -18,8 +18,8 @@ class LinearSourceExportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)/'sources'
             export_linear_sources(mono, colour, 'eclipse.tif', out, 'linear')
-            np.testing.assert_array_equal(tifffile.imread(out/'eclipse_LINEAR_RGB_float32.tif'), rgb)
-            np.testing.assert_array_equal(tifffile.imread(out/'eclipse_LINEAR_L_float32.tif'), mono)
+            np.testing.assert_array_equal(tifffile.imread(out/'eclipse_LINEAR_RGB_float32.tif'), np.nan_to_num(rgb))
+            np.testing.assert_array_equal(tifffile.imread(out/'eclipse_LINEAR_L_float32.tif'), np.nan_to_num(mono))
             self.assertEqual(tifffile.imread(out/'eclipse_LINEAR_RGB_float32.tif').dtype, np.float32)
             report = json.loads((out/'sources.json').read_text())
             self.assertEqual(report['missing_pixels'], 1)

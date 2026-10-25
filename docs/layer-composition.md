@@ -10,6 +10,7 @@ The original forms the base, normalized and stretched once with Asinh, Log or GH
 
 | Layer | Fixed Photoshop blend mode |
 | --- | --- |
+| NRGF | Multiply |
 | FNRGF | Multiply |
 | RHEF | Overlay |
 | MGN | Overlay |
@@ -21,13 +22,19 @@ The original forms the base, normalized and stretched once with Asinh, Log or GH
 | ACHF ISO 04 | Overlay |
 | ACHF Angular | Overlay |
 
-There is no additional normalization, gamma or stretch of the finished composition. A Color layer supplies RGB in native verification and export; fast preview remains monochrome. The PSB and TIFF loader add an opaque black background without modifying original layer alpha. Final TIFF/JPEG and the cached PSB composite show missing-data areas as black. Float source products and validity masks retain the distinction between missing observations and measured black pixels.
+There is no additional normalization, gamma or stretch of the finished composition. A Color layer supplies RGB in fast preview, native verification and export. Calibration is calculated once on the native RGB source; fast preview caches an observed-data reduction of that same calibrated RGB. Colour toggles update the display without recalculating luminance filters. Fast colour display is approximate because it stretches the reduced source; native verification still applies display operations before reducing the result. The PSB and TIFF loader add an opaque black background without modifying original layer alpha. Final TIFF/JPEG and the cached PSB composite show missing-data areas as black. Float source products store missing samples as zero; the separate VALID mask retains the distinction between missing observations and measured black pixels. Processing continues to exclude missing observations internally.
 
 ## Controls
 
-Each filter has **Opacity (%) before Strength (%)**. Opacity defaults to **50% for every filter and ACHF variant** and is independently editable from 0 to 100%. Defaults are starting points, not measurements or AEL-author recommendations. Strength controls encoded layer contrast around the blend mode's neutral value; it participates in the filter cache signature. Opacity only mixes the cached layer. A zero Strength is neutral and exports hidden. Reveal scales each layer opacity; it does not trigger numerical filtering.
+Each filter has **Opacity (%) before Strength (%)**. Opening the first image directly enables **FNRGF 25% Strength / 75% Opacity**, **MGN 25% / 75%**, **AEL bilateral WOW 100% / 35%**, **ACHF ISO 04 100% / 10%**, and **ACHF Angular 100% / 10%**. NRGF starts disabled with prepared values of 100% Strength / 40% Opacity. The initial base stretch is logarithmic with K=1000. Subsequent image loads without JSON retain all current filter parameters, activations and ACHF inclusion flags, including settings last loaded from JSON. Geometry is detected for the new image; filter heuristics are not reapplied. The remaining filters and ACHF variants are disabled/excluded with **25% Strength / 75% Opacity**, except for the prepared NRGF values above. The initial opacities are application defaults adapted from AEL, not calibrated measurements. Strength controls encoded layer contrast around the blend mode's neutral value; it participates in the filter cache signature. Opacity only mixes the cached layer. A zero Strength is neutral and exports hidden. Reveal scales each layer opacity; it does not trigger numerical filtering.
 
-The ACHF selector selects the panel to edit. **Include in composition** checkboxes independently enable any combination of Adaptive, ISO 01, ISO 04 and Angular. The ACHF section's Active checkbox gates the entire family. Adaptive starts included; the three AEL variants start excluded. All values persist when switching panels. Layer export automatically writes all active variants and omits excluded variants, so the cached PSB image matches the selected composition.
+NRGF is an independent layer before FNRGF; either or both can be enabled. Its defaults are Strength 100%, 2 native-pixel annuli, median/MAD statistics, 12 samples per annulus and zero profile smoothing. It adapts AEL 1.3.3's continuous NRGF and MAD/tanh display encoding (2.5, floor 1e-5), with attribution in `core/nrgf.py`. The inner radius defaults to one reference disk radius; only observed samples outside it enter statistics. The entire observed rectangle beyond it is processed, with no outer-radius cutoff. Sparse, constant or purely radial annuli without measurable angular spread remain transparent; no data is fabricated. Minimum samples and optional profile-node smoothing are advanced controls. Ring widths use original-image pixels and scale for fast preview, which remains approximate. Signed sky-subtracted input is supported.
+
+The WOW selector retains Standard and Edge-aware modes and adds **AEL bilateral**. AEL uses six native B3-starlet scales with equal contributions, subtracts a smooth radial profile from ln(luminance), uses symmetric observed pairs and sets the whitening noise-floor multiplier to 3. The AEL noise-floor control is distinct from the existing per-band significance thresholds; the controls belonging to other modes are disabled. Native-scale counts adapt approximately for resized previews. `core/ael_wow.py` carries the AEL attribution and frozen upstream outputs are tested. As in AEL, boundary bands and changes in faint structure remain possible.
+
+The ACHF selector selects the panel to edit. **Include in composition** checkboxes independently enable any combination of Adaptive, ISO 01, ISO 04 and Angular. The ACHF section's Active checkbox gates the entire family. The first direct image load selects the ISO 04 panel and includes both ISO 04 (sigmas 1/2/4/8/16 native px, final smoothing 1.5 px) and Angular (angular sigma 1 degree, final smoothing 4 native px). Both start at Strength 100% / Opacity 10%. All values persist when switching panels. Layer export automatically writes all active variants and omits excluded variants, so the cached PSB image matches the selected composition.
+
+Loading a settings JSON applies its explicit controls, activations and inclusion flags after resetting filters. Filter controls/sections may be omitted; an absent filter section stays disabled and an absent ACHF inclusion flag stays unchecked. Missing parameters use prepared defaults, without inheriting the preceding image's edits. Unknown controls or malformed explicit values remain errors; geometry and non-filter settings are still required. Full settings retain exact round-trip behavior, including older Standard/Edge-aware WOW selectors.
 
 ## Cache and export
 
@@ -42,6 +49,8 @@ The default fixed modes are Multiply, Overlay and Linear Light; Soft Light is no
 ## Validation
 
 Deterministic tests cover original input for every branch, blend equations, order, opacity-only changes, activation round trips, unrelated edits, Strength, source/geometry/mask invalidation, bounded caches, multiple ACHF variants, cancellation, GUI row order and final TIFF/PSB equality.
+
+NRGF adds frozen AEL 1.3.3 oracles for robust, signed mean/STD and smoothed profiles, radial/constant nulls, sparse annuli, validity/statistics exclusions, cancellation, native-width scaling, cache reuse, simultaneous FNRGF, settings migration and TIFF/JPEG export. An offscreen GUI check and a 640×427 real linear-image export confirmed NRGF before FNRGF, transparent missing support, 16-bit TIFF and exact PSB cached-composite parity. This checks integration at reduced resolution; it does not establish native Photoshop recomposition or full-resolution performance.
 
 A 640×427 reduction of the user's real linear master was processed with all filters and all four ACHF variants. Final RGB16 TIFF and cached PSB composite matched exactly. Artifacts and layer metadata are in `/tmp/eip-independent-validation`. The generated 13-layer PSB was opened in Photoshop 2026; its Color layer was hidden/restored to force recomposition and a separate copy was saved. All layer names, modes, opacities and visibility were retained. Native recomposition differed by at most 24/65535 (0.037% of full scale), with means about 1.6–1.7 levels and 99th percentiles six levels per channel. Measurements are in `native_compare.json`. This reduced case does not validate native-resolution performance.
 
@@ -75,3 +84,25 @@ MGN sigmas are specified in original-image pixels (defaults: 1.25, 2.5, 5, 10, 2
 The GUI logs completion after the full preview/verification pipeline and after export. `Idle — no processing running or queued` confirms that no processing job or timed update remains; otherwise the completion line reports running or pending work. Cancellation and failure also report the resulting state.
 
 Colour neutralization now applies gains from sampled P99−P1 channel spans, without subtracting per-channel backgrounds or adding a pedestal. One common highlight scale avoids independent channel clipping. For positive inputs this does not turn a brightness-only variation into a chromaticity variation. The global balance can differ from earlier exports; existing source chromaticity differences remain. Source data is untouched, and negative samples are clipped only in the colour display copy.
+
+
+## Optional PSB Color Correction
+
+The export-only checkbox **Add Color Correction to PSB (sRGB)** starts off and is enabled only for layered PSB export. It creates a top-level **Color Correction** group (Normal, 50%) containing a snapshot base, Gradient Map and Color Balance in Color mode at 30%, and sky Hue/Saturation at 100%. The three adjustments have editable native 16-bit masks; the group uses the supplied Photoshop guide's palette and values. Automatic mask membership uses observed display luminance, a robust outer-field sky estimate and an independent lunar exclusion. Inspect the initial masks in Photoshop.
+
+The PSB embeds sRGB for the application's assumed-sRGB display RGB. This is not general source-ICC conversion. Preview, filter recipes/caches, final TIFF/JPEG and original linear data are unchanged. JSON stores the checkbox; older JSON without it restores it off.
+
+With this option enabled, the stored merged RGB remains the uncorrected reference and Version Info explicitly marks it as not a real merged rendering. Photoshop performs native adjustment recomposition on open. A Photoshop-saved copy then carries its rendered correction. This is an intentional exception to the ordinary cached-composite equality above; third-party flattened previews need not display the correction. The group snapshot must be regenerated after edits to underlying filter layers.
+
+See `propuesta-color-atardecer-psb.md` for parameters, implementation scope and native validation.
+
+
+## Black export storage and edge antialias
+
+Final TIFF/JPEG and the PSB reference are opaque, finite images: missing/nonfinite display samples are zero. Optional LINEAR/INPUT and layer-package SOURCE/PREPARED/RGB float TIFF files also store zero for missing samples, retaining observed values and units. VALID still records the original support; stored zero does not mean an observation was recovered. Input files, in-memory sources, scientific masks and numerical filter results are unchanged.
+
+Presentation applies a narrow smoothstep transition on the supported side of lunar/missing boundaries: two original-image pixels, with a minimum of one target pixel in fast previews. Exactly-black lunar pixels connected to the reference disk centre are included in the display-only black region, including mixed NaN/zero lunar disks; isolated measured zeros elsewhere are not turned into missing data. The support estimate does not replace the measured boundary with a perfect circle. No neighbour averaging of coronal intensity, radiance extrapolation or reconstruction of absent pixels is performed. Pixels farther than the transition band are unchanged.
+
+A cached uint16 coverage map is shared by preview and export and is independent of filter strength/opacity/display colour edits. The PSB/TIFF package adds an editable **Edge Antialias** black Normal layer above the colour/filter layers and below optional Color Correction. This implements the same display fade while retaining each original layer's validity alpha. No extra edge layer is added when no such boundary exists. Native verification composes at full resolution before reducing the result.
+
+Validation uses synthetic curved masks, mixed NaN/zero disks, isolated zeros, bypass/no-hole cases, finite float exports with VALID, edge-cache reuse and final TIFF/PSB equality. A 200×200 crop in original pixels from a real 2750×2084 source was inspected at 3×: the black/corona stair-step is reduced without blurring the surrounding corona. Photoshop 2026 opened the PSB in 16 bits and retained Edge Antialias in Normal at 100%; native recomposition differed from the TIFF by at most 3/65535. Artifacts: `/private/tmp/eip-native-edge-_v59e5o4/`. Whole-image native-resolution performance was not measured in this validation.

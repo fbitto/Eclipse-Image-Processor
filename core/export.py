@@ -18,11 +18,14 @@ from .linear_export import export_linear_sources
 def export_images(source, parameters, display, file_path, original_path,
                   scale_factor=1., source_rgb=None, calibrate_colour=False, white=1.,
                   export_layers=False, export_linear=False, input_state='unknown', processed=None,
-                  layers_format='tiff', layer_cache=None, project_settings=None, progress=None):
+                  layers_format='tiff', layer_cache=None, project_settings=None, progress=None,
+                  color_correction=False):
     """Compute/write in the caller's worker; source and cached output stay untouched."""
     if layers_format not in ('psb','tiff'):
         raise ValueError('Photoshop layers format must be psb or tiff')
     layers_requested=export_layers or parameters.get("export_achf_variants",False) or parameters.get("export_achf_ael_variants",False)
+    if color_correction and (not layers_requested or layers_format!='psb'):
+        raise ValueError('Color Correction requires Photoshop PSB layer export')
     stages=['Preparing export','Calculating filters']
     if layers_requested:
         stages.append('Writing layer package')
@@ -62,7 +65,7 @@ def export_images(source, parameters, display, file_path, original_path,
                 package = export_layer_package(worker, source, parameters, display,
                     original_path, Path(temporary)/'layers', rgb=colour_rgb, colour_report=colour_report)
                 stage('Writing and verifying PSB')
-                export_psb_package(package,candidate)
+                export_psb_package(package,candidate,color_correction=color_correction)
             layers_path = candidate
         else:
             layers_path = export_layer_package(worker, source, parameters, display,
@@ -98,25 +101,21 @@ def export_images(source, parameters, display, file_path, original_path,
         else:
             colour=colour_layer(colour_rgb,source,display)
         img_norm = set_luminosity(colour,img_norm)
+    from .layer_engine import engine_for
+    from .presentation_edges import finish_presentation
+    img_norm=finish_presentation(img_norm,engine_for(worker).edge_alpha(source,parameters))
     if parameters.get("layered_model",False):
         from .layer_export import to_u16
         img_16bit=to_u16(img_norm)
     else:
         img_16bit = np.clip(img_norm*65535., 0, 65535).astype(np.uint16)
     t0 = time.time()
-    valid = np.ones(source.shape,dtype=bool) if parameters.get("layered_model",False) else np.isfinite(source)
-    if not valid.all():
-        if img_16bit.ndim == 3:
-            img_16bit = np.concatenate([img_16bit, (valid.astype(np.uint16)*65535)[..., None]], axis=2)
-        else:
-            img_16bit = np.stack([img_16bit, valid.astype(np.uint16)*65535], axis=-1)
     stage('Writing TIFF')
     tifffile.imwrite(file_path, img_16bit, photometric="rgb" if colour_rgb is not None else "minisblack",
-                     extrasamples=['unassalpha'] if not valid.all() else None,
                      compression="zlib", maxworkers=CPU_CORES,
                      metadata={"scale_factor": scale_factor, "source": original_path,
                                "parameters": recipe_parameters(parameters), "display": display,
-                               "colour_calibration": colour_report,
+                               "colour_calibration": colour_report, "missing_samples": "opaque zero; 2-native-pixel observed-side edge antialias",
                                "role": "Independent layer composition; not a linear master" if parameters.get("layered_model",False) else "Sequential pipeline presentation; not a linear master"})
     print(f"[EXPORT: DISK WRITE] Done in {time.time() - t0:.3f}s")
     

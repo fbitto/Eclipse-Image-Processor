@@ -113,7 +113,7 @@ class MaskedImageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             observed_image(image, np.ones((4, 4), bool))
 
-    def test_layer_package_preserves_nan_source_and_transparent_base_and_combined(self):
+    def test_layer_package_stores_zero_source_validity_and_opaque_antialiased_combined(self):
         p = parameters(self.valid)
         display = dict(mode='asinh', strength=10, blend=.8)
         with tempfile.TemporaryDirectory() as tmp:
@@ -123,12 +123,18 @@ class MaskedImageTests(unittest.TestCase):
             self.assertNotIn('valid_mask', manifest['parameters'])
             self.assertEqual(manifest['missing_pixels'], int((~self.valid).sum()))
             source = tifffile.imread(output/'masked_SOURCE_float32.tif')
-            np.testing.assert_array_equal(source, self.image)
-            for filename in [r['file'] for r in manifest['layers']] + [manifest['combined']]:
-                layer = tifffile.imread(output/filename)
-                self.assertEqual(layer.shape, (64, 80, 4))
-                self.assertTrue(np.all(layer[~self.valid, 3] == 0))
+            np.testing.assert_array_equal(source, np.nan_to_num(self.image))
+            for record in manifest['layers']:
+                layer=tifffile.imread(output/record['file'])
+                self.assertEqual(layer.shape,(64,80,4))
+                if record['filter']=='edge_antialias':
+                    self.assertTrue(np.all(layer[~self.valid,3]==65535))
+                else:
+                    self.assertTrue(np.all(layer[~self.valid,3]==0))
                 self.assertTrue(np.isfinite(layer).all())
+            combined=tifffile.imread(output/manifest['combined'])
+            self.assertEqual(combined.shape,(64,80,3))
+            self.assertTrue(np.all(combined[~self.valid]==0))
             presentation = render_presentation(self.image, self.image, display)
             self.assertTrue(np.isfinite(presentation).all())
             self.assertTrue(np.all(presentation[~self.valid] == 0))

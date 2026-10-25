@@ -83,8 +83,9 @@ class ProjectSettingsTests(unittest.TestCase):
                     w.load_image_action()
                 self.assertEqual(w.source_path,str(source),w.status_label.text())
                 for name in ('fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
-                    self.assertEqual(getattr(w,'sl_'+name+'_opacity').value(),50)
-                for controls in w.achf_ael_controls.values():self.assertEqual(controls['opacity'].value(),50)
+                    self.assertEqual(getattr(w,'sl_'+name+'_opacity').value(),35 if name=='wow' else 75)
+                for variant,controls in w.achf_ael_controls.items():
+                    self.assertEqual(controls['opacity'].value(),10 if variant in ('ael_iso_04','ael_angular_4') else 75)
                 w.chk_advanced.setChecked(True)
                 w.combo_input_state.setCurrentIndex(0)
                 w.chk_verify_preview.setChecked(True)
