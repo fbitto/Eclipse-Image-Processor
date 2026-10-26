@@ -34,7 +34,6 @@ def create_slider(
     max_v: int,
     default_v: int,
     target_layout: QVBoxLayout,
-    connect_pipeline=True,
     tooltip: Optional[str] = None,
     on_release_callback=None,
     divisor=1,
@@ -249,10 +248,10 @@ def create_filter_group(group_title: str, control_layout: QVBoxLayout) -> QVBoxL
     title_label = QLabel(group_title.upper())
     group_help={
         'RADIAL ENHANCEMENT':'Radial normalization uses the configured reference disk geometry.',
-        'RADIAL HISTOGRAM EQUALIZATION':'Adjust contrast by ranking original-image intensities within radial distributions.',
-        'MULTI-SCALE / WAVELETS':'Extract contrast at multiple spatial scales from the original input.',
-        'SHARPENING':'Independent signed-detail layers; each starts from the original input.',
-        'BASE STRETCH (DISPLAY & EXPORT)':'Stretch the original base before blending the independent filter layers.',
+        'RADIAL HISTOGRAM EQUALIZATION':'Adjust contrast by ranking working-input intensities within radial distributions.',
+        'MULTI-SCALE / WAVELETS':'Extract contrast at multiple spatial scales from the shared working input, including enabled background equalization.',
+        'SHARPENING':'Independent signed-detail layers; each starts from the shared working input, including enabled background equalization.',
+        'PHOTOSHOP PRESENTATION':'Automatic exposure with manual EV adjustment for Photoshop layers. Screen and JPEG follow it only when Preview PSB presentation is on; the main TIFF is unchanged.',
     }
     title_label.setToolTip(group_help[group_title])
     title_label.setStyleSheet("""

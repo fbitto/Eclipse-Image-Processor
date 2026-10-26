@@ -2,9 +2,9 @@
 
 ## Project Structure & Module Organization
 
-Eclipse Image Processor is a Python/PySide6 desktop application for enhancing solar eclipse images. `main.py` initializes CPU threading and launches `gui.app.EclipseProcessorApp`. `core/filters.py` contains the active numerical filters and Qt `FilterWorker`; `gui/` contains the window, canvas, controls, and factories. The GUI currently handles loading, export, and lunar detection directly; the similarly named standalone modules in `core/` are unused by it.
+Eclipse Image Processor is a Python/PySide6 desktop application for enhancing solar eclipse images. `main.py` initializes CPU threading and launches `gui.app.EclipseProcessorApp`. `core/filters.py` contains the active numerical filters and Qt `FilterWorker`; `gui/` contains the window, canvas, controls, and factories. The GUI coordinates asynchronous loading, geometry, background preparation, presentation and export. `core/pipeline.py` dispatches independent branches through `core/layer_engine.py`; `core/presentation.py` separates TIFF composition from PSB presentation. See `docs/architecture.md` for module responsibilities.
 
-`config.py` holds styling, constants, and legacy defaults; `utils/helpers.py` resolves resource paths. Synthetic filter tests live in `tests/`, development utilities in `scripts/`, and application icons at the repository root. Edit `core/filters.py`, not the backup `core/filters - copia.py`.
+`config.py` holds styling and application constants; `utils/helpers.py` resolves resource paths. Synthetic filter tests live in `tests/`, development utilities in `scripts/`, and application icons in `assets/`. Bundled AEL ports have separate modules; preserve their attribution notices.
 
 ## Build, Test, and Development Commands
 
@@ -18,7 +18,7 @@ python main.py
 python -m unittest discover -s tests -v
 ```
 
-These commands create and activate an environment, install dependencies, launch the desktop UI, and run the test suite. On Windows, activate with `.venv\Scripts\Activate.ps1`. Python metadata declares version 3.14 or later; verify dependency compatibility. No build or packaging command is configured. Keep dependencies in `requirements.txt` and the inline metadata in `main.py` synchronized.
+These commands create and activate an environment, install dependencies, launch the desktop UI, and run the test suite. On Windows, activate with `.venv\Scripts\Activate.ps1`. Python metadata declares version 3.14 or later; verify dependency compatibility. Platform builders are `scripts/build_macos.py` (optional `--dmg`) and `scripts/build_windows.py`; install `requirements-build.txt` and build on the target operating system. Keep dependencies in `requirements.txt` and the inline metadata in `main.py` synchronized.
 
 ## Coding Style & Naming Conventions
 
@@ -30,4 +30,4 @@ Use standard-library `unittest` with NumPy assertions. Name files `tests/test_*.
 
 ## Commit & Pull Request Guidelines
 
-This checkout has no Git metadata, so commit conventions cannot be verified. Use concise imperative subjects describing the affected behavior. Pull requests should explain the change, link relevant issues, report automated and manual checks, and include screenshots for UI changes. Keep virtual environments, caches, local image data, and generated code dumps out of commits.
+Use concise imperative subjects describing the affected behavior. Pull requests should explain the change, link relevant issues, report automated and manual checks, and include screenshots for UI changes. Keep virtual environments, caches, local image data, and generated code dumps out of commits.

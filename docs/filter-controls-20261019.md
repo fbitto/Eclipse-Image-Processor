@@ -1,5 +1,7 @@
 # Filter controls and implementation checks — 2026-10-19
 
+> Historical report. This document preserves its original research, measurements and implementation context. Controls, defaults, sequential processing and export behaviour described below may have changed. Use the [current technical guides](README.md) and [validation boundaries](validation.md) for the active application.
+
 The four adopted ideas are now implemented: a native-resolution verification preview with a reusable numerical cache; an optional continuous/support-aware FNRGF (now the GUI default); tangential detail replacing USM in the UI; and statistical exclusions separate from missing-data validity. Historical USM API recipes and the reference-compatible FNRGF core remain available for compatibility.
 
 The implementation is independent; no source from the two reviewed upstream repositories was incorporated. Background reading and exact upstream revisions are in [the research notes](external-filter-ideas-20261019.md).

@@ -11,11 +11,11 @@ import numpy as np
 import tifffile
 from psd_tools import PSDImage
 
-from core.layer_engine import LayerEngine, requests, blend
+from core.layer_engine import LayerEngine, blend
 from core.layer_export import export_layer_package, neutral_layer, to_u16, overlay
 from core.filters import FilterWorker
 from core.pipeline import execute_pipeline
-from core.presentation import stretch_image
+from core.presentation import normalized_base, composition_settings
 from core.export import export_images
 
 
@@ -36,12 +36,12 @@ class IndependentLayerTests(unittest.TestCase):
     def tearDown(self):
         self.quiet.__exit__(None,None,None)
 
-    def test_each_filter_receives_original_and_blends_once_above_stretched_base(self):
+    def test_each_filter_receives_original_and_blends_once_above_linear_base(self):
         before=self.source.copy()
         actual=self.engine.render(self.worker,self.source,self.p,self.display)
         for method in (self.worker.run_mgn_native,self.worker.run_wow_native):
             np.testing.assert_array_equal(method.call_args.args[0],self.source)
-        expected=to_u16(stretch_image(self.source,self.display)).astype(float)/65535
+        expected=to_u16(normalized_base(self.source,composition_settings(self.display))).astype(float)/65535
         yy,xx=np.indices(self.source.shape)
         domain=(xx-8)**2+(yy-6)**2 > 4
         for image,amount in ((self.source**2,51/255),(np.sqrt(self.source),76/255)):
@@ -113,7 +113,7 @@ class IndependentLayerTests(unittest.TestCase):
         self.worker.run_mgn_native.assert_not_called()
         p=dict(self.p,mgn_opacity=0,wow_opacity=0)
         actual=self.engine.render(self.worker,self.source,p,self.display)
-        np.testing.assert_array_equal(actual,(to_u16(stretch_image(self.source,self.display))/65535.).astype(np.float32))
+        np.testing.assert_array_equal(actual,(to_u16(normalized_base(self.source,composition_settings(self.display)))/65535.).astype(np.float32))
         self.assertEqual(self.worker.run_mgn_native.call_count,1)
         self.engine.render(self.worker,self.source,dict(p,mgn_opacity=60),self.display)
         self.assertEqual(self.worker.run_mgn_native.call_count,1)
@@ -151,7 +151,7 @@ class IndependentLayerTests(unittest.TestCase):
             self.engine.render(self.worker,self.source,p,self.display)
             self.assertEqual(operator.call_count,4)
 
-    def test_preview_package_final_tiff_and_psb_use_same_composition(self):
+    def test_tiff_uses_neutral_composition_psb_uses_its_presentation_and_cached_layers(self):
         source=self.source.copy();source[0,:3]=np.nan
         p=dict(self.p,wow_enabled=False)
         worker=FilterWorker()
@@ -166,7 +166,9 @@ class IndependentLayerTests(unittest.TestCase):
             export_layer_package(worker,source,p,display,'source.fits',package)
             recipe=json.loads((package/'recipe.json').read_text())
             combined=tifffile.imread(package/recipe['combined'])
-            np.testing.assert_array_equal(combined[...,0],to_u16(actual))
+            presentation=worker.layer_engine.render(worker,source,p,recipe['display'])
+            presentation=finish_presentation(presentation,worker.layer_engine.edge_alpha(source,p))
+            np.testing.assert_array_equal(combined[...,0],to_u16(presentation))
             copied=source.copy()
             snapshot=worker.layer_engine.snapshot(source,copied)
             with patch.object(LayerEngine,'_calculate',side_effect=AssertionError('cache missed')):
@@ -174,8 +176,11 @@ class IndependentLayerTests(unittest.TestCase):
                               export_layers=True,layers_format='psb',layer_cache=snapshot)
             np.testing.assert_array_equal(tifffile.imread(root/'final.tif'),to_u16(actual))
             doc=PSDImage.open(root/'final_PS_layers.psb')
+            self.assertEqual(doc[1].name,'Linear reference / receipt scale')
+            self.assertFalse(doc[1].visible)
+            self.assertEqual(doc[2].name,'Display base')
             planes=doc._record.image_data.get_data(doc._record.header)
-            np.testing.assert_array_equal(np.frombuffer(planes[0],dtype='>u2').reshape(source.shape),to_u16(actual))
+            np.testing.assert_array_equal(np.frombuffer(planes[0],dtype='>u2').reshape(source.shape),to_u16(presentation))
             np.testing.assert_array_equal(source,np.where(np.isfinite(source),self.source,np.nan))
 
     def test_fnrgf_uses_multiply_and_reveal_zero_preserves_base(self):
@@ -185,7 +190,7 @@ class IndependentLayerTests(unittest.TestCase):
         output=self.engine.render(self.worker,self.source,p,self.display)
         layer=self.engine.layer(self.worker,self.source,p,'fnrgf')
         self.assertEqual(layer['mode'],'Multiply')
-        base=to_u16(stretch_image(self.source,self.display))/65535.
+        base=to_u16(normalized_base(self.source,composition_settings(self.display)))/65535.
         self.assertTrue((output<=base+1e-7).all())
         zero=self.engine.render(self.worker,self.source,p,dict(self.display,blend=0))
         np.testing.assert_array_equal(zero,base.astype(np.float32))

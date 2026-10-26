@@ -24,10 +24,9 @@ BLEND_KEYS = {'Multiply':'multiply','Normal':'normal','Overlay':'overlay','Color
 
 def _psd():
     try:
-        import psd_tools  # noqa: F401
+        from psd_tools import PSDImage
     except ImportError as e:  # pragma: no cover
         raise ImportError('PSB export requires psd-tools==1.26.0; install the project requirements') from e
-    from psd_tools import PSDImage
     from psd_tools.api.layers import PixelLayer
     from psd_tools.constants import BlendMode, ChannelID, Compression, Resource, Tag
     from psd_tools.psd.image_resources import ImageResource

@@ -1,53 +1,70 @@
-# Integrated PSB16 export
+# PSB presentation and export
 
-Validated 24 October 2026 with psd-tools 1.26.0 and Adobe Photoshop 2026 on macOS.
+The application uses independent encoded layers for fast/native preview and export. **The main TIFF and PSB have different bases.** No installed AEL runtime is required. The PSB writer adapts AEL 1.3.3 by Pere Guerra Serra under MIT and uses pinned psd-tools 1.26.0; see [attribution](../ATTRIBUTIONS.md).
 
-## Use
+## Output contracts
 
-Enable **Also export editable Photoshop layers**, then select **Photoshop · PSB (16-bit layers)** (the default). Saving writes the regular final TIFF, companion JPEG and matching settings JSON plus `<destination>_PS_layers.psb`. Preview, native verification, TIFF/JPEG and PSB share the [independent layer composition](layer-composition.md). The alternative TIFF package and Photoshop JSX remain available. All active ACHF variants are exported automatically, each with its saved parameters. Excluded variants are omitted; zero-Strength variants are hidden.
+| Product | Base / presentation |
+| --- | --- |
+| Main full-resolution TIFF | Linearly normalized working base plus filter layers, no presentation stretch |
+| Preview JPEG | Selected GUI view: PSB presentation when enabled, un-stretched composition otherwise; native dimensions, 8-bit, quality 95 |
+| PSB or TIFF layer package | PSB presentation base plus active filter layers, independent of preview toggle |
+| Hidden linear reference | Working RGB/mono scaled for 16-bit storage; scale recorded, no Asinh curve |
+| Working float source and validity | Numerical working mono units, missing samples zero plus separate support |
 
-The export worker snapshots the format with the other settings. Layer generation and PSB verification/publication complete before the final composition is formed from cached layers and the final TIFF/JPEG are written. A layer-export failure therefore leaves no new final TIFF/JPEG. If final-image writing subsequently fails, the completed layer output remains available. Independent cache misses are calculated concurrently before ordered layer writing. PSB preparation uses a temporary TIFF package, removed on completion or failure. The PSB is reopened and checked before publication. Existing destinations are never overwritten: the application chooses a numbered alternative. Cancellation or failed verification does not publish an incomplete PSB. Publication uses a same-directory hard link; the destination filesystem must support hard links.
+The main TIFF is an enhanced composition, not a photometric linear master. JPEG has no additional gamma transform. PSB Exposure changes presentation preview, its JPEG and layer export, never the main TIFF.
 
-## Black background
+## Automatic presentation
 
-PSB export now adds a visible, opaque **00_BACKGROUND_Black** layer below all image layers. Missing-data regions appear black while the original image-layer alpha remains intact. Hide the background in Photoshop to recover transparency. The cached RGB preview is the reference composite over black, including fractional alpha. The TIFF loader also receives a black backdrop. Existing PSBs are not modified.
+Preview PSB presentation starts enabled, with exposure 0 EV. Controls sit above export options and remain usable when layer export is off. Double-click Exposure restores 0 EV; no separate reset button or Display Stretch selector exists.
 
-## Data and attribution
+`core/presentation.py` estimates P99.5 from positive native luminance outside 1.2 reference-disk radii, sampled at stride `ceil(max(shape)/1024)`. RGB estimation uses weights 0.25/0.5/0.25 and follows enabled background preparation/calibration. The scale is `automatic_scale * 2**(-EV)`, with EV from −6 to +6. Empty positive sample domains fall back to scale 1. **Automatic scale selection is an application heuristic, not an AEL default.** The native scale is shared across resolutions and export.
 
-The writer always uses PSB version 2, 16-bit RGB, full-canvas layers and separate 16-bit alpha channels. Names, order, Normal/Multiply/Overlay/Color/Linear Light modes, visibility and byte opacity are retained. The existing layer recipe is embedded as XMP. The merged cached image is opaque RGB, composited over black. Original image-layer channels are checked byte for byte against their source TIFF; the black layer and the cached composite over black are also checked before publication. Manifest hashes are checked when supplied.
+The tone curve follows AEL 1.3.3 `ael.develop.tone_map`:
 
-The low-level writer is copied and adapted from AEL 1.3.3, by Pere Guerra Serra, under MIT. See [attribution](../ATTRIBUTIONS.md) and [retained license](third-party/AEL-MIT.txt). No installed AEL runtime is needed by the application. psd-tools is pinned because this code uses its low-level structures.
+```text
+u = asinh(max(RGB, 0) / scale * 10) / asinh(10)
+peak = max(u across RGB channels)
+shoulder = 0.9 * (1 - exp(-peak / 0.9))
+mapped = u * shoulder / peak       # zero at peak = 0
+```
 
-Photoshop requires the `Mt16` merged-transparency block **before** `Lr16`. The initially tested reverse order passed structural reading but produced a native Photoshop program error. The earlier transparent export used the native ordering and positive layer count. The current opaque black-backed composite needs no merged-transparency block.
+Positive values above scale are not pre-clipped. A shared shoulder preserves the post-Asinh channel ratios. Row tiles bound float temporary storage. Mapped RGB is quantized to 16 bits; its 0.30/0.59/0.11 luminance forms Display base and a Color layer supplies RGB. This mono-base/Color architecture is application-specific, not a copy of AEL's complete workflow. Fast preview tone-maps reduced data; native verification tone-maps natively before reducing, so the latter is authoritative.
 
-## Validation
+## Package and layers
 
-The native real-case measurements below describe the original transparent PSB. The subsequent black-background change is covered by automated pixel, opacity, visibility, layer-order and cached-composite tests; it has not been revalidated natively on that real case.
+Enable Also export editable Photoshop layers and select PSB (the default) or the TIFF package. The stack contains:
 
-- Synthetic fixtures: non-8-bit-aligned RGB16, fractional alpha, missing-data holes, Unicode names, hidden layers, four blend modes and quantized opacity. An independent byte parser checks compressed layer planes and merged image.
-- Integration: regular TIFF/JPEG plus PSB, opaque and transparent merged images, no overwrite, cancellation, failed verification, unsafe paths and GUI export snapshots.
-- Real supplied package: nine layers, 5608 × 3744, approximately 1.1 GB PSB. Generation and exact verification completed in about 35 seconds. Original files were read without modification.
-- Native Photoshop: opened the real PSB, inspected the nine editable RGB16 layers and transparent hole, hid and restored the Color layer to force recomposition, then saved a separate owned copy with compatibility enabled.
-- Native saved copy: alpha remained exact in all layers and merged image. RGB values changed by at most one 16-bit level per layer. Recomputed merged RGB differed from the reference by at most 13/65535 (0.020% of full scale), mean about 1.5 levels and 99th percentile five levels on opaque valid pixels. Native recomposition is therefore close, not bit-exact. The original generated PSB channels and cached reference remain exact.
+1. Opaque **00_BACKGROUND_Black**.
+2. Hidden **Linear reference / receipt scale**.
+3. Visible **Display base**.
+4. Active filter layers in [fixed order](layer-composition.md), with their modes, opacity and alpha.
+5. RGB Color layer when applicable.
+6. Display-only **Edge Antialias** when needed.
+7. Optional Photoshop-only **Color Correction** group.
 
-Local validation artifacts are in `/tmp/eclipse-psb-real-validation`: `eclipse_9_layers_v2.psb` is the compatible generated result, `eclipse_9_layers_photoshop_recomposed.psb` is the separate native save, and `report_v2.json` / `native_compare.json` hold measurements. The earlier `eclipse_9_layers.psb` predates the block-order correction and is retained only as a failed experiment.
+The working linear reference includes enabled background correction and RGB calibration. Its positive observed maximum is divided by 0.98 to obtain the recorded storage scale. Mono is repeated into RGB when needed. Negative values clip in this 16-bit reference; it is not an untouched original or a replacement for floating input.
 
-## Limits
+The TIFF package includes `01_LINEAR_REFERENCE_Normal.tif`, numbered base/filter files, `REFERENCE_COMBINED.tif` (the PSB presentation), `SOURCE_float32.tif` (working mono), `VALID.tif`, `STATISTICS_SUPPORT.tif`, `recipe.json`, `Load_layers_Photoshop.jsx` and `Layers.md`. Missing float samples store zero; VALID distinguishes missing observations from measured black. Developer-only linear-source export helpers are not exposed as a GUI option.
 
-Files exceeding 2 GB and the 300,000-pixel dimension limit have not been stress tested. Temporary package, compressed layer buffers, merged image and verification need substantial disk space and memory. No new ICC profile is assigned: the current layer package is untagged, and native testing chose Photoshop's “leave as is” policy. This is not a general ICC-managed color-match guarantee. Native validation covered this macOS Photoshop version, not every reader or platform.
+The PSB temporary package is removed on success or failure; a selected TIFF directory persists. Hide the black background to inspect transparency; original layer alpha remains separate.
 
-## Upstream citation
+## Optional Color Correction and profile
 
-**Credit:** Pere Guerra Serra (2026), *Agentic Eclipse Library*, version 1.3.3. The low-level 16-bit PSB writer contains code copied and adapted from AEL under the MIT license; see [full attribution](../ATTRIBUTIONS.md).
+Add Color Correction to PSB (sRGB) starts off, appears directly below Also export, and is enabled only for PSB layer export. It adds a **Color Correction** group in Normal at byte opacity 128/255, containing a base snapshot, a Copper Gold Ivory Gradient Map (Color, 30%), Color Balance (Color, 30%) and sky Hue/Saturation (Normal, 100%). Native editable 16-bit masks separate sky/corona and exclude the lunar region; inspect them in Photoshop.
 
-## Timing log
+Color Balance uses midtones `(8, -2, -8)` and highlights `(4, 0, -6)` with luminosity preserved. Sky saturation reduces cyan by 10 and blue by 20. The group uses the palette in `core/color_correction.py`; the [historical design](propuesta-color-atardecer-psb.md) explains its origin.
 
-Console messages identify each independent `LAYER` calculation, encoding and cache reuse, final presentation, and `PSB`. The historical sequential path remains available only to compatibility API callers. Each layer reports filter calculation, display encoding, TIFF writing and reference composition separately, including direct AEL and Larson–Sekanina paths. PSB reports per-layer read/hash/encoding, cached composite/metadata, disk writing, per-layer verification, verification total and PSB total. Cached native final results are explicitly identified. Package and PSB totals include their nested stages; do not add totals to their constituent timings. The final export total also includes color preparation and temporary-file cleanup.
+This option embeds **sRGB** for assumed-sRGB application display RGB. Without this option, the PSB writer does not assign a new ICC profile. Neither path performs general source-ICC conversion. The group is absent from GUI preview and main TIFF/JPEG. Its cached merged RGB is the uncorrected reference and is explicitly marked as requiring native Photoshop recomposition. Third-party flattened previews may omit the correction. Rebuild the snapshot group after changing underlying filter layers.
 
-The current independent-layer model was also checked on a 640×427 reduction of the real master with all four ACHF variants; final TIFF and PSB cached RGB16 matched exactly. See [model validation and limits](layer-composition.md#validation).
+## Verification and publication
 
-## Restoring a session
+The writer creates PSB version 2, RGB16, full-canvas layers, separate 16-bit alpha and Lr16 records; its current opaque merged RGB needs no Mt16 merged-transparency block. Recipe metadata is embedded in XMP. Reopening verifies dimensions, names, modes, visibility, byte opacity, original channel bytes, hashes when supplied, background and cached reference. Optional adjustment/profile structures are verified separately. This is structural/pixel verification, not proof of Photoshop colour-managed recomposition.
 
-A GUI export to `name.tif` also writes `name.json`. Open the JSON through **Open Image** to restore the original source and all GUI adjustments, including inactive ACHF variants and advanced controls. Source paths are relative with an absolute fallback. Source pixels and caches are not embedded; the image must still be available. The JSON is published atomically after final TIFF/JPEG writing. If JSON writing fails, previously completed image/layer outputs remain available. New filter/variant opacity controls default to 50%; restored projects use their saved values.
+Layers are generated/verified before final TIFF/JPEG. A layer failure prevents new final images; a later image/JSON failure can leave earlier completed outputs. PSB publication uses a same-directory hard link and therefore requires filesystem hard-link support. Existing layer destinations receive numbered suffixes. Main TIFF/JSON may be replaced after the save dialog. Settings JSON is published atomically last; the overall multi-file export is not atomic.
 
-During export, a general progress bar advances through completed stages: preparation, filter calculation, layer-package writing, PSB writing and verification, final composition, TIFF, JPEG and settings JSON. Only applicable stages are included. The percentage measures stages completed, not elapsed or remaining time; long calculations can stay at the same stage until finished. Failures retain the reached position and display “Export failed”.
+Progress reports completed stages rather than remaining time. Filter timings overlap when prepared in parallel; PSB/package totals include nested stages. Memory and disk demands can be substantial. Files above 2 GB and the 300,000-pixel dimension limit have not been stress-tested.
+
+## Validation boundary
+
+Current automated tests cover writer bytes, masks, blend modes, cancellation, output separation, settings and optional adjustments. The latest full real-image check confirms the un-stretched TIFF contract and selected JPEG, without producing a PSB. Earlier exports opened successfully in Photoshop 2026, but those measurements predate the current automatic presentation and hidden reference. **The current presentation/reference combination has not been revalidated by opening it in Photoshop.** See [current validation](validation.md) and [archived native measurements](psb-validation-history.md).

@@ -8,7 +8,7 @@ import numpy as np
 import tifffile
 
 from core.filters import FilterWorker, larson_sekanina_residual
-from core.pipeline import execute_pipeline, prepare_parameters
+from core.pipeline import apply_filter, prepare_parameters
 from core.layer_export import export_layer_package, linear_light, linear_detail_layer, to_u16
 
 
@@ -61,14 +61,19 @@ class LarsonSekaninaTests(unittest.TestCase):
         p = dict(sx=32., sy=32., sr=8., larson_sekanina_enabled=True,
                  larson_sekanina_str=37, larson_sekanina_radial=1., larson_sekanina_angular=5.)
         expected = a+.37*larson_sekanina_residual(a, 32, 32, 8, 1, 5)
-        np.testing.assert_allclose(execute_pipeline(FilterWorker(), a, p), expected, atol=1e-7)
+        np.testing.assert_allclose(apply_filter(FilterWorker(), a, p), expected, atol=1e-7)
+        np.testing.assert_allclose(apply_filter(FilterWorker(), a, dict(p,larson_sekanina_str=200)),
+                                   a+2*larson_sekanina_residual(a,32,32,8,1,5),atol=1e-6)
+        for gain in (-1,201,np.nan):
+            with self.assertRaises(ValueError):
+                apply_filter(FilterWorker(),a,dict(p,larson_sekanina_str=gain))
         for params in (dict(p, larson_sekanina_str=0), dict(p, larson_sekanina_radial=0., larson_sekanina_angular=0.), dict(p, larson_sekanina_enabled=False)):
-            np.testing.assert_array_equal(execute_pipeline(FilterWorker(), a, params), a)
+            np.testing.assert_array_equal(apply_filter(FilterWorker(), a, params), a)
         valid = np.ones(a.shape, bool)
         valid[5:9, 5:9] = False
         image = np.where(valid, a, np.nan)
         for exclusions in ({}, dict(statistics_exclude_lunar=True, statistics_guard_px=2)):
-            out = execute_pipeline(FilterWorker(), image, dict(p, valid_mask=valid, **exclusions))
+            out = apply_filter(FilterWorker(), image, dict(p, valid_mask=valid, **exclusions))
             self.assertTrue(np.isnan(out[~valid]).all())
             self.assertTrue(np.isfinite(out[valid]).all())
 
@@ -87,6 +92,25 @@ class LarsonSekaninaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             larson_sekanina_residual(a, 8, 8, 2)
 
+    def test_layered_gain_200_and_default_three_degree_residual(self):
+        from core.layer_engine import LayerEngine
+        a=np.random.default_rng(18).uniform(1,2,(48,64)).astype(np.float32)
+        p=dict(sx=32.,sy=24.,sr=5.,larson_sekanina_enabled=True,
+               larson_sekanina_str=100,larson_sekanina_opacity=75,layered_model=True)
+        worker=FilterWorker();engine=LayerEngine()
+        normal=engine.layer(worker,a,p,'larson_sekanina')
+        amplified=engine.layer(worker,a,dict(p,larson_sekanina_str=200),'larson_sekanina')
+        expected=to_u16(.5+2*(normal['image'].astype(float)/65535-.5))
+        np.testing.assert_allclose(amplified['image'],expected,atol=2,rtol=0)
+        np.testing.assert_array_equal(larson_sekanina_residual(a,32,24,5),
+                                      larson_sekanina_residual(a,32,24,5,0,3))
+        with tempfile.TemporaryDirectory() as tmp:
+            out=Path(tmp)/'layers'
+            export_layer_package(worker,a,dict(p,larson_sekanina_str=200),{},'test.tif',out)
+            manifest=json.loads((out/'recipe.json').read_text())
+            self.assertTrue(any(layer['mode']=='Linear Light' for layer in manifest['layers']))
+            self.assertTrue((out/manifest['combined']).is_file())
+
     def test_linear_light_signed_addition_and_quantized_export(self):
         base = np.array([[.2, .5, .8]])
         detail = np.array([[-.1, 0., .1]])
@@ -100,23 +124,22 @@ class LarsonSekaninaTests(unittest.TestCase):
         y, x = np.indices((48, 64))
         a = (2+np.exp(-np.hypot(x-32, y-24)/10)+.03*np.sin(x)).astype(np.float32)
         p = dict(sx=32., sy=24., sr=5., larson_sekanina_enabled=True,
-                 larson_sekanina_str=20, larson_sekanina_radial=1., larson_sekanina_angular=5.)
+                 larson_sekanina_str=200, larson_sekanina_radial=1., larson_sekanina_angular=5.)
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)/'layers'
             export_layer_package(FilterWorker(), a, p, {}, 'test.tif', out)
             manifest = json.loads((out/'recipe.json').read_text())
-            self.assertEqual(len(manifest['layers']), 2)
-            record = manifest['layers'][1]
+            self.assertEqual(len(manifest['layers']), 3)
+            record = manifest['layers'][2]
             self.assertEqual(record['mode'], 'Linear Light')
-            self.assertEqual(record['file'], '02_LARSON_SEKANINA_LinearLight.tif')
-            self.assertEqual(record['signal'], 'signed sharpening residual')
+            self.assertEqual(record['file'], '03_LARSON_SEKANINA_LinearLight.tif')
             self.assertEqual(record['normalization']['center'], 0)
-            base = tifffile.imread(out/manifest['layers'][0]['file'])[..., 0]/65535.
+            base = tifffile.imread(out/manifest['layers'][1]['file'])[..., 0]/65535.
             rgba = tifffile.imread(out/record['file'])
             self.assertEqual(rgba.dtype, np.uint16)
             self.assertEqual(rgba.shape, (48, 64, 4))
             self.assertEqual(rgba[24, 32, 3], 0)
-            expected = to_u16(linear_light(base, rgba[..., 0]/65535., rgba[..., 3]/65535., record['opacity_255']/255.))
+            expected = to_u16(linear_light(base, rgba[..., 0]/65535., rgba[..., 3]/65535., record['opacity_255']/255.).astype(np.float32))
             combined = tifffile.imread(out/manifest['combined'])
             np.testing.assert_array_equal(combined[..., 0], expected)
             self.assertIn('BlendMode.LINEARLIGHT', (out/'Load_layers_Photoshop.jsx').read_text())

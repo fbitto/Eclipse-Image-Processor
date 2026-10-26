@@ -1,51 +1,26 @@
-# Classic Larson–Sekanina
+# Larson–Sekanina rotational detail
 
-The SHARPENING group places Larson–Sekanina between Tangential Detail and ACHF.
-It is initially disabled; defaults are Strength 10%, radial increment 0 preview
-pixels and angular increment 1 degree. The existing disk center/radius are used.
+Larson–Sekanina sits between Tangential Detail and ACHF. Initially off, it has **Gain 25%**, **Opacity 75%** and **Angular increment 3°**. Gain ranges from 0 to 200%. The GUI fixes radial increment at zero in preview and export and exposes no radial slider.
 
-The numerical operator is
+## Numerical operator
 
-    D(r, theta) = 2 I(r, theta)
-                  - I(r-dr, theta-da) - I(r-dr, theta+da)
+```text
+D(r, theta) = 2 I(r, theta)
+              - I(r-dr, theta-da) - I(r-dr, theta+da)
+```
 
-Both angular samples use the same inward radial offset. The pipeline returns
-`I + Strength/100 * D` in input units, without clipping, normalization, threshold,
-deringing or dynamic-range extension. The sampling is bilinear, directly on the
-Cartesian source, in cancellable row tiles. Both increments zero are identity.
-The radial increment scales with preview/export resolution; the angle does not.
-Only targets outside the reference lunar disk whose two interpolation footprints
-are fully observed and outside the disk receive detail. Other targets retain
-input. Explicit missing data remain missing. Statistical exclusions also restrict
-sampling when enabled. These support rules protect data boundaries; they do not
-alter the classic operator on supported pixels.
+The application uses `dr = 0`: symmetric angular differences around the reference centre. The numerical helper still accepts an inward radial offset for developer experiments. Angles do not scale with resolution. Bilinear sampling operates directly on Cartesian input in cancellable row tiles.
 
-Reference formula: Vincent, *From observations and measurements to realistic
-modeling of cometary nuclei*, section 2.2.2.1:
-https://www2.mps.mpg.de/solar-system-school/alumni/vincent.pdf
+Only targets outside the reference lunar disk with both interpolation footprints fully observed and outside the disk receive detail. Statistical exclusions also restrict sampling when enabled. Unsupported targets retain their numerical input; missing data remain missing. Both increments zero give zero residual. The direct numerical helper returns `I + strength/100 * D` without clipping or normalization; this helper return is not the GUI composition contract.
 
-## Photoshop
+## Layer encoding
 
-The independent layer branch computes the float64 residual from PREPARED, with
-no preceding enhancement branch. It encodes `L = 0.5 + D/(2*S)`, where S is the
-larger of the observed prepared-input range and maximum absolute exported
-residual. This preserves zero and relative residual amplitudes; no median shift
-or tanh is applied. The scale is recorded in recipe.json. TIFF is uint16 RGB
-with unassociated alpha, as for the existing detail layers.
+The independent branch computes signed detail from the shared working input. It encodes `L = 0.5 + D/(2*S)`, where S is the larger of the observed working-input range and maximum absolute supported residual. The receipt records this scale. Gain scales the displacement from neutral grey before quantization/clipping; it is distinct from opacity.
 
-Use **Linear Light / Luz lineal**, with Fill at 100%. In display numeric values,
-its full-strength blend is `clip(base + 2*L - 1, 0, 1)`, thus adding `D/S` before
-clipping. Layer opacity and alpha mix that result with the base. Overlay instead
-weights the effect by base brightness and does not perform this signed addition.
-The JSX loader sets BlendMode.LINEARLIGHT; PS_COMBINED uses the same equation on
-the quantized TIFF samples. Recommended opacity retains the package convention:
-`min(Strength/100, 0.35) * Reveal`, quantized to 1/255.
+With Linear Light and Fill 100%, the display blend is `clip(base + 2*L - 1, 0, 1)`. Layer opacity and alpha then mix that clipped result with the base. Consequently Gain above 100% is useful but can clip detail; opacity cannot undo all effects of that clipping. The layer is RGB16 with unassociated alpha, and opacity is quantized to 1/255. Neutral 0.5 quantizes to 32768/65535, leaving a small rounding offset. There is no global Reveal multiplier.
 
-Adobe's mode description:
-https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html
+Main TIFF uses an un-stretched normalized base; PSB uses its presentation base. Neither is an exact reconstruction of the direct numerical helper. See [composition](layer-composition.md), [export](psb-export.md) and [validation](validation.md).
 
-The Photoshop stack is a display composition over a stretched base, not an exact
-reproduction of the sequential numerical pipeline. Neutral 0.5 is quantized to
-32768/65535 in TIFF, with the existing small neutral-gray rounding error. Native
-Photoshop rendering/color management still needs manual verification. Small
-angles, incorrect centers and bright structures can produce misleading residuals.
+Small angles, incorrect centres and bright edges can create misleading residuals. This application implements the symmetric operator for corona visualization, without claiming PixInsight-specific extensions.
+
+References: [Larson and Sekanina (1984)](https://doi.org/10.1086/113551); [Vincent, section 2.2.2.1](https://www2.mps.mpg.de/solar-system-school/alumni/vincent.pdf); [Adobe blend-mode descriptions](https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html).

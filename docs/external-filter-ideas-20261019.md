@@ -1,5 +1,7 @@
 # Ideas from EclipseForgeHDR and Eclipse_HDR
 
+> Historical report. This document preserves its original research, measurements and implementation context. Controls, defaults, sequential processing and export behaviour described below may have changed. Use the [current technical guides](README.md) and [validation boundaries](validation.md) for the active application.
+
 Later implementation and updated validation: [filter controls and implementation checks](filter-controls-20261019.md). This document records the preceding review.
 Reviewed on 2026-10-19 against the local findings in [the filter validation report](filter-validation-20261019.md). This is a source review and a proposed experiment plan. No upstream software was executed and no filter behavior was changed by this review.
 

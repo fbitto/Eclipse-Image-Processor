@@ -1,4 +1,6 @@
 """Export runs away from Qt's GUI thread and always restores its controls."""
+from gui_wait import close_window
+
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import tempfile
@@ -81,4 +83,4 @@ class ExportWorkerTests(unittest.TestCase):
                     self.assertIn('simulated write failure' if fail else 'Exported test.tiff', w.status_label.toolTip())
             finally:
                 release.set()
-                w.close()
+                close_window(w)

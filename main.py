@@ -15,7 +15,7 @@
 # ///
 """
 Eclipse Image Processor v0.6.0 - Application entry point
-Modular structure for token-efficient development.
+CPU threading limits are installed before loading numerical libraries.
 """
 
 import os

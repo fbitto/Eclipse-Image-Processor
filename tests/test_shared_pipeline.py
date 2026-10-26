@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import numpy as np
 
 from core.filters import FilterWorker
-from core.pipeline import execute_pipeline, prepare_parameters
+from core.pipeline import apply_filter, execute_pipeline, prepare_parameters
 
 
 class SharedPipelineTests(unittest.TestCase):
@@ -20,29 +20,14 @@ class SharedPipelineTests(unittest.TestCase):
         self.assertEqual(source["sr"], 20)
         self.assertNotIn("mgn_sigmas", source)
 
-    def test_stage_order_and_scaled_controls_are_shared(self):
-        image = np.ones((32, 32), np.float32)
-        worker = Mock()
-        order = []
-        methods = ("run_fnrgf_native",
-                   "run_rhef_native", "run_mgn_native", "run_wow_native", "run_tangential", "run_larson_sekanina", "run_achf")
-        for name in methods:
-            getattr(worker, name).side_effect = lambda a, *args, name=name, **kwargs: (order.append(name) or a.copy())
-        p = dict(sx=16, sy=16, sr=4, pre_stretch_enabled=True, pre_stretch_mode="log", pre_stretch_val=1,
-                 noise_gate_enabled=True, noise_gate_str=10, noise_gate_thr=10,
-                 bilateral_enabled=True, bilateral_str=10, bilateral_d=10, bilateral_sc=30, bilateral_ss=50,
-                 fnrgf_enabled=True, fnrgf_str=10, fnrgf_ord=6, fnrgf_seg=16, fnrgf_cut=0, fnrgf_rad=10,
-                 mgn_enabled=True, mgn_str=10, mgn_gam=32, wow_enabled=True, wow_str=10,
-                 rhef_enabled=True, rhef_str=10, rhef_rad=10, rhef_upsilon=35, rhef_mode="continuous",
-                 tangential_enabled=True, tangential_str=10, tangential_arc=10, tangential_gain=2,
-                 larson_sekanina_enabled=True, larson_sekanina_str=10,
-                 achf_enabled=True, achf_str=10, achf_kernel=10, achf_boost=20)
-        np.testing.assert_array_equal(execute_pipeline(worker, image, p), image)
-        self.assertEqual(order, list(methods))
-        worker.run_pre_log.assert_not_called()
-        worker.run_radial_noise_gate.assert_not_called()
-        worker.run_bilateral_denoise.assert_not_called()
-        self.assertEqual(worker.run_rhef_native.call_args.kwargs["mode"], "continuous")
+    def test_numerical_dispatch_rejects_chaining_before_calling_any_filter(self):
+        image=np.ones((32,32),np.float32)
+        worker=Mock()
+        with self.assertRaisesRegex(ValueError,'only one filter'):
+            apply_filter(worker,image,dict(fnrgf_enabled=True,mgn_enabled=True))
+        worker.run_fnrgf_native.assert_not_called()
+        worker.run_mgn_native.assert_not_called()
+        np.testing.assert_array_equal(image,1.)
 
     def test_qt_preview_and_synchronous_export_have_identical_results(self):
         image = np.random.default_rng(45).uniform(1, 100, (80, 100)).astype(np.float32)

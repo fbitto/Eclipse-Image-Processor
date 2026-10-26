@@ -1,3 +1,4 @@
+from gui_wait import wait_for_gui, close_window
 import os
 import unittest
 from unittest.mock import patch
@@ -6,12 +7,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QPixmap
-from PySide6.QtTest import QTest
+from PySide6.QtTest import QTest, QSignalSpy
 from PySide6.QtWidgets import QApplication
 
 from gui.app import EclipseProcessorApp
-from gui.components import ClickableLabel
 
 
 class GuiInteractionTests(unittest.TestCase):
@@ -35,7 +34,7 @@ class GuiInteractionTests(unittest.TestCase):
         self.window.recalculation_timer.stop()
 
     def tearDown(self):
-        self.window.close()
+        close_window(self.window)
 
     def test_pipeline_completion_log_distinguishes_idle_pending_and_running(self):
         w=self.window
@@ -52,32 +51,48 @@ class GuiInteractionTests(unittest.TestCase):
             self.assertIn('Another process is running',output.call_args.args[0])
         w.is_processing=False;w.recalculation_timer.stop()
 
-    def test_stretch_mode_switch_formats_only_new_mode_ticks(self):
+
+    def test_disk_overlay_button_is_adjacent_and_does_not_reprocess(self):
+        from core.result_cache import parameter_signature
         w=self.window
-        # Direct calls propagate errors that Qt signal handlers otherwise swallow.
-        for previous in range(3):
-            for target in range(3):
-                w._on_stretch_mode_changed(previous)
-                w.sl_stretch.setValue(w.sl_stretch.maximum())
-                w._on_stretch_mode_changed(target)
-                self.assertEqual(w.sl_stretch.value(),2000 if target==2 else 10)
-                self.assertEqual(w.lbl_stretch.text(),'2' if target==2 else '10')
+        row=next(w.sec_geo.content_layout.itemAt(i).layout() for i in range(w.sec_geo.content_layout.count())
+                 if w.sec_geo.content_layout.itemAt(i).layout() is not None
+                 and w.sec_geo.content_layout.itemAt(i).layout().indexOf(w.btn_auto_moon)>=0)
+        self.assertEqual(row.indexOf(w.btn_disk_overlay),row.indexOf(w.btn_auto_moon)+1)
+        self.assertTrue(w.btn_disk_overlay.isChecked())
+        before=parameter_signature(w.collect_filter_parameters(w.raw_image.shape))
+        revision=w._preview_revision
+        with patch.object(w,'render_matrix_to_screen',side_effect=AssertionError('Recomposed pixels')):
+            w.btn_disk_overlay.click()
+            self.assertFalse(w.image_label.disk_overlay_visible)
+            w.btn_disk_overlay.click()
+            self.assertTrue(w.image_label.disk_overlay_visible)
+        self.assertEqual(w._preview_revision,revision)
+        self.assertEqual(parameter_signature(w.collect_filter_parameters(w.raw_image.shape)),before)
+        self.assertEqual(self.requests,[])
 
     def test_larson_sekanina_controls_are_available_and_collected(self):
         w = self.window
+        self.assertEqual(w.sl_larson_sekanina_str.maximum(),200)
+        self.assertEqual(w.sl_larson_sekanina_angular.value(),30)
+        self.assertEqual(w.sl_larson_sekanina_angular.property('reset_value'),30)
         w.auto_calculate = False
         w.chk_advanced.setChecked(False)
         w.sec_larson_sekanina.chk_active.setChecked(True)
-        w.sl_larson_sekanina_str.setValue(25)
-        w.sl_larson_sekanina_radial.setValue(15)
+        w.sl_larson_sekanina_str.setValue(200)
         w.sl_larson_sekanina_angular.setValue(23)
         params = w.collect_filter_parameters((64, 64))
         self.assertTrue(params['larson_sekanina_enabled'])
-        self.assertEqual(params['larson_sekanina_str'], 25)
-        self.assertEqual(params['larson_sekanina_radial'], 1.5)
+        self.assertEqual(params['larson_sekanina_str'], 200)
+        self.assertEqual(params['larson_sekanina_radial'], 0.)
         self.assertEqual(params['larson_sekanina_angular'], 2.3)
-        self.assertFalse(w.sl_larson_sekanina_radial.isHidden())
+        self.assertFalse(hasattr(w,'sl_larson_sekanina_radial'))
         self.assertFalse(w.sl_larson_sekanina_angular.isHidden())
+        from gui.project_settings import capture_settings,restore_settings
+        saved=capture_settings(w)
+        w.sl_larson_sekanina_str.setValue(25)
+        restore_settings(w,saved)
+        self.assertEqual(w.sl_larson_sekanina_str.value(),200)
 
     def test_linear_colour_and_verification_defaults_reset_on_loading(self):
         from pathlib import Path
@@ -99,7 +114,7 @@ class GuiInteractionTests(unittest.TestCase):
                 w.combo_input_state.setCurrentIndex(2)
                 w.chk_verify_preview.setChecked(True)
                 with patch("gui.app.QFileDialog.getOpenFileName", return_value=(str(path), "")):
-                    w.load_image_action()
+                    w.load_image_action();wait_for_gui(w)
                 self.assertEqual(w.source_path, str(path), w.status_label.text())
                 self.assertEqual(w.combo_input_state.currentData(), "linear")
                 self.assertFalse(w.lbl_input_linearity.isHidden())
@@ -114,7 +129,7 @@ class GuiInteractionTests(unittest.TestCase):
                 np.testing.assert_array_equal(w.full_source_rgb, image if image.ndim == 3 else None)
                 if name == 'rgb_hdr':
                     self.assertIsNone(w.source_rgb_white)
-                    balanced, _, report = w.colour_data()
+                    balanced, _, report = w._colour_cache
                     self.assertTrue(np.isfinite(balanced).all())
                     self.assertIn('shared observed maximum',report['white_source'])
                     self.assertTrue(w.chk_calibrate_colour.isChecked())
@@ -132,24 +147,25 @@ class GuiInteractionTests(unittest.TestCase):
         from core.colour import neutralize_tse, set_luminosity
         with patch("gui.app.neutralize_tse", wraps=neutralize_tse) as calibrate, patch("gui.app.set_luminosity", wraps=set_luminosity) as colorize:
             self.window.chk_calibrate_colour.setChecked(True)
-            self.window.render_matrix_to_screen()
+            self.window.render_matrix_to_screen();wait_for_gui(self.window)
             self.assertEqual(calibrate.call_count,1)
             self.assertEqual(self.window.last_preview_presentation.ndim,3)
             self.window.show_original_mode = True
-            self.window.render_matrix_to_screen()
+            self.window.render_matrix_to_screen();wait_for_gui(self.window)
             self.window.show_original_mode = False
             self.assertEqual(calibrate.call_count,1)
             self.assertGreaterEqual(colorize.call_count,2)
             self.assertEqual(self.window.last_preview_presentation.shape,(64,64,3))
-        calibrated, _, report = self.window.colour_data()
+        calibrated, _, report = self.window._colour_cache
         self.assertIn("gain-only", report["method"])
         np.testing.assert_allclose(calibrated[..., 0], calibrated[..., 1], atol=1e-6)
-        original, _, original_report = self.window.colour_data(original=True)
-        np.testing.assert_array_equal(original, rgb)
-        self.assertEqual(original_report["method"], "none")
+        original, _, original_report = self.window._colour_cache
+        np.testing.assert_array_equal(original, calibrated)
+        self.assertIn("gain-only", original_report["method"])
         self.window.combo_input_state.setCurrentIndex(2)
         self.assertFalse(self.window.chk_calibrate_colour.isChecked())
-        restored, _, report = self.window.colour_data()
+        wait_for_gui(self.window)
+        restored, _, report = self.window._colour_cache
         np.testing.assert_array_equal(restored, rgb)
         self.assertEqual(report["method"], "none")
 
@@ -227,7 +243,7 @@ class GuiInteractionTests(unittest.TestCase):
         self.window.sec_mgn.chk_active.setChecked(True)
         self.window.dispatch_pipeline_request()
         self.window.sl_mgn_gam.setValue(45)
-        self.window.sl_mgn_str.setValue(27)
+        self.window.sl_mgn_k.setValue(27)
         # Let queued Qt completion and debounce events run, with a bounded wait.
         import time
         for _ in range(300):
@@ -246,9 +262,11 @@ class GuiInteractionTests(unittest.TestCase):
         w=self.window
         self.assertEqual(APP_VERSION,'0.6.0')
         self.assertIn('v'+APP_VERSION,w.windowTitle())
-        self.assertIn('original base',w.combo_stretch_mode.toolTip())
-        self.assertIn('normalized original base',w.btn_pick_sp.toolTip())
-        self.assertIn('filter-layer opacities',w.sl_blend.toolTip())
+        self.assertFalse(hasattr(w,'combo_stretch_mode'))
+        self.assertTrue(w.btn_psb_preview.isChecked())
+        self.assertFalse(hasattr(w,'btn_pick_sp'))
+        self.assertFalse(hasattr(w,'sl_blend'))
+        self.assertEqual(w.collect_display_parameters()['blend'],1.)
         self.assertIn('original-image pixels',w.sl_mgn_sigmas[0].toolTip())
 
     def test_all_user_controls_have_english_tooltips(self):
@@ -309,73 +327,8 @@ class GuiInteractionTests(unittest.TestCase):
         self.assertTrue(tips.panel.isVisible())
         self.assertEqual(tips.label.text(), self.window.btn_compare.toolTip())
 
-    def test_disk_overlay_preserves_subpixel_center_and_both_axis_scales(self):
-        from unittest.mock import patch
-        label = ClickableLabel()
-        label.resize(120, 100)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setPixmap(QPixmap(101, 67))
-        label.set_circle_parameters(301.3, 188.7, 42.4, 1003, 661)
-        with patch('gui.components.QPainter') as painter:
-            label.grab()
-        center, rx, ry = painter.return_value.drawEllipse.call_args.args
-        self.assertAlmostEqual(center.x(), (301.3 + .5)*101/1003 + 10)
-        self.assertAlmostEqual(center.y(), (188.7 + .5)*67/661 + 17)
-        self.assertAlmostEqual(rx, 42.4*101/1003)
-        self.assertAlmostEqual(ry, 42.4*67/661)
-        label.close()
 
-    def test_overlay_origin_matches_actual_qlabel_pixels(self):
-        from unittest.mock import patch
-        from PySide6.QtGui import QImage
-        for height in (100, 101):
-            with self.subTest(height=height):
-                label = ClickableLabel()
-                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                label.setStyleSheet('QLabel { background: black; border: 1px solid #333333; }')
-                label.resize(120, height)
-                pixmap = QPixmap(81, 67)
-                pixmap.fill(Qt.GlobalColor.white)
-                label.setPixmap(pixmap)
-                rendered = label.grab().toImage().convertToFormat(QImage.Format.Format_RGBA8888)
-                pixels = np.frombuffer(rendered.bits(), np.uint8).reshape(height, 120, 4)
-                ys, xs = np.where(pixels[..., 0] == 255)
-                rect = label._pixmap_rect()
-                self.assertEqual((rect.x(), rect.y()), (xs.min(), ys.min()))
-                label.set_circle_parameters(40, 33, 10, 81, 67)
-                with patch('gui.components.QPainter') as painter:
-                    label.grab()
-                center = painter.return_value.drawEllipse.call_args.args[0]
-                self.assertEqual(center.x(), xs.min()+40.5)
-                self.assertEqual(center.y(), ys.min()+33.5)
-                label.close()
 
-    def test_only_modified_click_requests_recentering(self):
-        label = ClickableLabel()
-        label.resize(100, 100)
-        pixmap = QPixmap(100, 100)
-        pixmap.fill(Qt.GlobalColor.black)
-        label.setPixmap(pixmap)
-        label.set_circle_parameters(50, 50, 10, 100, 100)
-        centers, ordinary = [], []
-        label.circle_center_requested.connect(lambda x, y: centers.append((x, y)))
-        label.image_clicked.connect(lambda x, y: ordinary.append((x, y)))
-        try:
-            QTest.mouseClick(label, Qt.MouseButton.LeftButton, pos=QPoint(40, 60))
-            self.assertEqual(centers, [])
-            self.assertEqual(ordinary, [(40, 60)])
-            # Qt ControlModifier corresponds to Command on macOS.
-            QTest.mouseClick(label, Qt.MouseButton.LeftButton,
-                             Qt.KeyboardModifier.ControlModifier, QPoint(40, 60))
-            self.assertEqual(centers, [(40, 60)])
-            self.window.on_image_canvas_clicked(20, 25)
-            self.assertEqual(self.window.txt_x.text(), "32")
-            self.window.on_circle_center_requested(20, 25)
-            self.assertEqual(self.window.txt_x.text(), "20")
-            self.assertEqual(self.window.txt_y.text(), "25")
-            self.assertEqual(self.requests, [])
-        finally:
-            label.close()
 
     def test_rhef_mode_is_part_of_preview_and_export_recipe(self):
         self.assertEqual(self.window.combo_rhef_mode.currentData(), "continuous")
@@ -385,7 +338,7 @@ class GuiInteractionTests(unittest.TestCase):
                 params = self.window.collect_filter_parameters(shape)
                 self.assertEqual(params["rhef_mode"], expected)
 
-    def test_opacity_rows_precede_strength_and_only_recompose_cached_filters(self):
+    def test_opacity_only_controls_recompose_cached_filters(self):
         from core.layer_engine import engine_for
         from unittest.mock import patch
         w=self.window
@@ -397,18 +350,38 @@ class GuiInteractionTests(unittest.TestCase):
             engine.render(w.filter_worker,w.raw_image,p,w.collect_display_parameters())
             self.assertEqual(operator.call_count,1)
             w.sl_mgn_opacity.setValue(25)
-            w.render_matrix_to_screen()
+            w.render_matrix_to_screen();wait_for_gui(w)
             w.sl_mgn_opacity.setValue(70)
-            w.render_matrix_to_screen()
+            w.render_matrix_to_screen();wait_for_gui(w)
             self.assertEqual(operator.call_count,1)
-        for name in ('fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
-            strength=getattr(w,'sl_'+name+'_str')
+        for name in ('nrgf','fnrgf','rhef','mgn','wow','tangential','achf'):
+            self.assertFalse(hasattr(w,'sl_'+name+'_str'))
             opacity=getattr(w,'sl_'+name+'_opacity')
-            layout=strength.parameter_row.parentWidget().layout()
-            self.assertLess(layout.indexOf(opacity.parameter_row),layout.indexOf(strength.parameter_row))
+            self.assertEqual(opacity.parameter_row.parentWidget().layout().indexOf(opacity.parameter_row),1 if name == 'achf' else 0)
+        self.assertEqual(w.sl_larson_sekanina_str.title_label.text(),'Gain (%)')
         for controls in w.achf_ael_controls.values():
-            layout=controls['panel'].layout()
-            self.assertLess(layout.indexOf(controls['opacity'].parameter_row),layout.indexOf(controls['strength'].parameter_row))
+            self.assertNotIn('strength',controls)
+
+    def test_all_opacity_edits_debounce_without_immediate_render(self):
+        w=self.window
+        w.recalculation_timer.stop();w.presentation_timer.stop()
+        updates=QSignalSpy(w.presentation_timer.timeout)
+        w.sl_mgn_opacity.setValue(43)
+        QTest.qWait(80)
+        w.achf_ael_controls['ael_angular_4']['opacity'].setValue(44)
+        QTest.qWait(80)
+        w.achf_ael_controls['ael_iso_04']['opacity'].setValue(45)
+        self.assertEqual(w.presentation_timer.interval(),250)
+        QTest.qWait(180)
+        self.assertEqual(updates.count(),0)
+        QTest.qWait(120)
+        self.assertEqual(updates.count(),1)
+        self.assertEqual(self.requests,[])
+        # A later stretch edit retains its own shorter presentation delay.
+        w.sl_mgn_opacity.setValue(46)
+        w.sl_psb_exposure.setValue(100)
+        self.assertEqual(w.presentation_timer.interval(),100)
+        w.presentation_timer.stop()
 
     def test_ael_achf_selection_reaches_preview_and_export(self):
         w = self.window
@@ -417,7 +390,7 @@ class GuiInteractionTests(unittest.TestCase):
         for shape in (w.raw_image.shape, w.full_raw_image.shape):
             self.assertEqual(w.collect_filter_parameters(shape)['achf_variant'], 'ael_iso_04')
         self.assertFalse(w.sl_achf_kernel.isEnabled())
-        self.assertTrue(w.achf_ael_controls['ael_iso_04']['strength'].isEnabled())
+        self.assertTrue(w.achf_ael_controls['ael_iso_04']['opacity'].isEnabled())
         w.combo_achf_variant.setCurrentIndex(0)
         self.assertTrue(w.sl_achf_kernel.isEnabled())
 
@@ -428,7 +401,7 @@ class GuiInteractionTests(unittest.TestCase):
         for i, variant in enumerate(variants):
             w.combo_achf_variant.setCurrentIndex(w.combo_achf_variant.findData(variant))
             controls = w.achf_ael_controls[variant]
-            controls['strength'].setValue(11+i)
+            controls['opacity'].setValue(11+i)
             controls['outer_sigma'].setValue(21+i)
             if 'sigmas' in controls:
                 controls['sigmas'][0].setValue(30+i)
@@ -437,18 +410,19 @@ class GuiInteractionTests(unittest.TestCase):
         for i, variant in enumerate(variants):
             w.combo_achf_variant.setCurrentIndex(w.combo_achf_variant.findData(variant))
             params = w.collect_filter_parameters(w.raw_image.shape)
-            self.assertEqual(params['achf_str'],11+i)
+            self.assertEqual(params['achf_str'],100)
+            self.assertEqual(params['achf_ael_parameters']['opacity'],11+i)
             self.assertEqual(params['achf_ael_parameters']['outer_sigma'],(21+i)/10)
             self.assertEqual(set(params['achf_variants']),set(variants)|{'adaptive'})
-            self.assertEqual(params['achf_adaptive_strength'],25)
+            self.assertEqual(params['achf_adaptive_strength'],100)
         w.combo_achf_variant.setCurrentIndex(0)
-        self.assertEqual(w.sl_achf_str.value(),25)
+        self.assertEqual(w.sl_achf_opacity.value(),19)
 
     def test_achf_starts_with_full_background_retention(self):
         w = self.window
         self.assertEqual(w.sl_achf_background.value(), 100)
         self.assertFalse(w.sec_achf.is_filter_active())
-        self.assertEqual(w.sl_achf_str.value(), 25)
+        self.assertEqual(w.sl_achf_opacity.value(),19)
         for shape in (w.raw_image.shape, w.full_raw_image.shape):
             self.assertEqual(w.collect_filter_parameters(shape)['achf_background'], 100)
 
@@ -493,15 +467,15 @@ class GuiInteractionTests(unittest.TestCase):
         # Enable without a recomputation; the worker is disconnected in setUp.
         from unittest.mock import patch
         with patch.object(self.window.sec_fnrgf, "is_filter_active", return_value=True):
-            self.window.sl_fnrgf_str.setValue(30)
+            self.window.sl_fnrgf_cut.setValue(1)
             QTest.qWait(350)
-            self.window.sl_fnrgf_str.setValue(31)
-            self.window.sl_fnrgf_str.sliderReleased.emit()
+            self.window.sl_fnrgf_cut.setValue(2)
+            self.window.sl_fnrgf_cut.sliderReleased.emit()
             QTest.qWait(350)
             self.assertEqual(self.requests, [])
             QTest.qWait(350)
             self.assertEqual(len(self.requests), 1)
-            self.assertEqual(self.requests[0]["fnrgf_str"], 31)
+            self.assertEqual(self.requests[0]["fnrgf_cut"], 2)
 
     def test_edit_during_processing_waits_for_pause(self):
         self.window.is_processing = True
@@ -530,7 +504,7 @@ class GuiInteractionTests(unittest.TestCase):
         w = self.window
         self.assertFalse(w.chk_advanced.isChecked())
         for slider in (*w.sl_mgn_sigmas, *w.sl_mgn_weights, w.sl_fnrgf_smooth,
-                       w.sl_rhef_upsilon_high, w.sl_wow_scales, w.sl_ghs_lp):
+                       w.sl_rhef_upsilon_high, w.sl_wow_scales):
             self.assertTrue(slider.isHidden())
             self.assertTrue(slider.title_label.isHidden())
             self.assertTrue(slider.value_label.isHidden())

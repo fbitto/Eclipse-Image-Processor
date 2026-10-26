@@ -1,4 +1,6 @@
 """Missing eclipse samples stay missing through loading, filters and export."""
+from gui_wait import wait_for_gui, close_window
+
 import json
 from pathlib import Path
 import tempfile
@@ -12,8 +14,8 @@ from core.filters import FilterWorker
 from core.image_data import observed_image, resize_observed
 from core.layer_export import export_layer_package
 from core.masked_filters import MaskedWorker
-from core.pipeline import execute_pipeline
-from core.presentation import render_presentation
+from core.pipeline import apply_filter
+from core.presentation import normalized_base
 from gui.app import EclipseProcessorApp
 
 
@@ -39,24 +41,25 @@ class MaskedImageTests(unittest.TestCase):
         self.image[~self.valid] = np.nan
 
     def test_explicit_mask_excludes_values_and_preserves_missing_through_every_stage(self):
-        p = parameters(self.valid)
-        for bilateral in (None, 1):
-            for mode in ('legacy', 'continuous'):
-                p.update(wow_bilateral=bilateral, rhef_mode=mode)
-                expected = execute_pipeline(FilterWorker(), self.image, p)
-                contaminated = np.where(self.valid, self.image, 1e20)
-                actual = execute_pipeline(FilterWorker(), contaminated, p)
-                np.testing.assert_array_equal(actual, expected)
-                np.testing.assert_array_equal(np.isfinite(actual), self.valid)
+        for family in ('mgn','wow','tangential','achf','fnrgf','rhef'):
+            p=parameters(self.valid)
+            for name in ('mgn','wow','tangential','achf','fnrgf','rhef'):
+                p[name+'_enabled']=name == family
+            for bilateral in (None,1):
+                for mode in ('legacy','continuous'):
+                    p.update(wow_bilateral=bilateral,rhef_mode=mode)
+                    expected=apply_filter(FilterWorker(),self.image,p)
+                    contaminated=np.where(self.valid,self.image,1e20)
+                    actual=apply_filter(FilterWorker(),contaminated,p)
+                    np.testing.assert_array_equal(actual,expected)
+                    np.testing.assert_array_equal(np.isfinite(actual),self.valid)
         self.assertTrue(np.isnan(self.image[~self.valid]).all())
         with self.assertRaises(ValueError):
-            execute_pipeline(FilterWorker(), self.image, {})
+            apply_filter(FilterWorker(), self.image, {})
 
     def test_constant_has_no_missing_boundary_contrast(self):
         worker = MaskedWorker(FilterWorker(), self.valid)
         image = np.where(self.valid, 7., 0)
-        blur = worker.blur(image, 5)
-        np.testing.assert_allclose(blur[self.valid], 7., atol=1e-12)
         for bilateral in (None, 1):
             smooth = worker.starlet_blur(image, 4, bilateral)
             np.testing.assert_allclose(smooth[self.valid], 7., atol=1e-12)
@@ -64,7 +67,7 @@ class MaskedImageTests(unittest.TestCase):
             p = parameters(self.valid)
             for other in ('pre_stretch', 'noise_gate', 'bilateral', 'mgn', 'wow', 'tangential', 'achf', 'fnrgf', 'rhef'):
                 p[other+'_enabled'] = other == name
-            result = execute_pipeline(FilterWorker(), np.where(self.valid, 7., np.nan), p)
+            result = apply_filter(FilterWorker(), np.where(self.valid, 7., np.nan), p)
             self.assertTrue(np.isfinite(result[self.valid]).all())
             self.assertLess(float(np.ptp(result[self.valid])), 1e-5, name)
 
@@ -121,8 +124,8 @@ class MaskedImageTests(unittest.TestCase):
             export_layer_package(FilterWorker(), self.image, p, display, 'masked.tif', output)
             manifest = json.loads((output/'recipe.json').read_text())
             self.assertNotIn('valid_mask', manifest['parameters'])
-            self.assertEqual(manifest['missing_pixels'], int((~self.valid).sum()))
-            source = tifffile.imread(output/'masked_SOURCE_float32.tif')
+            self.assertEqual(int((tifffile.imread(output/'VALID.tif')==0).sum()),int((~self.valid).sum()))
+            source = tifffile.imread(output/'SOURCE_float32.tif')
             np.testing.assert_array_equal(source, np.nan_to_num(self.image))
             for record in manifest['layers']:
                 layer=tifffile.imread(output/record['file'])
@@ -135,7 +138,7 @@ class MaskedImageTests(unittest.TestCase):
             combined=tifffile.imread(output/manifest['combined'])
             self.assertEqual(combined.shape,(64,80,3))
             self.assertTrue(np.all(combined[~self.valid]==0))
-            presentation = render_presentation(self.image, self.image, display)
+            presentation = normalized_base(self.image, display)
             self.assertTrue(np.isfinite(presentation).all())
             self.assertTrue(np.all(presentation[~self.valid] == 0))
 
@@ -152,7 +155,7 @@ class MaskedImageTests(unittest.TestCase):
                 path = Path(tmp)/'realistic.tif'
                 tifffile.imwrite(path, np.repeat(image[..., None], 3, axis=2), photometric='rgb')
                 with patch('gui.app.QFileDialog.getOpenFileName', return_value=(str(path), '')):
-                    window.load_image_action()
+                    window.load_image_action();wait_for_gui(window)
                 self.assertEqual(window.source_path, str(path), window.status_label.text())
                 np.testing.assert_allclose(window.full_raw_image, image, rtol=2e-7, equal_nan=True)
                 np.testing.assert_array_equal(np.isfinite(window.full_raw_image), np.isfinite(image))
@@ -180,4 +183,4 @@ class MaskedImageTests(unittest.TestCase):
                 self.assertEqual(psb._record.header.channels,3)
                 self.assertFalse((Path(tmp)/'final_sources').exists())
         finally:
-            window.close()
+            close_window(window)

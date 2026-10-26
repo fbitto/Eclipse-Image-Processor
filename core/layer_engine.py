@@ -15,7 +15,7 @@ from .cancellation import check_cancelled, cancellation_check, cancellation_scop
 from .parallelism import CPU_CORES, filter_budget, layer_workers
 from .image_data import observed_image
 from .result_cache import parameter_signature
-from .presentation import stretch_image
+from .presentation import normalized_base
 
 ORDER = ('nrgf', 'fnrgf', 'rhef', 'mgn', 'wow', 'tangential', 'larson_sekanina')
 VARIANTS = ('adaptive', 'ael_iso_01', 'ael_iso_04', 'ael_angular_4')
@@ -23,8 +23,8 @@ LABELS = dict(adaptive='ACHF_ADAPTIVE', ael_iso_01='ACHF_AEL_ISO_01',
               ael_iso_04='ACHF_AEL_ISO_04', ael_angular_4='ACHF_AEL_ANGULAR')
 
 
-def requests(params, include_all=False):
-    """Ordered enabled layers; all-export includes inactive ACHF layers hidden."""
+def requests(params):
+    """Ordered active layers; the family checkbox gates ACHF inclusion flags."""
     result=[]
     for name in ORDER:
         if params.get(name+'_enabled', False):
@@ -32,7 +32,7 @@ def requests(params, include_all=False):
     for variant in VARIANTS:
         settings = dict(params.get('achf_variants', {}).get(variant, {}))
         enabled = params.get('achf_enabled', False) and settings.get('enabled', variant == 'adaptive')
-        if not enabled and not include_all:
+        if not enabled:
             continue
         p=dict(params,achf_variant=variant,achf_enabled=True)
         if variant == 'adaptive':
@@ -65,13 +65,19 @@ def display_base(source, params, display):
     from .layer_export import to_u16
     valid=params.get('valid_mask')
     observed=source if valid is None else np.where(valid,source,np.nan)
-    return to_u16(stretch_image(observed,display))
+    if display.get('mode') == 'ael_presentation':
+        from .presentation import ael_tone_map
+        return to_u16(ael_tone_map(observed,np.isfinite(observed),display))
+    return to_u16(normalized_base(observed,display))
 
 
 def colour_display(rgb, source, display):
-    """Same RGB16 Color-layer samples for native display and exported layers."""
+    """Quantized RGB Color samples for the explicitly supplied base recipe."""
     from .colour import colour_layer
     from .layer_export import to_u16
+    if display.get('mode') == 'ael_presentation':
+        from .presentation import ael_tone_map
+        return to_u16(ael_tone_map(rgb,np.isfinite(source) & np.isfinite(rgb).all(axis=-1),display)).astype(float)/65535.
     return to_u16(colour_layer(rgb,source,display)).astype(float)/65535.
 
 
@@ -168,13 +174,13 @@ class LayerEngine:
         return value
 
     def _calculate(self, worker, source, params, name, variant):
-        from .pipeline import execute_pipeline
+        from .pipeline import apply_filter
         from .statistics_support import statistics_support
         from .layer_export import branch_domain, neutral_layer, linear_detail_layer, to_u16
         prepared,valid=observed_image(source,params.get('valid_mask'))
         prepared=prepared.astype(np.float32)
         statistics=statistics_support(prepared,params,valid)
-        p=dict(params,valid_mask=valid,layered_model=False)
+        p=dict(params,valid_mask=valid)
         if not statistics.all():
             p["statistics_mask"]=statistics
         else:
@@ -199,9 +205,9 @@ class LayerEngine:
         elif name == 'larson_sekanina':
             from .filters import larson_sekanina_residual
             values=larson_sekanina_residual(prepared,p['sx'],p['sy'],p['sr'],
-                p.get('larson_sekanina_radial',0.),p.get('larson_sekanina_angular',1.),valid & statistics)
+                p.get('larson_sekanina_radial',0.),p.get('larson_sekanina_angular',3.),valid & statistics)
         else:
-            filtered=execute_pipeline(worker,prepared,p,process_label='INDEPENDENT '+name.upper(),verbose=False)
+            filtered=apply_filter(worker,prepared,p,process_label='INDEPENDENT '+name.upper(),verbose=False)
             values=(filtered-prepared if name == 'tangential' else
                     filtered-float(p.get('achf_background',10))/100*prepared if name == 'achf' else filtered)
         filter_seconds=time.perf_counter()-filter_start
@@ -223,8 +229,9 @@ class LayerEngine:
         if mode == 'Multiply' and mapping.get('constant',False):
             image=np.ones_like(image)
         strength=float(params.get(name+'_str',100))/100
-        if not np.isfinite(strength) or not 0 <= strength <= 1:
-            raise ValueError('Filter strength must be between 0 and 100 percent')
+        maximum=2 if name == 'larson_sekanina' else 1
+        if not np.isfinite(strength) or not 0 <= strength <= maximum:
+            raise ValueError(f'Filter gain/strength must be between 0 and {100*maximum} percent')
         # Strength changes encoded contrast, opacity independently controls blending.
         image=(1+(image-1)*strength if mode == 'Multiply' else .5+(image-.5)*strength)
         alpha=domain.astype(float)
@@ -238,10 +245,10 @@ class LayerEngine:
         result["timings"]=dict(filter=filter_seconds,encoding=time.perf_counter()-encoding_start)
         return result
 
-    def prepare(self, worker, source, params, include_all=False):
+    def prepare(self, worker, source, params):
         """Calculate only cache misses concurrently; never blend in finish order."""
         check_cancelled()
-        pending=[(name,variant,p) for name,variant,p,_ in requests(params,include_all)
+        pending=[(name,variant,p) for name,variant,p,_ in requests(params)
                  if self.layer(worker,source,p,name,variant,calculate=False) is None]
         if not pending:
             return 0
@@ -283,12 +290,13 @@ class LayerEngine:
         print(f'[FILTERS] Calculation finished in {time.perf_counter()-started:.3f}s (wall time)')
         return len(pending)
 
-    def render(self, worker, source, params, display, calculate=True):
+    def render(self, worker, source, params, display, calculate=True, base=None):
         if calculate:
             computed=self.prepare(worker,source,params)
             if not computed and requests(params):
                 print('[FUSION] Reusing calculated layers; no filters recalculated')
-        base=display_base(source,params,display).astype(float)/65535
+        if base is None:
+            base=display_base(source,params,display).astype(float)/65535
         result=base.copy()
         reveal=float(display.get('blend',1.))
         if not np.isfinite(reveal) or not 0 <= reveal <= 1:

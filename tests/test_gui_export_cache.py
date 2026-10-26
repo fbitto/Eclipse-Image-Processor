@@ -1,4 +1,6 @@
 """Count real filter calculations across native GUI verification and saving."""
+from gui_wait import close_window
+
 from contextlib import redirect_stdout
 import io
 from pathlib import Path
@@ -42,7 +44,7 @@ class NativeExportCacheTests(unittest.TestCase):
         self.output=redirect_stdout(io.StringIO());self.output.__enter__()
 
     def tearDown(self):
-        self.window.close()
+        close_window(self.window)
         self.capture.stop()
         self.output.__exit__(None,None,None)
 
@@ -78,7 +80,7 @@ class NativeExportCacheTests(unittest.TestCase):
             self.assertEqual(self.calls,[])
             # These invalidate the rendered composite, not its numerical layers.
             w.sl_mgn_opacity.setValue(47)
-            w.sl_stretch.setValue(25)
+            w.sl_psb_exposure.setValue(125)
             w.chk_verify_preview.setChecked(False)
             w.filter_worker._process_pipeline(w.raw_image,w.collect_filter_parameters(w.raw_image.shape))
             self.assertEqual(len(self.calls),10)  # first calculation at the smaller preview scale

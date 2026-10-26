@@ -20,41 +20,11 @@ class MaskedWorker:
         """Observed intensity range; transport-buffer zeros do not set limits."""
         return float(np.ptp(a[self.valid]))
 
-    def norm(self, a):
-        span = self.span(a)
-        result = np.zeros_like(a, dtype=float)
-        if span > 0:
-            result[self.valid] = (a[self.valid] - a[self.valid].min()) / span
-        return result
-
     def mix(self, a, filtered, strength):
         """Map observed filter output to input units before the Strength blend."""
         original = np.where(self.valid, a, np.nan)
         output = blend_filter_result(original, np.where(self.valid, filtered, np.nan), strength)
         return np.where(self.valid, output, 0).astype(np.float32)
-
-    def blur(self, a, sigma, truncate=4, mode='reflect'):
-        """Normalize Gaussian sums by observed support, without filling holes.
-
-        This excludes missing samples but does not remove the radial-slope bias
-        of a one-sided kernel near the lunar boundary.
-        """
-        weights = gaussian_filter(self.valid.astype(float), sigma, truncate=truncate, mode=mode)
-        signal = gaussian_filter(np.where(self.valid, a, 0), sigma, truncate=truncate, mode=mode)
-        return np.divide(signal, weights, out=np.zeros_like(signal), where=weights > 0)
-
-    def run_pre_asinh(self, a, factor):
-        if factor <= 0:
-            return a.copy()
-        return np.where(self.valid, np.arcsinh(self.norm(a)*factor)/np.arcsinh(factor)
-                        * self.span(a) + a[self.valid].min(), 0).astype(np.float32)
-
-    def run_pre_log(self, a, exponent):
-        if exponent < 0:
-            return a.copy()
-        k = 10. ** exponent
-        return np.where(self.valid, np.log1p(k*self.norm(a))/np.log1p(k)
-                        * self.span(a) + a[self.valid].min(), 0).astype(np.float32)
 
     def run_nrgf_native(self, a, *args, **kwargs):
         return np.where(self.valid, self.worker.run_nrgf_native(a, *args, valid=self.valid, **kwargs), 0)
@@ -92,42 +62,6 @@ class MaskedWorker:
         result = (1-h/100.) * result / len(sigmas) + h/100. * global_image
         return self.mix(a, result, strength)
 
-    def run_bilateral_denoise(self, a, strength, diameter, sigma_color, sigma_space):
-        if strength == 0 or self.span(a) == 0:
-            return a.copy()
-        norm = self.norm(a)
-        gradients = []
-        # Use only observed pairs: a missing neighbour does not create an edge.
-        for axis in (0, 1):
-            check_cancelled()
-            gradient = np.zeros_like(a, dtype=float)
-            left = [slice(None), slice(None)]; right = left.copy()
-            left[axis], right[axis] = slice(None, -1), slice(1, None)
-            l, r = tuple(left), tuple(right)
-            pair = self.valid[l] & self.valid[r]
-            diff = np.where(pair, norm[r]-norm[l], 0)
-            gradient[l] += diff / 2
-            gradient[r] += diff / 2
-            gradients.append(gradient)
-        edge = np.clip(1-self.norm(np.hypot(*gradients))*sigma_space/100., .1, 1)
-        smooth = self.blur(norm, max(.5, diameter/10))
-        result = (norm*(1-edge)+smooth*edge)*self.span(a)+a[self.valid].min()
-        return np.where(self.valid, (1-strength/100.)*a+strength/100.*result, 0).astype(np.float32)
-
-    def run_radial_noise_gate(self, a, strength, threshold, sx, sy, sr, spatial_scale=1, local_sigma=3., gate_sigma=2.):
-        if strength == 0 or threshold == 0:
-            return a.copy()
-        magnitude = np.max(np.abs(a[self.valid]))
-        if magnitude == 0:
-            return a.copy()
-        unit = a/magnitude
-        mean = self.blur(unit, local_sigma*spatial_scale)
-        std = np.sqrt(np.maximum(self.blur((unit-mean)**2, local_sigma*spatial_scale), 0))
-        snr = np.divide(np.abs(mean), std, out=np.full_like(mean, np.inf), where=std > 0)
-        yy, xx = np.ogrid[:a.shape[0], :a.shape[1]]
-        limit = threshold/100. * (1+2*np.hypot(xx-sx, yy-sy)/sr)
-        gate = np.clip((snr-limit)/limit, 0, 1)
-        return np.where(self.valid, a*(1-strength/100.+strength/100.*self.blur(gate, gate_sigma*spatial_scale)), 0).astype(np.float32)
 
     def run_larson_sekanina(self, a, *args, **kwargs):
         return np.where(self.valid, self.worker.run_larson_sekanina(a, *args, valid=self.valid, **kwargs), 0)

@@ -4,15 +4,12 @@ import warnings
 
 import numpy as np
 
-from core.filters import FilterWorker, normalize_image
+from core.filters import FilterWorker
+from core.image_data import normalize_observed
 
 
 def filter_calls(worker, strength=50):
     return {
-        "asinh": lambda a: worker.run_pre_asinh(a, 10),
-        "log": lambda a: worker.run_pre_log(a, 1),
-        "gate": lambda a: worker.run_radial_noise_gate(a, strength, 10, 32, 32, 8),
-        "bilateral": lambda a: worker.run_bilateral_denoise(a, strength, 10, 30, 50),
         "FNRGF": lambda a: worker.run_fnrgf_native(a, strength, 21, 64, 0, 10, 61, 20, 32, 32, 8),
         "RHEF": lambda a: worker.run_rhef_native(a, strength, 10, 35, 32, 32, 8),
         "MGN": lambda a: worker.run_mgn_native(a, strength, 32, 70, 70, 3),
@@ -57,8 +54,6 @@ class FilterStabilityTests(unittest.TestCase):
 
     def test_zero_strength_is_an_exact_independent_copy(self):
         for name, run in filter_calls(self.worker, strength=0).items():
-            if name in ("asinh", "log"):
-                continue
             with self.subTest(filter=name):
                 actual = run(self.image)
                 np.testing.assert_array_equal(actual, self.image)
@@ -75,28 +70,13 @@ class FilterStabilityTests(unittest.TestCase):
                     self.assertEqual(float(np.ptp(actual)), 0.)
 
     def test_display_normalization_has_no_absolute_epsilon(self):
-        expected = normalize_image(self.image)
+        expected = normalize_observed(self.image)
         for scale in (1e-25, 1e-8, 65535., 1e25):
-            np.testing.assert_allclose(normalize_image(self.image * scale), expected, atol=1e-7)
-        np.testing.assert_array_equal(normalize_image(np.ones((3, 3))), 0)
+            np.testing.assert_allclose(normalize_observed(self.image * scale), expected, atol=1e-7)
+        np.testing.assert_array_equal(normalize_observed(np.ones((3, 3))), 0)
 
-    def test_noise_gate_small_disk_has_no_radius_fallback(self):
-        # Same relative geometry at radii on either side of the old 5px switch.
-        small = self.worker.run_radial_noise_gate(self.image, 100, 10, 32, 32, 4.99)
-        large = self.worker.run_radial_noise_gate(self.image, 100, 10, 32, 32, 5.01)
-        self.assertLess(float(np.max(np.abs(small - large))), .01)
 
-    def test_singleton_axes_in_smoothing(self):
-        for shape in ((1, 1), (1, 32), (32, 1)):
-            image = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-            actual = self.worker.run_bilateral_denoise(image, 100, 10, 30, 50)
-            self.assertEqual(actual.shape, shape)
-            self.assertTrue(np.isfinite(actual).all())
 
-    def test_zero_log_exponent_means_k_one_not_bypass(self):
-        image = np.array([[0., .25, .5, 1.]], dtype=np.float32)
-        expected = np.log1p(image) / np.log(2.)
-        np.testing.assert_allclose(self.worker.run_pre_log(image, 0), expected, rtol=1e-6)
 
     def test_finite_output_with_denoising_and_bilateral_wow(self):
         for image in (self.image, self.image - .5, np.eye(64, dtype=np.float32)):

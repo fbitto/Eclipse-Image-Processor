@@ -32,9 +32,6 @@ class FilterParameterBoundaryTests(unittest.TestCase):
                   rmax_val=(26, 27, 59, 60, 61, 62), nbins_val=(1, 2, 19, 20, 21, 801, 802, 803, 2000),
                   width_function=("std", "mad"), radial_binning=("linear", "log"), apply_mask=(0, 1, 99, 100)),
              lambda p: worker.run_fnrgf_native(image, 32, sun_x=32, sun_y=32, sun_r=8, **p)),
-            ("smooth", dict(diameter_param=10, sigma_space_param=50),
-             dict(diameter_param=(5, 6, 9, 10, 11, 99, 100), sigma_space_param=(1, 2, 49, 50, 51, 99, 100)),
-             lambda p: worker.run_bilateral_denoise(image, 50, sigma_color_param=30, **p)),
         ]
         for family, base, controls, run in families:
             for control, values in controls.items():

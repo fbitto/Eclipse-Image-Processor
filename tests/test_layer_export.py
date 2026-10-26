@@ -11,10 +11,21 @@ import tifffile
 
 from core.filters import FilterWorker
 from core.layer_export import branch_domain, export_layer_package, neutral_layer, overlay, to_u16, photoshop_loader
-from core.presentation import render_presentation, stretch_image
+from core.presentation import ael_tone_map
 
 
 class LayerExportTests(unittest.TestCase):
+    def test_invalid_canvas_mask_and_rgb_are_rejected_before_writing(self):
+        source=np.ones((8,10),np.float32)
+        with tempfile.TemporaryDirectory() as tmp:
+            destination=Path(tmp)/'layers'
+            cases=((np.ones(8),{},None), (source,{'valid_mask':np.ones((1,1),bool)},None),
+                   (source,{},np.ones((8,10,2))), (source,{},np.full((8,10,3),np.nan)))
+            for image,params,rgb in cases:
+                with self.subTest(shape=image.shape), self.assertRaises(ValueError):
+                    export_layer_package(FilterWorker(),image,params,{},'source.tif',destination,rgb=rgb)
+                self.assertFalse(destination.exists())
+
     def test_loader_uses_photoshop_extendscript_layer_blend_constants(self):
         # ExtendScript Layer.blendMode uses COLORBLEND, unlike ColorBlendMode.COLOR.
         script = photoshop_loader([dict(file='RGB.tif', mode='Color', opacity_255=255, visible=True)])
@@ -59,15 +70,12 @@ class LayerExportTests(unittest.TestCase):
     def test_independent_full_strength_branches_from_single_preparation(self):
         source = np.linspace(1, 5, 64).reshape(8, 8).astype(np.float32)
         worker = Mock()
-        worker.run_pre_asinh.side_effect = lambda a, k: a * 2
         worker.run_mgn_native.side_effect = lambda a, *args, **kw: a ** 2
         worker.run_tangential.side_effect = lambda a, *args, **kwargs: a + np.arange(64).reshape(8, 8) % 3
-        p = dict(sx=4., sy=4., sr=1., pre_stretch_enabled=True,
-                 pre_stretch_val=5., mgn_enabled=True, mgn_str=20, mgn_gam=32,
+        p = dict(sx=4., sy=4., sr=1., mgn_enabled=True, mgn_str=20, mgn_gam=32,
                  tangential_enabled=True, tangential_str=30, tangential_arc=10, tangential_gain=1.)
         with tempfile.TemporaryDirectory() as tmp:
             export_layer_package(worker, source, p, {}, 'Original name.NEF', Path(tmp) / 'layers')
-        worker.run_pre_asinh.assert_not_called()
         for method in (worker.run_mgn_native, worker.run_tangential):
             np.testing.assert_array_equal(method.call_args.args[0], source)
             self.assertEqual(method.call_args.args[1], 100)
@@ -84,11 +92,12 @@ class LayerExportTests(unittest.TestCase):
             out = Path(tmp) / 'layers'
             export_layer_package(FilterWorker(), source, p, display, '/input/eclipse.tif', out)
             manifest = json.loads((out / 'recipe.json').read_text())
-            base = tifffile.imread(out / manifest['layers'][0]['file'])
+            base = tifffile.imread(out / next(r['file'] for r in manifest['layers'] if r['filter']=='base'))
             result = base[..., 0].astype(float) / 65535
             self.assertEqual(base.dtype, np.uint16)
-            np.testing.assert_array_equal(base[..., 0], to_u16(stretch_image(source, display)))
-            for r in manifest['layers'][1:]:
+            np.testing.assert_array_equal(base[..., 0], to_u16(ael_tone_map(source,np.isfinite(source),manifest['display'])))
+            for r in manifest['layers']:
+                if r['filter'] in ('base','linear_reference'):continue
                 layer = tifffile.imread(out / r['file'])
                 self.assertEqual(layer.shape, (64, 80, 4))
                 self.assertEqual(layer.dtype, np.uint16)
@@ -97,19 +106,19 @@ class LayerExportTests(unittest.TestCase):
                     self.assertEqual(int(tif.pages[0].extrasamples[0]), 2)
                 result = overlay(result, layer[..., 0] / 65535., layer[..., 3] / 65535., r['opacity_255'] / 255.)
             saved = tifffile.imread(out / manifest['combined'])
-            np.testing.assert_array_equal(saved[..., 0], to_u16(result))
-            np.testing.assert_array_equal(tifffile.imread(out / 'eclipse_SOURCE_float32.tif'), source)
+            np.testing.assert_array_equal(saved[..., 0], to_u16(result.astype(np.float32)))
+            np.testing.assert_array_equal(tifffile.imread(out / 'SOURCE_float32.tif'), source)
             self.assertFalse(manifest['parameters'].get('pre_stretch_enabled', False))
             with self.assertRaises(FileExistsError):
                 export_layer_package(FilterWorker(), source, p, display, 'eclipse.tif', out)
 
-    def test_zero_strength_skips_and_failed_branch_leaves_no_package(self):
-        p = dict(sx=4., sy=4., sr=1., mgn_enabled=True, mgn_str=0)
+    def test_zero_gain_layer_is_hidden_and_failed_branch_leaves_no_package(self):
+        p = dict(sx=4., sy=4., sr=1., mgn_enabled=True, mgn_str=0,mgn_gam=32)
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / 'layers'
             export_layer_package(FilterWorker(), np.ones((8, 8)), p, {}, 'flat.tif', out)
             manifest = json.loads((out / 'recipe.json').read_text())
-            self.assertEqual(len(manifest['layers']), 1)
+            self.assertFalse(next(r for r in manifest['layers'] if r['filter']=='mgn')['visible'])
             worker = Mock()
             worker.run_mgn_native.side_effect = RuntimeError('filter failed')
             with self.assertRaises(RuntimeError):
@@ -127,16 +136,6 @@ class LayerExportTests(unittest.TestCase):
             output = Path(tmp) / 'layers'
             export_layer_package(worker, source, params, {}, 'test.tif', output)
             manifest = json.loads((output / 'recipe.json').read_text())
-            layer = tifffile.imread(output / manifest['layers'][1]['file'])
+            layer = tifffile.imread(output / next(r['file'] for r in manifest['layers'] if r['filter']=='achf'))
             np.testing.assert_array_equal(layer[..., 0], 32768)
-            self.assertTrue(manifest['layers'][1]['normalization']['constant'])
-
-    def test_display_curves_applied_once_and_reveal(self):
-        a = np.arange(1., 10.).reshape(3, 3)
-        b = a[::-1]
-        for mode in ('asinh', 'log', 'ghs'):
-            settings = dict(mode=mode, strength=15., blend=.3, sp=.2, bp=.01, b=2.)
-            actual = render_presentation(b, a, settings)
-            np.testing.assert_allclose(actual, .3 * stretch_image(b, settings) + .7 * stretch_image(a, settings))
-            self.assertTrue(np.isfinite(actual).all())
-        np.testing.assert_array_equal(stretch_image(np.zeros((3, 3)), {}), 0)
+            self.assertTrue(next(r['normalization'] for r in manifest['layers'] if r['filter']=='achf')['constant'])

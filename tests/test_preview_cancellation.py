@@ -1,4 +1,6 @@
 """Cancellation during real worker execution, quiet-period scheduling and isolation."""
+from gui_wait import close_window
+
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from threading import Event, Thread
@@ -8,9 +10,9 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
-from core.cancellation import ProcessingCancelled, cancellation_scope, check_cancelled
+from core.cancellation import check_cancelled
 from core.filters import FilterWorker
-from core.pipeline import execute_pipeline
+from core.pipeline import apply_filter, execute_pipeline
 from gui.app import EclipseProcessorApp
 
 
@@ -19,12 +21,11 @@ class CancellationTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_cancels_inside_mgn_before_remaining_scales_and_later_filters(self):
+    def test_cancels_inside_mgn_before_remaining_scales(self):
         import core.filters as filters
         worker = FilterWorker()
         image = np.random.default_rng(90).uniform(1, 9, (64, 64)).astype(np.float32)
-        params = dict(mgn_enabled=True, mgn_str=30, mgn_gam=32,
-                      wow_enabled=True, wow_str=20)
+        params = dict(sx=32,sy=32,sr=8,mgn_enabled=True,mgn_str=30,mgn_gam=32)
         entered, release = Event(), Event()
         outcomes = []
         worker.cancelled.connect(lambda: outcomes.append('cancelled'), Qt.ConnectionType.DirectConnection)
@@ -36,8 +37,7 @@ class CancellationTests(unittest.TestCase):
             if not release.wait(3):
                 raise AssertionError('Test did not release first convolution')
             return original(*args, **kwargs)
-        with patch('core.filters.gaussian_filter', side_effect=blocking_gaussian) as gaussian, \
-             patch.object(worker, 'run_wow_native') as wow:
+        with patch('core.filters.gaussian_filter', side_effect=blocking_gaussian) as gaussian:
             thread = Thread(target=worker.process_pipeline, args=(image, params))
             thread.start()
             try:
@@ -49,9 +49,8 @@ class CancellationTests(unittest.TestCase):
             self.assertFalse(thread.is_alive())
             self.assertEqual(outcomes, ['cancelled'])
             self.assertLess(gaussian.call_count, 12)  # six full scales would need 12
-            wow.assert_not_called()
         # Cancellation is scoped to preview work, not synchronous exports.
-        np.testing.assert_array_equal(execute_pipeline(worker, image, {}), image)
+        np.testing.assert_array_equal(apply_filter(worker, image, {}), image)
         worker.prepare_job()
         worker.process_pipeline(image, {})
         self.assertEqual(outcomes, ['cancelled', 'finished'])
@@ -130,12 +129,12 @@ class CancellationTests(unittest.TestCase):
                 w.auto_calculate = True
                 w.dispatch_pipeline_request()
                 self.assertTrue(entered.wait(3))
-                w.sl_mgn_str.setValue(23)
+                w.sl_mgn_k.setValue(23)
                 QTest.qWait(200)
                 self.assertFalse(w.is_processing)
                 self.assertEqual(cancelled.count(), 1)
                 np.testing.assert_array_equal(w.processed_image, a)
-                w.sl_mgn_str.setValue(27)
+                w.sl_mgn_k.setValue(27)
                 QTest.qWait(400)
                 self.assertEqual(len(calls), 1)
                 # Pump Qt while releasing the GIL for the Python worker.
@@ -151,4 +150,4 @@ class CancellationTests(unittest.TestCase):
             expected = execute_pipeline(FilterWorker(), a, w.collect_filter_parameters(a.shape))
             np.testing.assert_array_equal(w.processed_image, expected)
         finally:
-            w.close()
+            close_window(w)

@@ -1,4 +1,4 @@
-"""Write the same cached layers and composition used by the GUI."""
+"""Write cached filter layers with an independent Photoshop presentation recipe."""
 import hashlib
 import json
 from pathlib import Path
@@ -11,19 +11,36 @@ import tifffile
 from .cancellation import check_cancelled
 from .colour import set_luminosity
 from .image_data import recipe_parameters, zero_missing
-from .layer_engine import engine_for, requests, opacity, LABELS, colour_display, display_base
+from .layer_engine import engine_for, requests, opacity, LABELS
 
 
 def export_layered_package(worker, source, params, display, original_path, destination,
                            rgb=None, colour_report=None):
     from .layer_export import to_u16, photoshop_loader, write_edge_layer
+    source = np.asarray(source)
+    if source.ndim != 2 or not source.size:
+        raise ValueError('Layer export requires a nonempty monochrome canvas')
+    valid = np.isfinite(source)
+    mask = params.get('valid_mask')
+    if mask is not None:
+        mask = np.asarray(mask, dtype=bool)
+        if mask.shape != source.shape:
+            raise ValueError('Layer validity must match the source canvas')
+        valid &= mask
+    if rgb is not None:
+        rgb = np.asarray(rgb)
+        if rgb.shape != (*source.shape, 3) or not np.isfinite(rgb[valid]).all():
+            raise ValueError('RGB must match luminance and its observed-data mask')
+    from .presentation import psb_presentation_settings, psb_base
+    if display.get('mode') != 'ael_presentation':
+        display = psb_presentation_settings(source, params.get('valid_mask'), rgb=rgb, params=params)
+    params = {k:v for k,v in params.items() if k != 'layer_display'}
     destination=Path(destination)
     if destination.exists():
         raise FileExistsError(destination)
     destination.parent.mkdir(parents=True,exist_ok=True)
     stage=Path(tempfile.mkdtemp(prefix='.layers-',dir=destination.parent))
     engine=engine_for(worker)
-    valid=np.isfinite(source) & params.get('valid_mask',True)
     records=[]
     started=time.perf_counter()
     def write(label,image,alpha,mode,amount,**metadata):
@@ -38,19 +55,34 @@ def export_layered_package(worker, source, params, display, original_path, desti
                             opacity_255=round(amount*255),visible=amount>0,**metadata))
         print(f'[LAYER {label}: TIFF WRITE] Done in {time.perf_counter()-timer:.3f}s')
     try:
-        write('BASE',display_base(source,params,display),valid.astype(np.uint16)*65535,
-              'Normal',1.,filter='base')
-        engine.prepare(worker,source,params,include_all=False)
-        for name,variant,p,enabled in requests(params,include_all=False):
+        reference = source if rgb is None else rgb
+        finite = np.isfinite(reference) & (valid if reference.ndim == 2 else valid[..., None])
+        reference_scale = float(np.max(reference, where=finite, initial=0.)) / .98 or 1.
+        reference_file = '01_LINEAR_REFERENCE_Normal.tif'
+        reference_rgb = to_u16(np.where(finite, reference / reference_scale, 0.))
+        if reference_rgb.ndim == 2:
+            reference_rgb = np.repeat(reference_rgb[..., None], 3, axis=-1)
+        tifffile.imwrite(stage/reference_file,
+                         np.dstack([reference_rgb, (finite if finite.ndim == 2 else finite.all(axis=-1)).astype(np.uint16)*65535]),
+                         photometric='rgb', extrasamples=['unassalpha'], compression='zlib', metadata=None)
+        records.append(dict(order=1, file=reference_file, name='Linear reference / receipt scale',
+                            filter='linear_reference', mode='Normal', opacity=1., opacity_255=255,
+                            visible=False, reference_scale=reference_scale,
+                            negative_values='clipped in 16-bit reference; float source retains signed values',
+                            colour_calibration=colour_report))
+        base, color = psb_base(source,params,display,rgb)
+        write('BASE',to_u16(base),valid.astype(np.uint16)*65535,
+              'Normal',1.,filter='base',name='Display base')
+        engine.prepare(worker,source,params)
+        for name,variant,p,enabled in requests(params):
             layer=engine.layer(worker,source,p,name,variant)
             amount=round(opacity(name,p,enabled)*float(display.get('blend',1))*255)/255
             write(LABELS.get(variant,name.upper()),layer['image'],layer['alpha'],layer['mode'],amount,
                   filter=name,variant=variant,normalization=layer['mapping'],
                   operator_strength=p.get(name+'_str',100))
         timer=time.perf_counter()
-        combined=engine.render(worker,source,params,display)
+        combined=engine.render(worker,source,params,display,base=base)
         if rgb is not None:
-            color=colour_display(rgb,source,display)
             order=len(records)+1
             filename=f'{order:02d}_RGB_Color.tif'
             tifffile.imwrite(stage/filename,np.dstack([to_u16(color),valid.astype(np.uint16)*65535]),
@@ -86,8 +118,8 @@ def export_layered_package(worker, source, params, display, original_path, desti
         loader_records=[dict(file=background_file,mode='Normal',opacity_255=255,visible=True),*records]
         (stage/'Load_layers_Photoshop.jsx').write_text(photoshop_loader(loader_records),encoding='utf-8')
         (stage/'Layers.md').write_text('# Independent filter layers\n\nLoad with File > Scripts > Browse > Load_layers_Photoshop.jsx.\n'
-            'All filters start from the original linear input. Strength changes layer contrast; opacity controls blending.\n'
-            'The base is stretched once. No second stretch is applied to the composition.\n'
+            'All filters start from the shared linear working input (including optional background equalization; see recipe parameters). Only Larson–Sekanina exposes Gain (0–200%); other filters have no Strength control. Opacity controls blending.\n'
+            'The base uses the PSB Asinh-10 presentation with automatic scale plus manual EV exposure, regardless of the preview toggle. Main TIFF composition has no presentation stretch. A hidden linear reference carries its receipt scale.\n'
             'Edge Antialias is an editable display-only black overlay at lunar/missing boundaries.\n'
             'Numerical source files store missing samples as zero; VALID preserves their identity.\n',encoding='utf-8')
         check_cancelled()

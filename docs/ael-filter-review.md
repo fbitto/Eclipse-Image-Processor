@@ -1,5 +1,7 @@
 # Propuestas para Eclipse Image Processor tras estudiar Agentic Eclipse Library
 
+> Historical report. This document preserves its original research, measurements and implementation context. Controls, defaults, sequential processing and export behaviour described below may have changed. Use the [current technical guides](README.md) and [validation boundaries](validation.md) for the active application.
+
 Revisión del 17 de octubre de 2026. **Propuestas y experimentos; no se han cambiado
 los filtros de la aplicación.** Las modificaciones de nombre y empaquetado que ya
 estaban pendientes permanecen separadas de este estudio.

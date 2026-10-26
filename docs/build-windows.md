@@ -17,3 +17,5 @@ The build embeds `assets/Eclipse_Image_Processor.ico` in the executable for Expl
 This is a local unsigned build. Authenticode signing and an installer are separate release tasks. Build on Windows; the macOS script cannot produce a Windows executable. Target architecture follows the Windows Python interpreter and available dependencies.
 
 Rebuilding replaces the previous output. Existing pinned shortcuts may retain a cached icon; recreate the shortcut if it still shows an older icon after replacing the application. Source runs use the same Qt icon resources but do not replace the Python executable's Explorer icon.
+
+Use Python 3.14 or later with platform-compatible dependencies. Consult the [technical index](README.md) and [validation record](validation.md) for current scope. Packaging was not rerun during the 26 October documentation update.

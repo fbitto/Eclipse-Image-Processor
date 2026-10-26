@@ -1,6 +1,6 @@
 """Optional gain-only neutralization derived from tse-tools and display-only RGB/mono composition."""
 import numpy as np
-from .presentation import stretch_image
+from .presentation import normalized_base
 
 
 def neutralize_tse(rgb, white=1.):
@@ -53,7 +53,7 @@ def neutralize_tse(rgb, white=1.):
 
 
 def colour_layer(rgb, source, display):
-    """One luminance-guided stretch, equal factor on R/G/B; no channel stretch.
+    """Match the normalized base luminance with an equal factor on R/G/B.
 
     Negative values are clipped for display only. A shared highlight factor keeps
     channels in gamut. Numerical source and optional balanced float remain separate.
@@ -64,7 +64,7 @@ def colour_layer(rgb, source, display):
     valid = np.isfinite(source) & np.isfinite(a).all(axis=-1)
     a = np.where(valid[..., None], np.maximum(a, 0), 0)
     luminance = a @ np.array([.299, .587, .114])
-    target = stretch_image(source, display)
+    target = normalized_base(source, display)
     factor = np.divide(target, luminance, out=np.zeros_like(target), where=luminance > 0)
     a *= factor[..., None]
     a /= np.maximum(a.max(axis=-1), 1)[..., None]

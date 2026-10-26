@@ -23,11 +23,10 @@ CONTROLS = {
         ('rhef_quantiles', 'rhef_quantiles', 'Quantile samples', 17, 1025, 257, 1., 'Continuous mode: integer number of quantile nodes, including both endpoints. Any count from 17 to 1025 is valid; powers of two are not required. Odd counts include the median node. Default 257 gives 256 intervals. More nodes increase cost.'),
         ('rhef_noise_confidence', 'rhef_noise_confidence', 'Noise confidence (0 = off)', 0, 100, 0, 10., 'Optional blend attenuation where angular spread is near estimated noise. Adjacent-pixel noise is approximate, particularly on correlated stacks.')],
     'larson_sekanina': [
-        ('larson_sekanina_radial', 'larson_sekanina_radial', 'Radial increment (preview px)', 0, 1000, 0, 10., 'Inward radial sampling offset; scaled for export. Zero isolates angular detail.'),
-        ('larson_sekanina_angular', 'larson_sekanina_angular', 'Angular increment (degrees)', 0, 1800, 10, 10., 'Symmetric rotations by plus/minus this angle. Both increments zero bypass the operator.')],
+        ('larson_sekanina_angular', 'larson_sekanina_angular', 'Angular increment (degrees)', 0, 1800, 30, 10., 'Symmetric rotations by plus/minus this angle. The radial increment is fixed at zero; zero angular increment bypasses the operator.')],
     'tangential': [
         ('tangential_arc', 'tangential_arc', 'Angular Gaussian sigma (degrees)', 1, 300, 30, 10., 'Angular blur sigma, 0.1 to 30 degrees. The corresponding arc length increases with radius.'),
-        ('tangential_gain', 'tangential_gain', 'Detail gain', 0, 50, 10, 10., 'Multiplier of the signed angular residual before the separate Strength blend.'),
+        ('tangential_gain', 'tangential_gain', 'Detail gain', 0, 50, 10, 10., 'Multiplier of the signed angular residual before layer encoding and opacity blending.'),
         ('tangential_denoise', 'tangential_denoise', 'Noise threshold (sigma)', 0, 100, 0, 10., 'Soft threshold on signed detail, using a robust adjacent-pixel noise estimate. Zero bypasses it; not calibrated detector noise.'),
         ('tangential_inner', 'tangential_inner', 'Inner radius (disk radii)', 0, 40, 10, 10., 'Start of tangential processing in reference disk radii.'),
         ('tangential_outer', 'tangential_outer', 'Outer radius (disk radii)', 11, 200, 40, 10., 'Outer processing radius in reference disk radii, used only when Limit outer radius is checked.'),
@@ -103,7 +102,7 @@ def add_controls(window):
 
 
 def collect_controls(window):
-    params = {}
+    params = {'larson_sekanina_radial': 0.}
     for specs in CONTROLS.values():
         for attr, key, label, minimum, maximum, default, divisor, help_text in specs:
             value = getattr(window, 'sl_'+attr).value()/divisor
@@ -152,13 +151,12 @@ def add_advanced_mode(window, header_layout):
                 window.combo_rhef_mode, window.sl_rhef_rad, window.sl_rhef_bin,
                 window.chk_rhef_symmetric, window.chk_tangential_outer,
                 window.sl_achf_boost, window.sl_achf_background,
-                window.sl_ghs_lp, window.sl_ghs_hp, window.sl_ghs_bp, window.sl_ghs_wp,
                 window.chk_statistics_lunar, window.chk_statistics_bright,
                 window.sl_statistics_guard, window.sl_statistics_percentile,
                 window.sl_statistics_outer]
     for family, specs in CONTROLS.items():
         for attr, *_ in specs:
-            if attr not in ('tangential_arc', 'tangential_denoise', 'larson_sekanina_radial', 'larson_sekanina_angular'):
+            if attr not in ('tangential_arc', 'tangential_denoise', 'larson_sekanina_angular'):
                 advanced.append(getattr(window, 'sl_' + attr))
 
     def update_visibility(checked):
@@ -181,7 +179,7 @@ def add_advanced_mode(window, header_layout):
             slider.setValue(value)
             slider.blockSignals(blocked)
             update_slider_display(slider)
-        window.on_filter_slider_released(window.sec_wow, window.sl_wow_str)
+        window.on_filter_slider_released(window.sec_wow)
         update_custom_values()
 
     def apply_upsilon(_):
@@ -217,9 +215,6 @@ def add_achf_variants(window):
             tooltip='Overlay opacity; changing this only recomposes cached layers.')
         controls['opacity'].setProperty('mix_only',True)
         controls['opacity'].valueChanged.connect(window.on_layer_mix_changed)
-        controls['strength'], _ = create_slider('Strength (%)',0,100,preset['strength'],layout,
-            tooltip="Strength controls this variant's encoded detail contrast before blending; opacity independently controls the mixture.",
-            on_release_callback=window.dispatch_pipeline_request_if_auto)
         if 'sigmas' in preset:
             controls['sigmas'] = []
             for i, value in enumerate(preset['sigmas']):
@@ -242,7 +237,7 @@ def add_achf_variants(window):
 def collect_achf_variants(window):
     result = {}
     for variant, controls in window.achf_ael_controls.items():
-        settings = dict(strength=controls['strength'].value(),outer_sigma=controls['outer_sigma'].value()/10.,
+        settings = dict(strength=100,outer_sigma=controls['outer_sigma'].value()/10.,
                         opacity=controls['opacity'].value(),enabled=controls['enabled'].isChecked())
         if 'sigmas' in controls:
             settings['sigmas'] = [slider.value()/10. for slider in controls['sigmas']]
@@ -253,15 +248,16 @@ def collect_achf_variants(window):
 
 
 def add_layer_opacities(window):
-    """Opacity rows precede Strength; changes only request cached composition."""
+    """Opacity controls composition; only Linear Light retains a separate Gain."""
     from .factories import create_slider
     for name in ('nrgf','fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
         layout=(window.achf_adaptive_panel.layout() if name == 'achf'
                 else getattr(window,'sec_'+name).content_layout)
-        strength=getattr(window,'sl_'+name+'_str')
-        help_text='Strength controls encoded layer contrast before blending; changing it updates this filter only.'
-        for control in (strength,strength.title_label,strength.value_label):
-            control.setToolTip(help_text)
+        if name == 'larson_sekanina':
+            gain=window.sl_larson_sekanina_str
+            help_text='Gain scales the signed residual before Linear Light clipping; opacity controls the mixture after clipping.'
+            for control in (gain,gain.title_label,gain.value_label):
+                control.setToolTip(help_text)
         mode='Multiply' if name in ('nrgf', 'fnrgf') else 'Linear Light' if name == 'larson_sekanina' else 'Overlay'
         slider,_=create_slider('Opacity (%)',0,100,40 if name == 'nrgf' else 50,layout,
             tooltip=f'{mode} layer opacity. Changes only the composition; preserves calculated filters.')

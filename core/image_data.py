@@ -13,13 +13,30 @@ def observed_image(image, valid=None):
     return np.where(mask, a, np.nan), mask
 
 
-def normalize_observed(image):
+def observed_bounds(image):
+    """Finite native extrema; no full-size floating copy or extracted sample array."""
+    a=np.asarray(image)
+    valid=np.isfinite(a)
+    if a.ndim!=2 or not valid.any():
+        raise ValueError('Display reference needs finite observed pixels in a 2D image')
+    low_initial=np.iinfo(a.dtype).max if np.issubdtype(a.dtype,np.integer) else np.inf
+    high_initial=np.iinfo(a.dtype).min if np.issubdtype(a.dtype,np.integer) else -np.inf
+    return (float(np.min(a,where=valid,initial=low_initial)),
+            float(np.max(a,where=valid,initial=high_initial)))
+
+
+def normalize_observed(image, bounds=None):
     a, valid = observed_image(image)
-    values = a[valid]
-    span = np.ptp(values)
+    if bounds is None:
+        values=a[valid]
+        low,high=float(values.min()),float(values.max())
+    else:
+        if len(bounds)!=2 or not np.isfinite(bounds).all() or bounds[1]<bounds[0]:
+            raise ValueError('Display reference must contain finite ordered black/white levels')
+        low,high=bounds
     out = np.zeros(a.shape, dtype=np.float64)
-    if span > 0:
-        out[valid] = (values - values.min()) / span
+    if high>low:
+        out[valid] = np.clip((a[valid]-low)/(high-low),0,1)
     return out
 
 

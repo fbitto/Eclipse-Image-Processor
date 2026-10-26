@@ -31,9 +31,9 @@ class WOWTests(unittest.TestCase):
     def test_pipeline_reports_error_then_recovers(self):
         failed=[]; finished=[]
         self.worker.failed.connect(failed.append); self.worker.finished.connect(finished.append)
-        self.worker.process_pipeline(self.a,dict(wow_enabled=True,wow_str=100,wow_scales=-1))
+        self.worker.process_pipeline(self.a,dict(sx=32,sy=32,sr=8,wow_enabled=True,wow_str=100,wow_scales=-1))
         self.assertEqual(len(failed),1)
-        self.worker.process_pipeline(self.a,dict(wow_enabled=True,wow_str=100,wow_scales=3))
+        self.worker.process_pipeline(self.a,dict(sx=32,sy=32,sr=8,wow_enabled=True,wow_str=100,wow_scales=3))
         self.assertEqual(len(finished),1)
 
 

@@ -1,6 +1,6 @@
 # Icon options
 
-Generated using the built-in image_gen tool. PNG originals and converted macOS ICNS / Windows ICO files are provided. Existing application icons have not been replaced.
+Generated using the built-in image_gen tool. PNG originals and converted macOS ICNS / Windows ICO files are provided. These are retained design alternatives, not the active build resources. See [application icons](../README.md) for the files currently used by the application.
 
 ## Prompts
 

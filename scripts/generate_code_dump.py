@@ -5,7 +5,6 @@ Usage: python3 scripts/generate_code_dump.py
 """
 
 import os
-from pathlib import Path
 
 def generate_code_dump(project_root=".", output_file="project_code_dump.txt"):
     """

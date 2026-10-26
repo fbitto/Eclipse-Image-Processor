@@ -1,4 +1,6 @@
 """Round-trip actual GUI controls through exported JSON and original source loading."""
+from gui_wait import wait_for_gui, close_window
+
 import json
 from pathlib import Path
 import shutil
@@ -10,7 +12,7 @@ import numpy as np
 import tifffile
 from PySide6.QtWidgets import QApplication
 
-from core.project_settings import read_settings,write_settings
+from core.project_settings import VERSION, read_settings,write_settings
 from gui.app import EclipseProcessorApp
 from gui.project_settings import capture_settings,restore_settings
 
@@ -44,31 +46,32 @@ class ProjectSettingsTests(unittest.TestCase):
                     w.save_settings_action()
                 self.assertEqual({p.name for p in root.iterdir()},{'source.tif','adjustments.json'})
         finally:
-            w.close()
+            close_window(w)
 
-    def test_version_one_mgn_controls_migrate_to_native_pixels(self):
+    def test_only_current_file_version_is_accepted(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);source=root/'source.tif';source.touch()
-            settings=dict(controls={f'sl_mgn_sigmas.{i}':dict(kind='slider',value=round(v*100))
-                                    for i,v in enumerate((1.25,2.5,5,10,20,40))})
-            native=[v*3.74 for v in (1.25,2.5,5,10,20,40)]
-            path=write_settings(root/'output.tif',source,settings,dict(mgn_sigmas=native),{})
-            data=json.loads(path.read_text());data['version']=1
-            path.write_text(json.dumps(data))
-            _,loaded=read_settings(path)
-            for i,value in enumerate(native):
-                self.assertEqual(loaded['controls'][f'sl_mgn_sigmas.{i}']['value'],round(value*100))
+            path=write_settings(root/'output.tif',source,{}, {}, {})
+            data=json.loads(path.read_text())
+            self.assertEqual(data['version'],VERSION)
+            self.assertEqual(VERSION,4)
+            for version in (1,2,3,VERSION+1,None,True,'4',4.0):
+                data['version']=version;path.write_text(json.dumps(data))
+                with self.subTest(version=version),self.assertRaisesRegex(ValueError,'version'):
+                    read_settings(path)
 
-    def test_removed_achf_export_checkbox_in_older_json_is_ignored(self):
+    def test_retired_controls_are_rejected_without_changing_current_settings(self):
+        from copy import deepcopy
         w=EclipseProcessorApp()
         try:
-            settings=capture_settings(w)
-            settings['geometry']=dict(x='20',y='20',r='10')
-            settings['controls']['chk_export_achf_ael']=dict(kind='check',value=True)
-            restore_settings(w,settings)
-            self.assertNotIn('chk_export_achf_ael',capture_settings(w)['controls'])
-        finally:
-            w.close()
+            w.txt_x.setText('20');w.txt_y.setText('20');w.txt_r.setText('10')
+            saved=capture_settings(w)
+            for name in ('chk_export_achf_ael','sl_blend','sl_mgn_str','combo_stretch_mode'):
+                settings=deepcopy(saved)
+                settings['controls'][name]=dict(kind='check',value=True)
+                with self.subTest(control=name),self.assertRaises(ValueError):restore_settings(w,settings)
+                self.assertEqual(capture_settings(w),saved)
+        finally:close_window(w)
 
     def test_actual_export_then_open_json_restores_all_settings(self):
         windows=[]
@@ -80,20 +83,16 @@ class ProjectSettingsTests(unittest.TestCase):
                 tifffile.imwrite(source,image)
                 w=EclipseProcessorApp();windows.append(w);w.auto_calculate=False
                 with patch('gui.app.QFileDialog.getOpenFileName',return_value=(str(source),'')):
-                    w.load_image_action()
+                    w.load_image_action();wait_for_gui(w)
                 self.assertEqual(w.source_path,str(source),w.status_label.text())
                 for name in ('fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
-                    self.assertEqual(getattr(w,'sl_'+name+'_opacity').value(),35 if name=='wow' else 75)
+                    self.assertEqual(getattr(w,'sl_'+name+'_opacity').value(),10 if name=='wow' else 75 if name=='larson_sekanina' else 19 if name=='achf' else 20)
                 for variant,controls in w.achf_ael_controls.items():
-                    self.assertEqual(controls['opacity'].value(),10 if variant in ('ael_iso_04','ael_angular_4') else 75)
+                    self.assertEqual(controls['opacity'].value(),10)
                 w.chk_advanced.setChecked(True)
                 w.combo_input_state.setCurrentIndex(0)
                 w.chk_verify_preview.setChecked(True)
-                w.combo_stretch_mode.setCurrentIndex(2)
-                w.sl_stretch.setValue(2468)
-                w.sl_ghs_sp.setValue(400);w.sl_ghs_lp.setValue(200);w.sl_ghs_hp.setValue(1600)
-                w.sl_ghs_wp.setValue(1200);w.sl_ghs_bp.setValue(-125)
-                w.sl_blend.setValue(73)
+                w.sl_psb_exposure.setValue(125)
                 w.sec_mgn.chk_active.setChecked(True)
                 w.sec_mgn.toggle_expanded()
                 w.sl_mgn_opacity.setValue(62)
@@ -103,7 +102,6 @@ class ProjectSettingsTests(unittest.TestCase):
                 for index,controls in enumerate(w.achf_ael_controls.values()):
                     controls['opacity'].setValue(41+index)
                     controls['outer_sigma'].setValue(21+index)
-                    controls['strength'].setValue(61+index)
                     controls['enabled'].setChecked(index!=1)
                 w.combo_achf_variant.setCurrentIndex(3)
                 w.chk_export_layers.setChecked(False)
@@ -124,7 +122,7 @@ class ProjectSettingsTests(unittest.TestCase):
                 restored=EclipseProcessorApp();windows.append(restored)
                 with patch('gui.app.QFileDialog.getOpenFileName',return_value=(str(settings_file),'')), \
                      patch.object(restored,'detect_lunar_limb',side_effect=AssertionError('Saved geometry was recalculated')):
-                    restored.load_image_action()
+                    restored.load_image_action();wait_for_gui(restored)
                 self.assertEqual(Path(restored.source_path).resolve(),source.resolve(),restored.status_label.text())
                 self.assertEqual(capture_settings(restored),expected,restored.status_label.text())
                 np.testing.assert_array_equal(restored.full_raw_image,w.full_raw_image)
@@ -132,7 +130,7 @@ class ProjectSettingsTests(unittest.TestCase):
                 self.assertEqual(parameter_signature(restored.collect_filter_parameters(restored.full_raw_image.shape)),
                                  parameter_signature(w.collect_filter_parameters(w.full_raw_image.shape)))
         finally:
-            for window in windows:window.close()
+            for window in windows:close_window(window)
 
     def test_relative_source_survives_moving_project_and_missing_source_is_clear(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -152,7 +150,7 @@ class ProjectSettingsTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp);path=root/'bad.json';path.write_text('{}')
                 with patch('gui.app.QFileDialog.getOpenFileName',return_value=(str(path),'')):
-                    w.load_image_action()
+                    w.load_image_action();wait_for_gui(w)
                 self.assertIsNone(w.full_raw_image)
                 self.assertIn('supported',w.status_label.text())
                 source=root/'source.tif';source.write_bytes(b'fixture')
@@ -162,4 +160,4 @@ class ProjectSettingsTests(unittest.TestCase):
                     write_settings(root/'out.tif',source,dict(bad=float('nan')),{}, {})
                 self.assertEqual(path.read_bytes(),before)
                 self.assertFalse(list(root.glob('*.tmp')))
-        finally:w.close()
+        finally:close_window(w)

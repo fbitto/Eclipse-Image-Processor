@@ -1,5 +1,7 @@
 # PSB16 writer feasibility probe
 
+> Historical report. This document preserves its original research, measurements and implementation context. Controls, defaults, sequential processing and export behaviour described below may have changed. Use the [current technical guides](README.md) and [validation boundaries](validation.md) for the active application.
+
 Historical step 1 report. The exporter is now integrated and tested in Photoshop; see [production PSB export](psb-export.md).
 
 Source authorship and the exact copied/adapted or imported components are listed in [ATTRIBUTIONS.md](../ATTRIBUTIONS.md).

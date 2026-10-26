@@ -1,29 +1,31 @@
-# ACHF AEL variants
+# AEL ACHF variants
 
-Source authorship and the exact copied/adapted or imported components are listed in [ATTRIBUTIONS.md](../ATTRIBUTIONS.md).
+The bundled port in `core/ael_achf.py` copies/adapts Agentic Eclipse Library 1.3.3, by Pere Guerra Serra, under MIT. See [attribution](../ATTRIBUTIONS.md) and the [retained notice](third-party/AEL-MIT.txt). No installed AEL package is required at runtime.
 
-Added 24 October 2026 as optional ISO 01, ISO 04 and Angular variants; Adaptive circular remains the initial selection.
+## Operators
 
-The port in `core/ael_achf.py` follows Agentic Eclipse Library 1.3.3's `filterbank.achf_isotropic`, `radial_log_residual`, `display_detail`, `tangential_highpass`/linear polar mappings, and support-normalized Gaussian routines. Copyright © 2026 Pere Guerra Serra; [MIT notice](third-party/AEL-MIT.txt). No plugin path or AEL installation is needed at runtime.
+ISO 01 and ISO 04 use positive observed log-luminance. They remove a cubic-spline radial profile fitted to annular log-intensity medians in log radius, average five Gaussian high-pass residuals and apply outer Gaussian smoothing.
 
-On full-resolution positive observed luminance, it subtracts the upstream cubic spline fitted to annular log-intensity medians in log radius, averages five Gaussian high-pass residuals and applies an outer Gaussian. ISO 01 starts at native sigmas 2/4/8/16/32 and outer sigma 3; ISO 04 starts at 1/2/4/8/16 and outer sigma 1.5. These are independently editable for each preset. Angular subtracts a 1° angular Gaussian on log-luminance in a linear polar grid, maps the detail back with complete bilinear observed support, and starts with outer sigma 4 native px. Its two widths are also editable. Polar rows are tiled for bounded intermediate memory. It uses the upstream MAD floor 1e-5 and `0.5 + 0.5*tanh(detail/(2.5*scale))` encoding without median subtraction. Gaussian approximations for wide supports also follow upstream. Nonpositive values do not enter the logarithm and remain unchanged; missing values are not filled. Sparse scenes produce an explicit error when the radial fit lacks support.
+| Variant | Native Gaussian sigmas | Outer sigma | Initial inclusion / opacity |
+| --- | --- | --- | --- |
+| ISO 01 | 2, 4, 8, 16, 32 px | 3 px | Off / 10% |
+| ISO 04 | 1, 2, 4, 8, 16 px | 1.5 px | On / 10% |
+| Angular | 1° angular Gaussian | 4 px | On / 10% |
 
-The desktop layer model computes each variant from the original linear input. Strength controls encoded detail contrast, and its separate Opacity controls Overlay blending over the stretched original base. The completed composition is not stretched again. The legacy numerical `apply_ael_achf` API still returns a blend in input units for compatibility; the GUI no longer chains preceding filters into it.
+Angular subtracts an angular Gaussian in log-luminance on a linear polar grid, maps detail back with complete bilinear observed support, and smooths in Cartesian space. Polar rows are tiled. The encoding is `0.5 + 0.5*tanh(detail/(2.5*scale))`, with upstream MAD floor 1e-5 and no median subtraction. Observed-support Gaussian approximations follow upstream. Nonpositive samples do not enter the logarithm; missing data are not filled. Insufficient radial-profile support raises an explicit error.
 
-Scale controls are in native source pixels, with target/full scaling for fast preview. Radial annulus sampling in fast preview remains approximate. Full-resolution verification/export runs the native operator. The reference geometry can be a protective circle enclosing a missing region rather than a physically measured solar disk, which limits interpretation of the radial profile.
+## GUI and composition
 
-Each variant retains independent parameters, Strength, Opacity and Include state when changing the editing panel. Multiple variants may be composed simultaneously under the ACHF master Active checkbox. Layer export includes all active ACHF variants; excluded variants are omitted and zero-Strength variants are hidden. TIFF/JPEG, native verification and the cached PSB use the same selected composition. See [the layer model](layer-composition.md). Angular 8 is excluded.
+All variants start from the shared working mono input, not a preceding enhancement or a tone-mapped image. Native-pixel widths scale down for fast preview; angular widths stay in degrees. Reduced annular statistics are approximate.
 
-Independent Photoshop export computes the encoded AEL layer from the prepared input and preserves its encoding, domain and provenance. It does not subtract adaptive ACHF's Background Retention or apply the application's other neutral-layer normalization. The same encoded layers are used by preview and export. The layer recipe records sigmas, outer sigma, target scale, spline diagnostics, display scale and variant.
+The editing selector initially shows ISO 04. Each variant has independent parameters, opacity and Include state; the ACHF master Active checkbox gates them together. ISO 04 and Angular start included at internal strength 100 and opacity 10%. There are no per-variant Strength sliders. Adaptive is a separate application implementation, initially excluded at opacity 19%. An Angular 8 variant is not exposed.
 
-Known upstream limitation: radial-profile bias near partial coverage and the Moon can create boundary bands. This port does not claim to remove them. Do not use it as a calibrated photometric product.
+Encoded AEL layers use Overlay unchanged by adaptive ACHF's Background Retention or the application's other neutral-detail normalizers. Export writes active variants only. Main TIFF and PSB share filter layers but use different base presentations; see [composition](layer-composition.md) and [PSB export](psb-export.md).
 
-Validation:
+The numerical blend helper can return results in input units for developer use; the GUI uses encoded independent layers. Recipes retain variant, widths, target scale, spline diagnostics and display scale.
 
-- Frozen synthetic upstream fixtures for all three variants match all finite pixels within absolute 1e-7 (observed exact equality with the installed source). Fixture generation is documented in `tests/fixtures/ael_achf_iso04.md`.
-- Tests cover ignored-pixel contamination, nonpositive values, bypass, constant and sparse inputs, geometry, Overlay blending, scaling, GUI selection and 16-bit exported layer pixels/alpha.
-- 186 application tests pass.
-- Installed AEL self-test: 81 passed, 3 skipped; no failures. Skipped checks are not validated.
-- User-selected master.fits, 5608×3744: full-resolution runs of all three variants at Strength 10% completed, preserved all 20,723,292 finite pixels and the missing-data mask, and left the source SHA-256 unchanged. Full-canvas comparison inspected; not a scientific certification or native Photoshop check.
+## Evidence and limits
 
-**Credit:** Pere Guerra Serra (2026), *Agentic Eclipse Library*, version 1.3.3. These filters contain code copied and adapted from AEL under the MIT license; see [full attribution](../ATTRIBUTIONS.md).
+Frozen AEL 1.3.3 fixtures cover ISO 01, ISO 04 and Angular, with finite-pixel agreement within absolute 1e-7. See [fixture provenance](../tests/fixtures/ael_achf_iso04.md). Tests also cover support contamination, nonpositive/sparse/constant inputs, geometry, scaling, inclusion, encoding and exported alpha. Current suite results are in [validation](validation.md).
+
+Partial radial coverage and the lunar boundary can bias the profile and produce bands. A protective geometry circle need not be a physical solar-radius measurement. These filters are visualization operators, not calibrated photometric products.

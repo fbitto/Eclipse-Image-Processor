@@ -8,7 +8,7 @@ import unittest
 
 import numpy as np
 
-from core.filters import FilterWorker, adaptive_circular_highpass
+from core.filters import adaptive_circular_highpass
 
 
 def scalar_achf(image, radius, threshold, gain, background, labels, scale=1.):
@@ -72,15 +72,3 @@ class IndependentOracleTests(unittest.TestCase):
             expected = scalar_achf(image, 1.2, 100., 3., .2, labels, scale)
             actual = adaptive_circular_highpass(image, 1.2, 100., gain=3., background=.2, spatial_scale=scale)
             np.testing.assert_allclose(actual, expected, atol=1e-6, rtol=1e-6)
-
-    def test_pre_stretches_match_scalar_formulas_and_preserve_extrema(self):
-        worker = FilterWorker()
-        image = np.array([[-3., -2.5, 0., 8., 100.]], dtype=np.float32)
-        unit = (image.astype(float)+3)/103
-        for factor in (.01, 1., 100.):
-            expected = np.array([[math.asinh(float(v)*factor)/math.asinh(factor) for v in unit[0]]])*103-3
-            np.testing.assert_allclose(worker.run_pre_asinh(image, factor), expected, atol=5e-6, rtol=1e-6)
-        for exponent in (0., 1., 6.):
-            k = 10**exponent
-            expected = np.array([[math.log1p(k*float(v))/math.log1p(k) for v in unit[0]]])*103-3
-            np.testing.assert_allclose(worker.run_pre_log(image, exponent), expected, atol=5e-6, rtol=1e-6)

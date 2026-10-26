@@ -2,26 +2,21 @@
 FilterWorker: Native NumPy/SciPy coronal enhancement engine.
 
 Numerical enhancement operators:
-  - PRE-STRETCH: Asinh & Logarithmic
-  - DENOISING: Radial Noise Gate, Bilateral
   - RADIAL: NRGF, FNRGF, RHEF
   - MULTI-SCALE: MGN, WOW
   - DETAIL: Tangential angular residual, classic Larson-Sekanina, ACHF
 """
 
 import os
-import time
 from threading import Event
 from .cancellation import ProcessingCancelled, cancellation_scope, check_cancelled, cancellation_check
 from .parallelism import filter_cpu_budget
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
-from typing import Optional, Tuple
 
-import cv2
 import numpy as np
 from PySide6.QtCore import QObject, Signal, Slot
-from scipy.ndimage import gaussian_filter, gaussian_filter1d
+from scipy.ndimage import gaussian_filter
 from scipy.stats import rankdata
 
 CPU_CORES = os.cpu_count() or 4
@@ -33,13 +28,6 @@ def finite_image(image):
     if a.ndim != 2 or not a.size or not np.isfinite(a).all():
         raise ValueError("Filters require a nonempty finite 2D image")
     return a
-
-
-def normalize_image(image):
-    """Map finite intensities to [0, 1] without an absolute intensity epsilon."""
-    a = finite_image(image)
-    span = float(np.ptp(a))
-    return (a - a.min()) / span if span > 0 else np.zeros_like(a)
 
 
 def blend_filter_result(image, filtered, strength):
@@ -90,7 +78,7 @@ def ordered_scale_results(function, items, image):
 
 
 def larson_sekanina_residual(image, cx, cy, radius, radial_increment=0.,
-                             angular_increment=1., valid=None):
+                             angular_increment=3., valid=None):
     """Classic 2I-I(r-dr, theta-da)-I(r-dr, theta+da), in input units.
 
     2D samples use bilinear interpolation, dr in image pixels, da in degrees.
@@ -436,81 +424,8 @@ class FilterWorker(QObject):
             self.failed.emit(str(error))
 
     def _process_pipeline(self, raw_image: np.ndarray, params: dict):
-        if params.get("layered_model", False):
-            from .layer_engine import engine_for
-            return engine_for(self).render(self, raw_image, params, params.get("layer_display", {}))
         from .pipeline import execute_pipeline
         return execute_pipeline(self, raw_image, params)
-
-    def run_pre_asinh(self, img: np.ndarray, factor: float) -> np.ndarray:
-        if factor <= 0:
-            return img.copy()
-        a = finite_image(img)
-        norm = normalize_image(a)
-        stretched = np.arcsinh(norm * float(factor)) / np.arcsinh(float(factor))
-        return (stretched * np.ptp(a) + a.min()).astype(np.float32)
-
-    def run_pre_log(self, img: np.ndarray, log_exp: float) -> np.ndarray:
-        if log_exp < 0:
-            return img.copy()
-        a = finite_image(img)
-        norm = normalize_image(a)
-        k = 10.0 ** float(log_exp)
-        stretched = np.log1p(k * norm) / np.log1p(k)
-        return (stretched * np.ptp(a) + a.min()).astype(np.float32)
-
-    def run_radial_noise_gate(
-        self, img: np.ndarray, strength: float, threshold_param: float,
-        sun_x: float, sun_y: float, sun_r: float, spatial_scale=1.0,
-        local_sigma=3., gate_sigma=2.,
-    ) -> np.ndarray:
-        """Dimensionless SNR gate; spatial_scale preserves export kernel sizes."""
-        if strength == 0:
-            return img.copy()
-        a = finite_image(img)
-        if not np.isfinite([sun_r, spatial_scale, threshold_param]).all() or sun_r <= 0 or spatial_scale <= 0 or threshold_param < 0:
-            raise ValueError("Noise gate needs positive radius/scale and nonnegative threshold")
-        if threshold_param == 0:
-            return img.copy()
-        magnitude = np.max(np.abs(a))
-        if magnitude == 0:
-            return img.copy()
-        unit = a / magnitude
-        y, x = np.indices(a.shape, dtype=float)
-        r_map = np.hypot(x - sun_x, y - sun_y) / sun_r
-        local_mean = gaussian_filter(unit, sigma=local_sigma * spatial_scale)
-        local_std = np.sqrt(gaussian_filter((unit - local_mean) ** 2, sigma=local_sigma * spatial_scale))
-        snr = np.full(a.shape, np.inf)
-        np.divide(np.abs(local_mean), local_std, out=snr, where=local_std > 0)
-        threshold_map = float(threshold_param) / 100 * (1 + 2 * r_map)
-        gate = np.clip((snr - threshold_map) / threshold_map, 0, 1)
-        gate_smooth = gaussian_filter(gate, sigma=gate_sigma * spatial_scale)
-        alpha = float(strength) / 100
-        return (a * ((1 - alpha) + alpha * gate_smooth)).astype(np.float32)
-
-    def run_bilateral_denoise(
-        self, img: np.ndarray, strength: float, diameter_param: float,
-        sigma_color_param: float, sigma_space_param: float,
-    ) -> np.ndarray:
-        """Gradient-weighted Gaussian smoothing (not an OpenCV bilateral filter)."""
-        if strength == 0:
-            return img.copy()
-        a = finite_image(img)
-        if np.ptp(a) == 0:
-            return img.copy()
-        norm = normalize_image(a)
-        blur_radius = max(0.5, float(diameter_param) / 10)
-        # A singleton axis has zero gradient rather than raising in np.gradient.
-        gy = np.gradient(norm, axis=0) if a.shape[0] > 1 else np.zeros_like(a)
-        gx = np.gradient(norm, axis=1) if a.shape[1] > 1 else np.zeros_like(a)
-        gradient = np.hypot(gx, gy)
-        gradient_norm = normalize_image(gradient)
-        edge_weight = np.clip(1 - gradient_norm * float(sigma_space_param) / 100, .1, 1)
-        smooth = gaussian_filter(norm, sigma=blur_radius)
-        denoised = (norm * (1 - edge_weight) + smooth * edge_weight) * np.ptp(a) + a.min()
-        alpha = float(strength) / 100
-        return ((1 - alpha) * a + alpha * denoised).astype(np.float32)
-
 
     def run_nrgf_native(self, img, strength, sun_x, sun_y, sun_r, valid=None, **parameters):
         """AEL NRGF Multiply in input units; excluded/undefined samples retain input."""
@@ -750,11 +665,11 @@ class FilterWorker(QObject):
         return result.astype(np.float32)
 
     def run_larson_sekanina(self, img, strength, sun_x, sun_y, sun_r,
-                            radial_increment=0., angular_increment=1., valid=None):
+                            radial_increment=0., angular_increment=3., valid=None):
         if strength == 0:
             return img.copy()
-        if not np.isfinite(strength) or not 0 <= strength <= 100:
-            raise ValueError('Larson-Sekanina strength must lie in [0, 100]')
+        if not np.isfinite(strength) or not 0 <= strength <= 200:
+            raise ValueError('Larson-Sekanina gain must lie in [0, 200]')
         detail = larson_sekanina_residual(img, sun_x, sun_y, sun_r,
                                          radial_increment, angular_increment, valid)
         return (np.asarray(img, dtype=float)+float(strength)/100*detail).astype(np.float32)

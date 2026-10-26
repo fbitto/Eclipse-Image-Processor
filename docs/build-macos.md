@@ -22,3 +22,5 @@ The build script derives both macOS bundle version fields from `config.APP_VERSI
 The bundle uses the supplied `assets/Eclipse_Image_Processor.icns` directly for Finder and the Dock. The matching `assets/Eclipse_Image_Processor.png` is bundled for Qt windows and the menu-bar icon; it avoids dependence on a Qt ICNS decoder. In source runs, QApplication uses that PNG for the application icon. Intermediate files and PyInstaller configuration go into `build/macos`; both `build/` and `dist/` are ignored by Git.
 
 The target architecture follows the build interpreter: use an arm64 Python and dependencies for Apple Silicon, or x86_64 for Intel. Rebuilding replaces previous build outputs. A version/source change requires a fresh build; existing app bundles are not updated automatically.
+
+Use Python 3.14 or later with platform-compatible dependencies. Consult the [technical index](README.md) and [validation record](validation.md) for current scope. Packaging was not rerun during the 26 October documentation update.

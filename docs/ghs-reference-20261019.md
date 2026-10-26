@@ -1,6 +1,10 @@
 # Reference GHS curve and validation
 
-`core/ghs.py` replaces the former Asinh-based approximation with an independent implementation of the mathematical GHS curve described by David Payne and Mike Cranfield. Sources: [official process documentation, sections 3.7–3.11 and 5.2](https://www.ghsastro.co.uk/doc/tools/GeneralizedHyperbolicStretch/GeneralizedHyperbolicStretch.html) and [author's script implementation](https://github.com/mikec1485/GHS/blob/main/src/scripts/GeneralisedHyperbolicStretch/lib/GHSStretch.js). No upstream source code is copied.
+> Historical report. This document preserves its original research, measurements and implementation context. Controls, defaults, sequential processing and export behaviour described below may have changed. Use the [current technical guides](README.md) and [validation boundaries](validation.md) for the active application.
+
+The current GUI uses only PSB presentation. Display Stretch, including the GHS controls and picker, has been removed; the old numerical implementation and its tests have also been retired. This document is a historical record, not a description of the current pipeline. Settings with retired controls are no longer supported.
+
+The former `core/ghs.py` replaced the former Asinh-based approximation with an independent implementation of the mathematical GHS curve described by David Payne and Mike Cranfield. Sources: [official process documentation, sections 3.7–3.11 and 5.2](https://www.ghsastro.co.uk/doc/tools/GeneralizedHyperbolicStretch/GeneralizedHyperbolicStretch.html) and [author's script implementation](https://github.com/mikec1485/GHS/blob/main/src/scripts/GeneralisedHyperbolicStretch/lib/GHSStretch.js). No upstream source code is copied.
 
 ## Parameters and construction
 

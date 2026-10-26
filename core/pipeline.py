@@ -1,4 +1,4 @@
-"""Single synchronous filter pipeline, shared by Qt preview and export."""
+"""Independent layer composition and a numerical dispatcher limited to one filter."""
 import time
 from .cancellation import check_cancelled
 from copy import deepcopy
@@ -62,10 +62,23 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
     return p
 
 
-def execute_pipeline(worker, raw_image, params, *, process_label="PIPELINE", verbose=True):
-    if params.get("layered_model",False):
-        from .layer_engine import engine_for
-        return engine_for(worker).render(worker,raw_image,params,params.get("layer_display",{}))
+def execute_pipeline(worker, raw_image, params):
+    """Compose independent layers; every layer reads the original source."""
+    from .layer_engine import engine_for
+    return engine_for(worker).render(worker,raw_image,params,params.get('layer_display',{}))
+
+
+def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=True):
+    """Run at most one numerical operator, retaining masks and source intensity units.
+
+    This is called by LayerEngine when building a layer, never a chain of filters.
+    Multiple enabled operators are rejected before touching the input or worker.
+    """
+    from .layer_engine import ORDER
+    active = [name for name in (*ORDER, 'achf') if params.get(name + '_enabled', False)]
+    if len(active) > 1:
+        raise ValueError('Numerical dispatch accepts only one filter; use independent layer composition')
+    name = active[0] if active else None
     from .filters import finite_image, CPU_CORES
     check_cancelled()
     if raw_image is None:
@@ -99,7 +112,7 @@ def execute_pipeline(worker, raw_image, params, *, process_label="PIPELINE", ver
         worker = StatisticsWorker(base_worker, support)
 
     check_cancelled()
-    if p.get('nrgf_enabled', False):
+    if name == 'nrgf':
         img = worker.run_nrgf_native(
             img, p.get('nrgf_str', 100), p['sx'], p['sy'], p['sr'],
             **{key: value for key, value in p.items()
@@ -107,7 +120,7 @@ def execute_pipeline(worker, raw_image, params, *, process_label="PIPELINE", ver
 
     check_cancelled()
     # FNRGF: radial normalization
-    if p.get("fnrgf_enabled", False):
+    if name == 'fnrgf':
         step_start = time.time()
         img = worker.run_fnrgf_native(
             img,
@@ -135,7 +148,7 @@ def execute_pipeline(worker, raw_image, params, *, process_label="PIPELINE", ver
 
     check_cancelled()
     # RHEF: radial histogram equalization
-    if p.get("rhef_enabled", False):
+    if name == 'rhef':
         step_start = time.time()
         img = worker.run_rhef_native(
             img, p["rhef_str"], p["rhef_rad"], p["rhef_upsilon"], p["sx"], p["sy"], p["sr"],
@@ -149,7 +162,7 @@ def execute_pipeline(worker, raw_image, params, *, process_label="PIPELINE", ver
 
     check_cancelled()
     # MGN: multiscale Gaussian normalization
-    if p.get("mgn_enabled", False):
+    if name == 'mgn':
         step_start = time.time()
         img = worker.run_mgn_native(
             img,
@@ -166,7 +179,7 @@ def execute_pipeline(worker, raw_image, params, *, process_label="PIPELINE", ver
 
     check_cancelled()
     # WOW: wavelet whitening
-    if p.get("wow_enabled", False) and not (p.get('wow_mode') == 'ael_bilateral' and p.get('wow_str') == 0):
+    if name == "wow" and not (p.get('wow_mode') == 'ael_bilateral' and p.get('wow_str') == 0):
         step_start = time.time()
         if p.get('wow_mode') == 'ael_bilateral':
             from .ael_wow import ael_wow_layer
@@ -194,7 +207,7 @@ def execute_pipeline(worker, raw_image, params, *, process_label="PIPELINE", ver
             print(f"[{process_label}: WOW NATIVE] Done in {time.time() - step_start:.3f}s")
 
     check_cancelled()
-    if p.get('tangential_enabled', False):
+    if name == 'tangential':
         step_start = time.time()
         img = worker.run_tangential(
             img, p['tangential_str'], p['sx'], p['sy'], p['sr'],
@@ -205,18 +218,18 @@ def execute_pipeline(worker, raw_image, params, *, process_label="PIPELINE", ver
             print(f"[{process_label}: TANGENTIAL DETAIL] Done in {time.time() - step_start:.3f}s")
 
     check_cancelled()
-    if p.get('larson_sekanina_enabled', False):
+    if name == 'larson_sekanina':
         step_start = time.time()
         img = worker.run_larson_sekanina(
             img, p['larson_sekanina_str'], p['sx'], p['sy'], p['sr'],
             radial_increment=p.get('larson_sekanina_radial', 0.),
-            angular_increment=p.get('larson_sekanina_angular', 1.))
+            angular_increment=p.get('larson_sekanina_angular', 3.))
         if verbose:
             print(f"[{process_label}: LARSON-SEKANINA] Done in {time.time() - step_start:.3f}s")
 
     check_cancelled()
     # ACHF: final enhancement stage
-    if p.get("achf_enabled", False):
+    if name == 'achf':
         step_start = time.time()
         if p.get('achf_variant', 'adaptive') in ('ael_iso_01','ael_iso_04','ael_angular_4'):
             from .ael_achf import apply_ael_achf

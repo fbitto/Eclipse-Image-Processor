@@ -1,5 +1,7 @@
 # Filter validation on Prueba.tiff — 2026-10-19
 
+> Historical report. This document preserves its original research, measurements and implementation context. Controls, defaults, sequential processing and export behaviour described below may have changed. Use the [current technical guides](README.md) and [validation boundaries](validation.md) for the active application.
+
 Later implementation and updated validation: [filter controls and implementation checks](filter-controls-20261019.md). This document records the preceding review.
 The numerical suite passes after correcting one masked-WOW overflow. Visual acceptance is **not complete**: FNRGF produces conspicuous circular bands with the tested settings, and standard WOW has a large preview/full-resolution difference. Passing arithmetic and integration checks does not certify artifact-free enhancement or quantitative scientific validity.
 

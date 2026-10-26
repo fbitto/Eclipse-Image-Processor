@@ -144,7 +144,7 @@ def main():
         image = tifffile.imread(args.image).astype(np.float32)
         if image.ndim == 3:
             image = .299 * image[:, :, 0] + .587 * image[:, :, 1] + .114 * image[:, :, 2]
-        cx, cy, radius = EclipseProcessorApp.detect_lunar_limb(None, image)
+        cx, cy, radius = EclipseProcessorApp.detect_lunar_limb(image)
         full_geometry = geometry.EclipseGeometry(image.shape, (cx, cy), radius, (cx, cy), radius)
         results["source"] = {"sha256": hashlib.sha256(args.image.read_bytes()).hexdigest(),
                              "shape": list(image.shape), "solar_equals_lunar_assumed": True}

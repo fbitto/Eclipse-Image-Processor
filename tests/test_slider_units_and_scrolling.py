@@ -1,4 +1,6 @@
 """Physical slider labels and wheel routing through the real sidebar widgets."""
+from gui_wait import close_window
+
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import unittest
@@ -22,7 +24,7 @@ class SliderInteractionTests(unittest.TestCase):
 
     def tearDown(self):
         self.window.presentation_timer.stop()
-        self.window.close()
+        close_window(self.window)
         self.window.deleteLater()
         self.app.processEvents()
 
@@ -35,18 +37,6 @@ class SliderInteractionTests(unittest.TestCase):
         params=self.window.collect_filter_parameters((64, 64))
         self.assertFalse(any(key.startswith(("pre_stretch", "noise_gate", "bilateral")) for key in params))
 
-    def test_log_k_uses_compact_labels_without_changing_filter_value(self):
-        w = self.window
-        w.combo_stretch_mode.setCurrentIndex(1)
-        for tick in range(w.sl_stretch.minimum(), w.sl_stretch.maximum()+1):
-            w.sl_stretch.setValue(tick)
-            editor = w.sl_stretch.value_label
-            self.assertEqual(editor.text(), f"{10 ** (tick / 10):.3g}")
-            self.assertLess(editor.fontMetrics().horizontalAdvance(editor.text()), editor.width()-8)
-        w.sl_stretch.setValue(27)
-        self.assertEqual(w.sl_stretch.value_label.text(), '501')
-        w.sl_stretch.value_label.editingFinished.emit()
-        self.assertEqual(w.sl_stretch.value(), 27)
 
     def test_all_controls_use_wheel_safe_widgets_and_unencoded_labels(self):
         sliders = self.window.findChildren(QSlider)
@@ -102,21 +92,11 @@ class SliderInteractionTests(unittest.TestCase):
         for slider in w.findChildren(QSlider):
             self.assertIsInstance(slider.value_label, QLineEdit)
             self.assertIsNotNone(slider.parameter_row)
-        w.combo_stretch_mode.setCurrentIndex(1)
-        w.sl_stretch.value_label.setText('1000')
-        w.sl_stretch.value_label.editingFinished.emit()
-        self.assertEqual(w.sl_stretch.value(), 30)
-        w.combo_stretch_mode.setCurrentIndex(2)
-        w.sl_stretch.value_label.setText('3.5')
-        w.sl_stretch.value_label.editingFinished.emit()
-        self.assertEqual(w.sl_stretch.value(), 3500)
-        QTest.mouseDClick(w.sl_stretch, Qt.MouseButton.LeftButton)
-        self.assertEqual(w.sl_stretch.value(), 2000)
-        w.sl_ghs_sp.value_label.setText('0.25')
-        w.sl_ghs_sp.value_label.editingFinished.emit()
-        self.assertEqual(w.sl_ghs_sp.value(), 500)
-        self.assertEqual(w.sl_ghs_lp.maximum(), 500)
-        self.assertEqual(w.sl_ghs_hp.minimum(), 500)
+        w.sl_psb_exposure.value_label.setText('1.25')
+        w.sl_psb_exposure.value_label.editingFinished.emit()
+        self.assertEqual(w.sl_psb_exposure.value(),125)
+        QTest.mouseDClick(w.sl_psb_exposure,Qt.MouseButton.LeftButton)
+        self.assertEqual(w.sl_psb_exposure.value(),0)
         for slider in (w.sl_statistics_percentile, w.sl_tangential_outer):
             self.assertFalse(slider.value_label.isEnabled())
             previous = slider.value()
@@ -132,7 +112,7 @@ class SliderInteractionTests(unittest.TestCase):
         w = self.window
         self.assertEqual(w.sl_mgn_sigmas[0].title_label.text(), 'Scale 1 sigma\n(native px)')
         self.assertEqual(w.sl_mgn_trunc.title_label.text(), 'Kernel Truncation\n(Sigmas)')
-        self.assertEqual(w.sl_fnrgf_str.title_label.text(), 'Strength (%)')
+        self.assertEqual(w.sl_larson_sekanina_str.title_label.text(), 'Gain (%)')
         from gui.factories import update_slider_display
         update_slider_display(w.sl_mgn_trunc, title='Long parameter name (preview px)')
         self.assertEqual(w.sl_mgn_trunc.title_label.text(), 'Long parameter name\n(preview px)')
@@ -179,53 +159,8 @@ class SliderInteractionTests(unittest.TestCase):
             self.assertEqual(getattr(w, 'sl_' + name).value_label.text(), expected, name)
         w.sl_fnrgf_seg.setValue(5)
         self.assertEqual(w.sl_fnrgf_seg.value_label.text(), '32')
-        w.sl_ghs_sp.setValue(101)
-        self.assertEqual(w.lbl_ghs_sp.text(), '0.0505')
-        self.assertEqual(w.collect_display_parameters()['sp'], 0.0505)
 
-    def test_log_modes_display_actual_k_and_refresh_at_unchanged_tick(self):
-        w = self.window
-        for combo, slider in ((w.combo_stretch_mode, w.sl_stretch),):
-            combo.setCurrentIndex(1)
-            for tick, expected in ((0, '1'), (10, '10'), (20, '100'), (60, '1e+06')):
-                slider.setValue(tick)
-                self.assertEqual(slider.value_label.text(), expected)
-            slider.setValue(10)
-            combo.setCurrentIndex(0)
-            self.assertEqual(slider.value_label.text(), '10')
-            self.assertNotIn('Log', slider.title_label.text())
-            combo.setCurrentIndex(1)
-            self.assertEqual(slider.title_label.text(), 'Logarithmic K')
-            self.assertEqual(slider.value_label.text(), '10')
 
-    def test_ghs_original_ranges_units_and_constraints(self):
-        w = self.window
-        w.combo_stretch_mode.setCurrentIndex(2)
-        self.assertEqual((w.sl_stretch.minimum(), w.sl_stretch.maximum()), (0, 20000))
-        self.assertEqual(w.sl_stretch.value_label.text(), '2')
-        self.assertEqual(w.collect_display_parameters()['strength'], 2.)
-        self.assertEqual((w.sl_ghs_b.minimum(), w.sl_ghs_b.maximum()), (-500, 1500))
-        w.sl_ghs_b.setValue(-100)
-        self.assertEqual(w.sl_ghs_b.value_label.text(), '-1')
-        self.assertEqual(w.collect_display_parameters()['b'], -1.)
-        w.sl_ghs_sp.setValue(1700)
-        self.assertEqual(w.lbl_ghs_sp.text(), '0.85')
-        self.assertEqual(w.sl_ghs_lp.maximum(), 1700)
-        self.assertEqual(w.sl_ghs_hp.minimum(), 1700)
-        w.sl_ghs_lp.setValue(1600)
-        w.sl_ghs_hp.setValue(1800)
-        p = w.collect_display_parameters()
-        self.assertEqual((p['lp'], p['sp'], p['hp']), (.8, .85, .9))
-        w.sl_ghs_sp.setValue(0)
-        self.assertEqual(w.sl_ghs_lp.value(), 0)
-        w.sl_ghs_sp.setValue(2000)
-        self.assertEqual(w.sl_ghs_hp.value(), 2000)
-        w.sl_stretch.setValue(0)
-        self.assertEqual(w.collect_display_parameters()['strength'], 0.)
-        w.combo_stretch_mode.setCurrentIndex(0)
-        self.assertEqual(w.sl_stretch.value_label.text(), '10')
-        w.combo_stretch_mode.setCurrentIndex(1)
-        self.assertEqual(w.sl_stretch.value_label.text(), '10')
 
     def wheel(self, widget, angle=QPoint(0, -120), pixels=QPoint()):
         event = QWheelEvent(QPointF(widget.rect().center()),
@@ -262,7 +197,7 @@ class SliderInteractionTests(unittest.TestCase):
         previous = bar.value()
         self.wheel(slider, QPoint(0, -120), QPoint(0, -24))
         self.assertGreater(bar.value(), previous)
-        combo = w.combo_stretch_mode
+        combo = w.combo_layers_format
         combo.setFocus()
         index = combo.currentIndex()
         bar.setValue(bar.maximum() // 2)

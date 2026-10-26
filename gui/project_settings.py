@@ -26,7 +26,7 @@ def capture_settings(window):
         else:values[name]=dict(kind='combo',value=widget.currentIndex(),text=widget.currentText())
     sections={name:dict(active=widget.is_filter_active(),expanded=widget.is_expanded)
         for name,widget in vars(window).items() if isinstance(widget,CollapsibleSection)}
-    return dict(controls=values,sections=sections,
+    return dict(background_samples=([list(p) for p in window.background.points] if window.background.points is not None else None),controls=values,sections=sections,
                 geometry={key:getattr(window,'txt_'+key).text() for key in ('x','y','r')},
                 auto_calculate=window.auto_calculate)
 
@@ -40,25 +40,20 @@ def filter_widgets(window):
 
 
 def initialize_filter_defaults(window):
-    """Capture factory parameters once, with the requested AEL composition and 25/75 alternatives."""
+    """Capture opacity-only defaults; Linear Light keeps its independent Gain."""
     from core.layer_engine import ORDER
     settings=capture_settings(window)
     names=filter_widgets(window)
     values={name:record for name,record in settings['controls'].items() if name in names}
     for name in ORDER+('achf',):
-        values['sl_'+name+'_str']['value']=25
-        values['sl_'+name+'_opacity']['value']=75
+        values['sl_'+name+'_opacity']['value']=75 if name == 'larson_sekanina' else 19 if name == 'achf' else 20
+    values['sl_larson_sekanina_str']['value']=25
     for variant in window.achf_ael_controls:
-        values[f'achf_ael_controls.{variant}.strength']['value']=25
-        values[f'achf_ael_controls.{variant}.opacity']['value']=75
+        values[f'achf_ael_controls.{variant}.opacity']['value']=10
         values[f'achf_ael_controls.{variant}.enabled']['value']=False
     values['chk_achf_adaptive']['value']=False
-    for name,opacity in (('nrgf',40),('wow',35)):
-        values['sl_'+name+'_str']['value']=100
+    for name,opacity in (('nrgf',40),('wow',10)):
         values['sl_'+name+'_opacity']['value']=opacity
-    for variant in ('ael_iso_04','ael_angular_4'):
-        values[f'achf_ael_controls.{variant}.strength']['value']=100
-        values[f'achf_ael_controls.{variant}.opacity']['value']=10
     values['sl_wow_scales']['value']=6
     values['sl_wow_noise_floor']['value']=30
     for name,index in (('combo_wow_bilateral',2),('combo_achf_variant',2)):
@@ -101,14 +96,15 @@ def reset_filter_defaults(window, *, ael=False):
 
 
 def validate_settings(window,settings):
+    if not isinstance(settings,dict) or set(settings) != {'background_samples','controls','sections','geometry','auto_calculate'}:
+        raise ValueError('Settings do not match the current format')
     widgets=controls(window)
     values=settings.get('controls')
-    optional=set(filter_widgets(window)) | {'chk_color_correction'}
-    if (not isinstance(values,dict) or set(values)-set(widgets)-{'chk_export_achf_ael'} or
+    optional=set(filter_widgets(window))
+    if (not isinstance(values,dict) or set(values)-set(widgets) or
             set(widgets)-set(values)-optional):
         raise ValueError('Settings controls do not match this application version')
     for name,record in values.items():
-        if name=='chk_export_achf_ael':continue
         if not isinstance(record,dict):raise ValueError(f'Invalid control: {name}')
         widget=widgets[name];value=record.get('value')
         kind='slider' if isinstance(widget,QSlider) else 'check' if isinstance(widget,QCheckBox) else 'combo'
@@ -125,9 +121,15 @@ def validate_settings(window,settings):
     except (KeyError,ValueError,TypeError):raise ValueError('Invalid saved disk geometry')
     if coords[2]<=0:raise ValueError('Saved disk radius must be positive')
     if type(settings.get('auto_calculate')) is not bool:raise ValueError('Invalid automatic calculation mode')
+    points=settings.get('background_samples')
+    if points is not None:
+        if (not isinstance(points,(list,tuple)) or len(points)>5000 or any(
+                not isinstance(p,(list,tuple)) or len(p)!=2 or any(type(v) is not int or v<0 or v>10**9 for v in p)
+                for p in points)):
+            raise ValueError('Invalid background sample coordinates')
     sections=settings.get('sections')
     expected={n for n,w in vars(window).items() if isinstance(w,CollapsibleSection)}
-    optional_sections={name for name in expected if name not in ('sec_geo','sec_stretch')}
+    optional_sections={name for name in expected if name != 'sec_geo'}
     if (not isinstance(sections,dict) or set(sections)-expected or expected-set(sections)-optional_sections):
         raise ValueError('Invalid saved filter sections')
     for record in sections.values():
@@ -136,21 +138,40 @@ def validate_settings(window,settings):
 
 
 def restore_settings(window,settings):
+    """Apply a recipe atomically, including ranges changed by selector callbacks."""
     validate_settings(window,settings)
+    previous=capture_settings(window)
+    ranges={name:(widget.minimum(),widget.maximum()) for name,widget in controls(window).items()
+            if isinstance(widget,QSlider)}
+    window._restoring_settings=True
+    try:
+        _apply_settings(window,settings)
+    except Exception:
+        _apply_settings(window,previous)
+        for name,(minimum,maximum) in ranges.items():
+            controls(window)[name].setRange(minimum,maximum)
+        raise
+    finally:
+        window._restoring_settings=False
+        window.recalculation_timer.stop()
+        window.presentation_timer.stop()
+
+
+def _apply_settings(window,settings):
     widgets=controls(window)
-    # Older JSON files contain the removed all-ACHF export checkbox.
-    values={name:record for name,record in settings['controls'].items()
-            if name!='chk_export_achf_ael'}
+    values=settings['controls']
     previous=window.auto_calculate
     window.auto_calculate=False
     try:
         reset_filter_defaults(window,ael=False)
-        window.chk_color_correction.setChecked(False)
+        window.btn_psb_preview.setChecked(True)
+        window.background.points=([tuple(p) for p in settings['background_samples']] if settings.get('background_samples') is not None else None)
+        window.background.dirty=window.background.base is not None
         for key,value in settings['geometry'].items():getattr(window,'txt_'+key).setText(value)
         # Selector callbacks establish slider ranges and variant-panel visibility.
         for name,record in values.items():
             if record['kind']=='combo':widgets[name].setCurrentIndex(record['value'])
-        # Two passes accommodate linked GHS SP/LP/HP/BP/WP bounds.
+        # Resolve linked filter bounds after the selectors and geometry.
         for _ in range(2):
             for name,record in values.items():
                 if record['kind']=='slider':

@@ -1,11 +1,9 @@
-"""Reusable UI components: ClickableLabel, CollapsibleSection."""
+"""Shared sidebar controls, section widgets and in-window tooltips."""
 
-from typing import Optional
 
-import numpy as np
 from shiboken6 import isValid
-from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QCursor, QColor, QPainter, QPen, QPixmap, QWheelEvent
+from PySide6.QtCore import QEvent, QObject, QPointF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QPainter, QWheelEvent
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractScrollArea,
@@ -18,8 +16,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QSizePolicy,
-    QStyle,
     QVBoxLayout,
     QWidget,
     QToolTip,
@@ -253,97 +249,6 @@ class FullRowCheckBox(QCheckBox):
 
     def hitButton(self, position):
         return self.rect().contains(position)
-
-
-class ClickableLabel(QLabel):
-    """Interactive image viewer with dynamic geometric projection in real-time."""
-
-    image_clicked = Signal(int, int)
-    circle_center_requested = Signal(int, int)
-
-    def __init__(self, parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.circle_x: Optional[float] = None
-        self.circle_y: Optional[float] = None
-        self.circle_r: Optional[float] = None
-        self.native_w: Optional[int] = None
-        self.native_h: Optional[int] = None
-
-        self.setMinimumSize(1, 1)
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-
-    def set_circle_parameters(
-        self,
-        x: float,
-        y: float,
-        r: float,
-        native_w: Optional[int] = None,
-        native_h: Optional[int] = None,
-    ):
-        self.circle_x = x
-        self.circle_y = y
-        self.circle_r = r
-        if native_w is not None and native_h is not None:
-            self.native_w = native_w
-            self.native_h = native_h
-        self.update()
-
-    def _pixmap_rect(self):
-        """Use QLabel's alignment and logical pixel size for drawing and clicks."""
-        rect = self.contentsRect()
-        margin = self.margin()
-        rect.adjust(margin, margin, -margin, -margin)
-        return QStyle.alignedRect(self.layoutDirection(), self.alignment(),
-                                  self.pixmap().deviceIndependentSize().toSize(), rect)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            pix = self.pixmap()
-            if pix is None or pix.isNull() or not self.native_w or self.native_w <= 0:
-                return
-
-            rect = self._pixmap_rect()
-            w_pix, h_pix = rect.width(), rect.height()
-            bx, by = rect.x(), rect.y()
-
-            pos = event.position().toPoint()
-            if bx <= pos.x() <= bx + w_pix and by <= pos.y() <= by + h_pix:
-                scale_x = w_pix / float(self.native_w)
-                scale_y = h_pix / float(self.native_h)
-                orig_x = min(self.native_w - 1, max(0, round((pos.x() - bx + 0.5) / scale_x - 0.5)))
-                orig_y = min(self.native_h - 1, max(0, round((pos.y() - by + 0.5) / scale_y - 0.5)))
-                # Qt maps Command on macOS to ControlModifier by default.
-                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-                    self.circle_center_requested.emit(orig_x, orig_y)
-                else:
-                    self.image_clicked.emit(orig_x, orig_y)
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        pix = self.pixmap()
-        if pix is None or pix.isNull() or not self.native_w or self.native_w <= 0:
-            return
-
-        if self.circle_x is not None and self.circle_y is not None and self.circle_r is not None:
-            rect = self._pixmap_rect()
-            w_pix, h_pix = rect.width(), rect.height()
-            bx, by = rect.x(), rect.y()
-            scale_x = w_pix / float(self.native_w)
-            scale_y = h_pix / float(self.native_h)
-
-            # Match resize pixel centers, preserving subpixel limb geometry.
-            screen_x = (self.circle_x + 0.5) * scale_x + bx
-            screen_y = (self.circle_y + 0.5) * scale_y + by
-
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            pen = QPen(QColor(255, 50, 50, 220), 2, Qt.PenStyle.SolidLine)
-            painter.setPen(pen)
-
-            painter.drawEllipse(QPointF(screen_x, screen_y),
-                                self.circle_r * scale_x, self.circle_r * scale_y)
-            painter.drawLine(QPointF(screen_x - 6, screen_y), QPointF(screen_x + 6, screen_y))
-            painter.drawLine(QPointF(screen_x, screen_y - 6), QPointF(screen_x, screen_y + 6))
 
 
 class CollapsibleSection(QWidget):

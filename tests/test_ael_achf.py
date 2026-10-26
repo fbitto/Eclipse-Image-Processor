@@ -9,7 +9,7 @@ import tifffile
 
 from core.ael_achf import ael_achf_layer, apply_ael_achf
 from core.filters import FilterWorker
-from core.pipeline import execute_pipeline, prepare_parameters
+from core.pipeline import apply_filter, prepare_parameters
 from core.layer_export import export_layer_package, to_u16
 
 
@@ -45,38 +45,27 @@ class AELACHFTests(unittest.TestCase):
                 use = np.isfinite(layer) & np.isfinite(changed)
                 self.assertGreater(np.max(abs(layer[use]-changed[use])),.01)
 
-    def test_export_all_includes_adaptive_even_when_achf_disabled(self):
-        p=dict(sx=self.cx,sy=self.cy,sr=self.radius,valid_mask=self.valid,
-               export_achf_variants=True,achf_enabled=False,achf_variant='ael_iso_04',
-               achf_str=77,achf_adaptive_strength=0,achf_kernel=10,achf_boost=20,
-               achf_background=100)
+    def test_disabled_family_omits_achf_even_with_inclusion_flags(self):
+        from core.ael_achf import AEL_PRESETS
+        p=dict(sx=self.cx,sy=self.cy,sr=self.radius,valid_mask=self.valid,achf_enabled=False,
+               achf_variants={key:dict(value,enabled=True,strength=100) for key,value in AEL_PRESETS.items()})
         with tempfile.TemporaryDirectory() as tmp:
             destination=Path(tmp)/'layers'
-            import io
-            from contextlib import redirect_stdout
-            output=io.StringIO()
-            with redirect_stdout(output):
-                export_layer_package(FilterWorker(),self.image,p,{},'synthetic.fits',destination)
-            for variant in ('ADAPTIVE','AEL_ISO_01','AEL_ISO_04','AEL_ANGULAR_4'):
-                self.assertIn(f'[LAYER {variant}: FILTER] Done in ',output.getvalue())
-                self.assertIn(f'[LAYER {variant}: TIFF WRITE] Done in ',output.getvalue())
+            export_layer_package(FilterWorker(),self.image,p,{},'synthetic.fits',destination)
             recipe=json.loads((destination/'recipe.json').read_text())
-            layers=[r for r in recipe['layers'] if r.get('filter')=='achf']
-            self.assertEqual([r['variant'] for r in layers],
-                             ['adaptive','ael_iso_01','ael_iso_04','ael_angular_4'])
-            self.assertEqual(len({r['file'] for r in layers}),4)
-            self.assertEqual(layers[0]['opacity_255'],0)
-            self.assertFalse(layers[0]['visible'])
+            self.assertFalse(any(row['filter']=='achf' for row in recipe['layers']))
 
     def test_export_three_independent_variants_including_hidden_zero_strength(self):
         from core.ael_achf import AEL_PRESETS
         p = dict(sx=self.cx,sy=self.cy,sr=self.radius,valid_mask=self.valid,
-                 statistics_exclude_lunar=True,export_achf_ael_variants=True,
+                 statistics_exclude_lunar=True,
+                 achf_kernel=10,achf_boost=20,
                  achf_variant='ael_iso_04',achf_enabled=True,achf_str=77,
-                 achf_variants={key:dict(value) for key,value in AEL_PRESETS.items()})
+                 achf_variants={key:dict(value,enabled=True,strength=100) for key,value in AEL_PRESETS.items()})
         p['achf_variants']['ael_iso_01']['strength'] = 0
-        p['achf_variants']['ael_iso_04']['strength'] = 23
+        p['achf_variants']['ael_iso_04']['opacity'] = 23
         p['achf_variants']['ael_angular_4']['angular_sigma'] = 2.
+        p['achf_variants']['adaptive']=dict(enabled=False)
         with tempfile.TemporaryDirectory() as tmp:
             destination = Path(tmp)/'layers'
             export_layer_package(FilterWorker(),self.image,p,{},'synthetic.fits',destination)
@@ -91,7 +80,7 @@ class AELACHFTests(unittest.TestCase):
                     self.valid,variant=variant,parameters=p['achf_variants'][variant])
                 use = np.isfinite(expected)
                 rgba = tifffile.imread(destination/record['file'])
-                np.testing.assert_array_equal(rgba[...,0][use],to_u16(np.where(use,expected,.5))[use])
+                np.testing.assert_array_equal(rgba[...,0][use],to_u16(np.where(use,.5+(expected-.5)*p['achf_variants'][variant]['strength']/100,.5))[use])
                 self.assertTrue((rgba[...,3][~use]==0).all())
                 if variant=='ael_iso_01':
                     self.assertEqual(record['opacity_255'],0)
@@ -116,7 +105,7 @@ class AELACHFTests(unittest.TestCase):
         p = dict(sx=self.cx, sy=self.cy, sr=self.radius, achf_variant='ael_iso_04',
                  achf_enabled=True, achf_str=10, valid_mask=self.valid,
                  statistics_exclude_lunar=True)
-        actual = execute_pipeline(FilterWorker(), self.image, p)
+        actual = apply_filter(FilterWorker(), self.image, p)
         low, high = np.nanmin(self.image), np.nanmax(self.image)
         base = (self.image-low)/(high-low)
         full = np.where(base <= .5, 2*base*self.expected,
@@ -130,8 +119,9 @@ class AELACHFTests(unittest.TestCase):
 
     def test_export_preserves_ael_encoding_without_second_normalization(self):
         p = dict(sx=self.cx, sy=self.cy, sr=self.radius, achf_variant='ael_iso_04',
-                 achf_enabled=True, achf_str=10, valid_mask=self.valid,
-                 statistics_exclude_lunar=True)
+                 achf_enabled=True, achf_str=100, valid_mask=self.valid,
+                 statistics_exclude_lunar=True,
+                 achf_variants={'adaptive':dict(enabled=False),'ael_iso_04':dict(enabled=True,opacity=10,strength=100)})
         with tempfile.TemporaryDirectory() as tmp:
             destination = Path(tmp)/'layers'
             export_layer_package(FilterWorker(), self.image, p, {}, 'synthetic.fits', destination)
@@ -143,7 +133,7 @@ class AELACHFTests(unittest.TestCase):
             np.testing.assert_array_equal(rgba[...,0][self.valid], to_u16(np.where(self.valid, self.expected, .5))[self.valid])
             self.assertTrue((rgba[...,3][~self.valid] == 0).all())
 
-    def test_multi_export_option_leaves_main_pixels_unchanged(self):
+    def test_layer_export_option_leaves_main_pixels_unchanged(self):
         from unittest.mock import patch
         from core.export import export_images
         source = np.nan_to_num(self.image,nan=1.)
@@ -153,9 +143,9 @@ class AELACHFTests(unittest.TestCase):
             first = str(Path(tmp)/'single.tif')
             export_images(source,p,{},first,'synthetic.fits',processed=source,export_layers=False)
             package.assert_not_called()
-            multiple = dict(p,export_achf_ael_variants=True)
+            multiple = dict(p)
             second = str(Path(tmp)/'multiple.tif')
-            export_images(source,multiple,{},second,'synthetic.fits',processed=source,export_layers=False)
+            export_images(source,multiple,{},second,'synthetic.fits',processed=source,export_layers=True)
             package.assert_called_once()
             np.testing.assert_array_equal(tifffile.imread(first),tifffile.imread(second))
 

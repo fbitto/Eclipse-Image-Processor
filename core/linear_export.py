@@ -49,7 +49,7 @@ def split_source_channels(image):
     return mono.astype(np.float32), rgb
 
 
-def export_linear_sources(mono, rgb, original_path, destination, input_state='unknown'):
+def export_linear_sources(mono, rgb, original_path, destination, input_state='unknown', preprocessing=None):
     """Export original working units, no normalization/filter/stretch or inversion.
 
     LINEAR is used only for an explicitly declared linear input. An unknown or
@@ -68,6 +68,7 @@ def export_linear_sources(mono, rgb, original_path, destination, input_state='un
     label = 'LINEAR' if input_state == 'linear' else 'INPUT'
     files = []
     metadata = dict(source=str(original_path), input_state=input_state, normalization='none',
+                    preprocessing=preprocessing,
                     filters='none', stretch='none', units='Original loaded pixel units',
                     colour='Source RGB retained without colour calibration or ICC assignment',
                     missing_samples='Stored as zero; VALID identifies missing observations')
@@ -92,6 +93,8 @@ def export_linear_sources(mono, rgb, original_path, destination, input_state='un
             missing_pixels=int((~valid).sum())), indent=2), encoding='utf-8')
         note = ('The input was declared linear.' if input_state == 'linear' else
                 'The input was not declared linear: INPUT files retain their original transfer function.')
+        if preprocessing is not None:
+            note += '\nThese are prepared working sources with background slopes equalized; see sources.json for the model.'
         (stage/'README.txt').write_text(note + '\nRGB and luminance without filtering, stretching or normalization. '
             'No input transfer curve was inverted. Observed values retain their units; missing samples are stored as float32 zero.\n'
             'VALID marks observed (255) and missing (0) samples.\n'

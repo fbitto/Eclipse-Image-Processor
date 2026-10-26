@@ -1,4 +1,6 @@
 """Native PSB correction layers, masks, colour profile and export-only settings."""
+from gui_wait import close_window
+
 import os
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from copy import deepcopy
@@ -108,7 +110,7 @@ class ColorCorrectionGuiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
 
-    def test_checkbox_is_psb_only_preserves_recipe_and_restores_old_json_off(self):
+    def test_checkbox_is_psb_only_and_current_json_requires_its_state(self):
         w=EclipseProcessorApp();w.auto_calculate=False
         w.full_raw_image=w.raw_image=w.preview_image=np.ones((64,80),np.float32)
         w.txt_x.setText('40');w.txt_y.setText('32');w.txt_r.setText('8')
@@ -132,6 +134,6 @@ class ColorCorrectionGuiTests(unittest.TestCase):
             restore_settings(w,settings)
             self.assertEqual(capture_settings(w),settings)
             old=deepcopy(settings);old['controls'].pop('chk_color_correction')
-            restore_settings(w,old)
-            self.assertFalse(w.chk_color_correction.isChecked())
-        finally:w.close()
+            with self.assertRaises(ValueError):restore_settings(w,old)
+            self.assertEqual(capture_settings(w),settings)
+        finally:close_window(w)

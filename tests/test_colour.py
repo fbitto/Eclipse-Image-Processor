@@ -106,12 +106,12 @@ class ColourTests(unittest.TestCase):
             output = Path(tmp)/'layers'
             export_layer_package(FilterWorker(), self.mono, params, display, 'original.tif', output, rgb=self.rgb)
             recipe = json.loads((output/'recipe.json').read_text())
-            self.assertEqual([r['mode'] for r in recipe['layers']], ['Normal', 'Overlay', 'Color'])
-            self.assertEqual(recipe['layers'][-1]['file'], '03_RGB_Color.tif')
-            base = tifffile.imread(output/recipe['layers'][0]['file'])[..., 0]/65535.
-            detail = tifffile.imread(output/recipe['layers'][1]['file'])/65535.
-            mono = overlay(base, detail[..., 0], detail[..., 3], recipe['layers'][1]['opacity_255']/255.)
-            colour = tifffile.imread(output/recipe['layers'][2]['file'])[..., :3]/65535.
-            expected = to_u16(set_luminosity(colour, mono))
+            self.assertEqual([r['mode'] for r in recipe['layers']], ['Normal', 'Normal', 'Overlay', 'Color'])
+            self.assertEqual(recipe['layers'][-1]['file'], '04_RGB_Color.tif')
+            base = tifffile.imread(output/recipe['layers'][1]['file'])[..., 0]/65535.
+            detail = tifffile.imread(output/recipe['layers'][2]['file'])/65535.
+            mono = overlay(base, detail[..., 0], detail[..., 3], recipe['layers'][2]['opacity_255']/255.)
+            colour = tifffile.imread(output/recipe['layers'][3]['file'])[..., :3]/65535.
+            expected = to_u16(set_luminosity(colour, mono.astype(np.float32)))
             np.testing.assert_array_equal(tifffile.imread(output/recipe['combined']), expected)
             self.assertIn('BlendMode.COLORBLEND', (output/'Load_layers_Photoshop.jsx').read_text())

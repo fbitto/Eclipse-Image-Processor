@@ -1,4 +1,6 @@
 """Fresh-image AEL defaults, partial settings and the exact AEL WOW operator."""
+from gui_wait import wait_for_gui, close_window
+
 import os
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from copy import deepcopy
@@ -12,7 +14,7 @@ from PySide6.QtWidgets import QApplication
 from core.ael_wow import ael_wow_layer
 from core.filters import FilterWorker
 from core.layer_engine import LayerEngine, requests
-from core.pipeline import execute_pipeline, prepare_parameters
+from core.pipeline import apply_filter, execute_pipeline, prepare_parameters
 from core.project_settings import write_settings
 from gui.app import EclipseProcessorApp
 from gui.project_settings import capture_settings, restore_settings, validate_settings
@@ -56,7 +58,7 @@ class AELWOWTests(unittest.TestCase):
         self.assertEqual(prepare_parameters(self.p,self.image.shape,self.image.shape,self.image.shape)['wow_scales'],6)
         p=dict(self.p,wow_str=0,valid_mask=self.valid)
         with patch('core.ael_wow.ael_wow_layer',side_effect=AssertionError('Bypass calculated')):
-            out=execute_pipeline(worker,self.image,p,verbose=False)
+            out=apply_filter(worker,self.image,p,verbose=False)
         np.testing.assert_array_equal(out[self.valid],self.image[self.valid])
 
     def test_cancellation_and_compatibility_export(self):
@@ -67,12 +69,12 @@ class AELWOWTests(unittest.TestCase):
             with self.assertRaises(ProcessingCancelled):
                 ael_wow_layer(self.image,self.p,self.valid)
         with tempfile.TemporaryDirectory() as tmp:
-            package=export_layer_package(FilterWorker(),self.image,dict(self.p,valid_mask=self.valid),
+            package=export_layer_package(FilterWorker(),self.image,dict(self.p,valid_mask=self.valid,wow_str=100,wow_opacity=37),
                                          {},'input.tif',Path(tmp)/'layers')
             recipe=json.loads((package/'recipe.json').read_text())
-            self.assertEqual(recipe['layers'][1]['mode'],'Overlay')
-            self.assertEqual(recipe['layers'][1]['opacity'],.37)
-            layer=tifffile.imread(package/recipe['layers'][1]['file'])
+            self.assertEqual(next(r for r in recipe['layers'] if r['filter']=='wow')['mode'],'Overlay')
+            self.assertEqual(next(r for r in recipe['layers'] if r['filter']=='wow')['opacity_255'],round(.37*255))
+            layer=tifffile.imread(package/next(r for r in recipe['layers'] if r['filter']=='wow')['file'])
             encoded,_=ael_wow_layer(self.image,self.p,self.valid)
             use=layer[...,3]>0
             np.testing.assert_allclose(layer[...,0][use],encoded[use]*65535,rtol=0,atol=1)
@@ -91,18 +93,18 @@ class LoadingDefaultsTests(unittest.TestCase):
         self.window.request_processing_signal.disconnect()
 
     def tearDown(self):
-        self.window.close();self.tmp.cleanup()
+        close_window(self.window);self.tmp.cleanup()
 
     def load(self,path):
         with patch('gui.app.QFileDialog.getOpenFileName',return_value=(str(path),'')), \
                 patch.object(self.window,'detect_lunar_limb',return_value=(80,63,20)):
-            self.window.load_image_action()
+            self.window.load_image_action();wait_for_gui(self.window)
         self.assertNotIn('Error loading',self.window.status_label.text())
 
-    def test_first_image_applies_initial_filters_and_log_k_1000(self):
+    def test_first_image_applies_initial_filters_and_psb_preview(self):
         w=self.window
         w.sec_mgn.chk_active.setChecked(True)
-        w.sl_mgn_str.setValue(90);w.sl_mgn_opacity.setValue(10)
+        w.sl_mgn_opacity.setValue(10)
         w.sl_nrgf_bin_px.setValue(70)
         w.combo_wow_bilateral.setCurrentIndex(0)
         w.sl_wow_scales.setValue(1)
@@ -115,14 +117,15 @@ class LoadingDefaultsTests(unittest.TestCase):
                          [('fnrgf',None),('mgn',None),('wow',None),('achf','ael_iso_04'),('achf','ael_angular_4')])
         self.assertFalse(p['nrgf_enabled'])
         display=w.collect_display_parameters()
-        self.assertEqual(display['mode'],'log')
-        self.assertEqual(10**(display['strength']/10),1000)
+        self.assertTrue(w.btn_psb_preview.isChecked())
+        self.assertNotIn('mode',display)
+        self.assertNotIn('strength',display)
         for name in ('fnrgf','rhef','mgn','tangential','larson_sekanina','achf'):
-            self.assertEqual(getattr(w,'sl_'+name+'_str').value(),25)
-            self.assertEqual(getattr(w,'sl_'+name+'_opacity').value(),75)
+            self.assertEqual(p[name+'_str'],25 if name == 'larson_sekanina' else 100)
+            self.assertEqual(getattr(w,'sl_'+name+'_opacity').value(),75 if name == 'larson_sekanina' else 19 if name == 'achf' else 20)
         self.assertEqual((p['nrgf_str'],p['nrgf_opacity'],p['nrgf_bin_px']),(100,40,2.))
         self.assertEqual((p['wow_mode'],p['wow_scales'],p['wow_noise_floor'],p['wow_str'],p['wow_opacity']),
-                         ('ael_bilateral',6,3.,100,35))
+                         ('ael_bilateral',6,3.,100,10))
         self.assertEqual(p['achf_ael_parameters']['sigmas'],[1.,2.,4.,8.,16.])
         self.assertEqual((p['achf_str'],p['achf_variants']['ael_iso_04']['opacity']),(100,10))
         self.assertFalse(w.chk_achf_adaptive.isChecked())
@@ -132,8 +135,9 @@ class LoadingDefaultsTests(unittest.TestCase):
         for variant in ('ael_iso_01',):
             c=w.achf_ael_controls[variant]
             self.assertFalse(c['enabled'].isChecked())
-            self.assertEqual((c['strength'].value(),c['opacity'].value()),(25,75))
-        self.assertTrue(np.isfinite(execute_pipeline(FilterWorker(),w.full_raw_image,p,verbose=False)).all())
+            self.assertNotIn('strength',c)
+            self.assertEqual(c['opacity'].value(),10)
+        self.assertTrue(np.isfinite(execute_pipeline(FilterWorker(),w.full_raw_image,p)).all())
 
     def test_next_image_preserves_every_filter_control_and_activation(self):
         from core.layer_engine import ORDER
@@ -141,7 +145,7 @@ class LoadingDefaultsTests(unittest.TestCase):
         self.load(self.source);w=self.window
         for index,name in enumerate(ORDER+('achf',)):
             getattr(w,'sec_'+name).chk_active.setChecked(index%2==0)
-            getattr(w,'sl_'+name+'_str').setValue(11+index)
+            if name == 'larson_sekanina':w.sl_larson_sekanina_str.setValue(11+index)
             getattr(w,'sl_'+name+'_opacity').setValue(81-index)
         w.sl_fnrgf_ord.setValue(11)
         w.sl_fnrgf_bin_px.setValue(9)
@@ -155,7 +159,6 @@ class LoadingDefaultsTests(unittest.TestCase):
         w.chk_achf_adaptive.setChecked(True)
         for index,controls in enumerate(w.achf_ael_controls.values()):
             controls['enabled'].setChecked(index!=1)
-            controls['strength'].setValue(31+index)
             controls['opacity'].setValue(61+index)
             controls['outer_sigma'].setValue(20+index)
         w.combo_achf_variant.setCurrentIndex(3)
@@ -173,7 +176,6 @@ class LoadingDefaultsTests(unittest.TestCase):
     def test_json_takes_priority_and_omitted_filters_and_variants_stay_off(self):
         self.load(self.source);w=self.window
         settings=capture_settings(w)
-        settings['controls']['sl_mgn_str']['value']=43
         settings['controls']['sl_mgn_opacity']['value']=62
         settings['sections']['sec_mgn']['active']=True
         settings['sections']['sec_fnrgf']['active']=False
@@ -187,7 +189,7 @@ class LoadingDefaultsTests(unittest.TestCase):
         self.load(project)
         p=w.collect_filter_parameters(w.full_raw_image.shape)
         self.assertEqual([(n,v) for n,v,_,_ in requests(p)],[('mgn',None)])
-        self.assertEqual((p['mgn_str'],p['mgn_opacity']),(43,62))
+        self.assertEqual((p['mgn_str'],p['mgn_opacity']),(100,62))
         self.assertFalse(w.achf_ael_controls['ael_iso_04']['enabled'].isChecked())
         self.load(self.source)
         self.assertEqual([(n,v) for n,v,_,_ in requests(w.collect_filter_parameters(w.full_raw_image.shape))],
@@ -196,7 +198,6 @@ class LoadingDefaultsTests(unittest.TestCase):
     def test_full_json_preserves_explicit_values_and_unknown_controls_are_rejected(self):
         self.load(self.source);w=self.window
         settings=capture_settings(w)
-        settings['controls']['sl_wow_str']['value']=12
         settings['controls']['sl_wow_opacity']['value']=91
         settings['controls']['combo_wow_bilateral']=dict(kind='combo',value=1,text=w.combo_wow_bilateral.itemText(1))
         settings['controls']['sl_wow_scales']['value']=3
@@ -204,7 +205,7 @@ class LoadingDefaultsTests(unittest.TestCase):
         self.assertEqual(capture_settings(w),settings)
         bad=deepcopy(settings);bad['controls']['unknown_filter']=dict(kind='slider',value=1)
         with self.assertRaises(ValueError):validate_settings(w,bad)
-        bad=deepcopy(settings);bad['controls']['sl_mgn_str']['value']='25'
+        bad=deepcopy(settings);bad['controls']['sl_mgn_str']=dict(kind='slider',value='25')
         with self.assertRaises(ValueError):validate_settings(w,bad)
 
     def test_json_without_any_filter_does_not_fall_back_to_ael(self):
@@ -213,7 +214,7 @@ class LoadingDefaultsTests(unittest.TestCase):
         settings=capture_settings(w)
         filter_names=set(filter_widgets(w))
         settings['controls']={key:record for key,record in settings['controls'].items() if key not in filter_names}
-        settings['sections']={key:record for key,record in settings['sections'].items() if key in ('sec_geo','sec_stretch')}
+        settings['sections']={key:record for key,record in settings['sections'].items() if key in ('sec_geo',)}
         project=write_settings(self.root/'empty_filters.tif',self.source,settings,{}, {})
         self.load(project)
         self.assertEqual(requests(w.collect_filter_parameters(w.full_raw_image.shape)),[])

@@ -1,5 +1,7 @@
 # CPU optimization integration — 2026-10-21
 
+> Historical report. This document preserves its original research, measurements and implementation context. Controls, defaults, sequential processing and export behaviour described below may have changed. Use the [current technical guides](README.md) and [validation boundaries](validation.md) for the active application.
+
 The active calculation paths now include the optimizations validated against a
 snapshot of the previous implementation. No new dependencies were added.
 

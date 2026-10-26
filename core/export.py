@@ -7,9 +7,8 @@ import cv2
 import numpy as np
 import tifffile
 from .filters import FilterWorker, CPU_CORES
-from .pipeline import execute_pipeline
-from .presentation import render_presentation
-from .colour import neutralize_tse, colour_layer, set_luminosity
+from .presentation import composition_settings, psb_presentation_settings
+from .colour import neutralize_tse, set_luminosity
 from .image_data import recipe_parameters
 from .layer_export import export_layer_package
 from .linear_export import export_linear_sources
@@ -19,11 +18,13 @@ def export_images(source, parameters, display, file_path, original_path,
                   scale_factor=1., source_rgb=None, calibrate_colour=False, white=1.,
                   export_layers=False, export_linear=False, input_state='unknown', processed=None,
                   layers_format='tiff', layer_cache=None, project_settings=None, progress=None,
-                  color_correction=False):
+                  color_correction=False, psb_exposure_ev=0., psb_preview_jpeg=False):
     """Compute/write in the caller's worker; source and cached output stay untouched."""
+    if processed is not None and np.shape(processed) != np.shape(source):
+        raise ValueError('Cached composition must match the source canvas')
     if layers_format not in ('psb','tiff'):
         raise ValueError('Photoshop layers format must be psb or tiff')
-    layers_requested=export_layers or parameters.get("export_achf_variants",False) or parameters.get("export_achf_ael_variants",False)
+    layers_requested = export_layers
     if color_correction and (not layers_requested or layers_format!='psb'):
         raise ValueError('Color Correction requires Photoshop PSB layer export')
     stages=['Preparing export','Calculating filters']
@@ -47,10 +48,13 @@ def export_images(source, parameters, display, file_path, original_path,
     if source_rgb is not None and calibrate_colour:
         colour_rgb, colour_report = neutralize_tse(source_rgb, white)
     stage('Calculating filters')
-    if parameters.get('layered_model',False):
-        from .layer_engine import engine_for
-        engine_for(worker).prepare(worker,source,parameters)
+    from .layer_engine import engine_for
+    engine = engine_for(worker)
+    engine.prepare(worker,source,parameters)
     layers_path = None
+    if layers_requested or psb_preview_jpeg:
+        package_display = psb_presentation_settings(source, parameters.get('valid_mask'),
+            rgb=colour_rgb, params=parameters, exposure_ev=psb_exposure_ev)
     if layers_requested:
         stage('Writing layer package')
         stem = Path(file_path).with_suffix("").with_name(Path(file_path).stem + "_PS_layers")
@@ -62,13 +66,13 @@ def export_images(source, parameters, display, file_path, original_path,
         if layers_format == 'psb':
             from .psb_export import export_psb_package
             with tempfile.TemporaryDirectory(prefix='eip-psb-layers-') as temporary:
-                package = export_layer_package(worker, source, parameters, display,
+                package = export_layer_package(worker, source, parameters, package_display,
                     original_path, Path(temporary)/'layers', rgb=colour_rgb, colour_report=colour_report)
                 stage('Writing and verifying PSB')
                 export_psb_package(package,candidate,color_correction=color_correction)
             layers_path = candidate
         else:
-            layers_path = export_layer_package(worker, source, parameters, display,
+            layers_path = export_layer_package(worker, source, parameters, package_display,
                 original_path, candidate, rgb=colour_rgb, colour_report=colour_report)
 
     linear_path = None
@@ -79,56 +83,54 @@ def export_images(source, parameters, display, file_path, original_path,
         while candidate.exists():
             candidate = Path(file_path).with_suffix("").with_name(Path(file_path).stem + f"_sources_{suffix}")
             suffix += 1
-        linear_path = export_linear_sources(source, source_rgb, original_path, candidate, input_state)
+        linear_path = export_linear_sources(source, source_rgb, original_path, candidate, input_state,
+                                            preprocessing=parameters.get('background_extraction'))
 
     stage('Composing final image')
-    action="layer composition" if parameters.get("layered_model",False) else "calculation"
-    print(f"[EXPORT] Full-resolution {action}; {CPU_CORES} CPUs available")
-    if parameters.get("layered_model",False):
-        from .layer_engine import engine_for
-        img = engine_for(worker).render(worker,source,parameters,display) if processed is None else processed
-    else:
-        img = execute_pipeline(worker, source, parameters, process_label="EXPORT FINAL") if processed is None else processed
+    print(f"[EXPORT] Full-resolution layer composition; {CPU_CORES} CPUs available")
+    img = engine.render(worker,source,parameters,display) if processed is None else processed
     if processed is not None:
         print("[EXPORT FINAL] Reusing cached native filters; no recalculation")
-    presentation_start = time.perf_counter()
-    img_norm = img if parameters.get("layered_model",False) else render_presentation(img, source, display)
-    print(f"[EXPORT FINAL: PRESENTATION] Done in {time.perf_counter()-presentation_start:.3f}s")
+    neutral_display = composition_settings(display)
+    img_norm = img
     if colour_rgb is not None:
-        if parameters.get("layered_model",False):
-            from .layer_engine import colour_display
-            colour=colour_display(colour_rgb,source,display)
-        else:
-            colour=colour_layer(colour_rgb,source,display)
+        from .layer_engine import colour_display
+        colour=colour_display(colour_rgb,source,neutral_display)
         img_norm = set_luminosity(colour,img_norm)
-    from .layer_engine import engine_for
     from .presentation_edges import finish_presentation
-    img_norm=finish_presentation(img_norm,engine_for(worker).edge_alpha(source,parameters))
-    if parameters.get("layered_model",False):
-        from .layer_export import to_u16
-        img_16bit=to_u16(img_norm)
+    edge = engine.edge_alpha(source,parameters)
+    if psb_preview_jpeg:
+        from .presentation import psb_base
+        base, colour = psb_base(source, parameters, package_display, colour_rgb)
+        jpeg_image = engine.render(worker,source,parameters,package_display,base=base)
+        if colour is not None:
+            jpeg_image = set_luminosity(colour,jpeg_image)
+        jpeg_image = finish_presentation(jpeg_image,edge)
     else:
-        img_16bit = np.clip(img_norm*65535., 0, 65535).astype(np.uint16)
+        jpeg_image = finish_presentation(img_norm, edge)
+    img_norm=finish_presentation(img_norm,edge)
+    from .layer_export import to_u16
+    img_16bit=to_u16(img_norm)
     t0 = time.time()
     stage('Writing TIFF')
     tifffile.imwrite(file_path, img_16bit, photometric="rgb" if colour_rgb is not None else "minisblack",
                      compression="zlib", maxworkers=CPU_CORES,
                      metadata={"scale_factor": scale_factor, "source": original_path,
-                               "parameters": recipe_parameters(parameters), "display": display,
+                               "parameters": recipe_parameters({k:v for k,v in parameters.items() if k != "layer_display"}),
+                               "composition_normalization": neutral_display, "visual_stretch_applied": False,
                                "colour_calibration": colour_report, "missing_samples": "opaque zero; 2-native-pixel observed-side edge antialias",
-                               "role": "Independent layer composition; not a linear master" if parameters.get("layered_model",False) else "Sequential pipeline presentation; not a linear master"})
+                               "role": "Independent layer composition; not a linear master"})
     print(f"[EXPORT: DISK WRITE] Done in {time.time() - t0:.3f}s")
     
     stage('Writing JPEG')
-    # Presentation is already stretched: JPEG uses the same display values.
+    # JPEG follows the selected presentation; the main TIFF remains un-stretched.
     t0 = time.time()
     jpeg_path = file_path.rsplit('.', 1)[0] + "_preview.jpg"
     
-    img_gamma = img_norm
-    img_gamma = np.clip(img_gamma * 255.0, 0, 255).astype(np.uint8)
+    jpeg_pixels = np.clip(jpeg_image * 255.0, 0, 255).astype(np.uint8)
     
     # Save as JPEG with high quality
-    if not cv2.imwrite(jpeg_path, cv2.cvtColor(img_gamma, cv2.COLOR_RGB2BGR) if img_gamma.ndim == 3 else img_gamma, [cv2.IMWRITE_JPEG_QUALITY, 95]):
+    if not cv2.imwrite(jpeg_path, cv2.cvtColor(jpeg_pixels, cv2.COLOR_RGB2BGR) if jpeg_pixels.ndim == 3 else jpeg_pixels, [cv2.IMWRITE_JPEG_QUALITY, 95]):
         raise OSError("Could not write JPEG preview")
     print(f"[EXPORT: JPEG PREVIEW] Done in {time.time() - t0:.3f}s")
     

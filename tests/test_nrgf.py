@@ -1,4 +1,6 @@
 """AEL NRGF nulls, observed support, independent composition and persisted UI."""
+from gui_wait import close_window
+
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 import json
@@ -12,7 +14,7 @@ from PySide6.QtWidgets import QApplication
 from core.filters import FilterWorker
 from core.nrgf import nrgf_normalize, nrgf_layer
 from core.layer_engine import LayerEngine, requests
-from core.pipeline import execute_pipeline, prepare_parameters
+from core.pipeline import apply_filter, execute_pipeline, prepare_parameters
 from core.export import export_images
 from gui.app import EclipseProcessorApp
 from gui.project_settings import capture_settings, restore_settings
@@ -75,9 +77,9 @@ class NRGFTests(unittest.TestCase):
         support=valid.copy();support[45:60,60:70]=False
         p=dict(self.p,valid_mask=valid,statistics_mask=support)
         a=self.image.copy();a[~valid]=np.nan
-        first=execute_pipeline(FilterWorker(),a,p,verbose=False)
+        first=apply_filter(FilterWorker(),a,p,verbose=False)
         b=a.copy();b[valid & ~support]=1e15
-        second=execute_pipeline(FilterWorker(),b,p,verbose=False)
+        second=apply_filter(FilterWorker(),b,p,verbose=False)
         np.testing.assert_array_equal(first[support],second[support])
         np.testing.assert_array_equal(second[valid & ~support],b[valid & ~support])
         self.assertTrue(np.isnan(second[~valid]).all())
@@ -128,7 +130,7 @@ class NRGFTests(unittest.TestCase):
         self.assertEqual(prepared['nrgf_scale'],.5)
         p=dict(self.p,layered_model=True,valid_mask=np.isfinite(self.image))
         worker=FilterWorker()
-        expected=execute_pipeline(worker,self.image,p,verbose=False)
+        expected=execute_pipeline(worker,self.image,p)
         with tempfile.TemporaryDirectory() as tmp:
             output=Path(tmp)/'nrgf.tif'
             export_images(self.image,p,{},str(output),'source.fits',layer_cache=worker.layer_engine,export_layers=True)
@@ -140,21 +142,22 @@ class NRGFTests(unittest.TestCase):
             self.assertEqual(cv2.imread(str(Path(tmp)/'nrgf_preview.jpg'),0).shape,self.image.shape)
             package=Path(tmp)/'nrgf_PS_layers'
             recipe=json.loads((package/'recipe.json').read_text())
-            self.assertEqual([r['filter'] for r in recipe['layers']],['base','nrgf'])
-            self.assertEqual(recipe['layers'][1]['mode'],'Multiply')
-            self.assertEqual(tifffile.imread(package/recipe['layers'][1]['file']).dtype,np.uint16)
+            self.assertEqual([r['filter'] for r in recipe['layers']],['linear_reference','base','nrgf'])
+            self.assertEqual(recipe['layers'][2]['mode'],'Multiply')
+            self.assertEqual(tifffile.imread(package/recipe['layers'][2]['file']).dtype,np.uint16)
 
-    def test_compatibility_package_uses_the_declared_multiply_equation(self):
+    def test_layer_package_uses_the_declared_multiply_equation(self):
         from core.layer_export import export_layer_package, to_u16
-        from core.presentation import stretch_image
-        p=dict(self.p,nrgf_str=60)
+        from core.presentation import normalized_base
+        p=dict(self.p,nrgf_str=100,nrgf_opacity=39)
         with tempfile.TemporaryDirectory() as tmp:
             package=export_layer_package(FilterWorker(),self.image,p,{},'input.tif',Path(tmp)/'layers')
             recipe=json.loads((package/'recipe.json').read_text())
-            layer=tifffile.imread(package/recipe['layers'][1]['file'])
-            base=to_u16(stretch_image(self.image,{})).astype(float)/65535
+            row=next(row for row in recipe['layers'] if row['filter']=='nrgf')
+            layer=tifffile.imread(package/row['file'])
+            base=tifffile.imread(package/next(row['file'] for row in recipe['layers'] if row['filter']=='base'))[...,0].astype(float)/65535
             weight=layer[...,3].astype(float)/65535*(round(.39*255)/255)
-            expected=to_u16(base*(1+(layer[...,0].astype(float)/65535-1)*weight))
+            expected=to_u16((base*(1+(layer[...,0].astype(float)/65535-1)*weight)).astype(np.float32))
             np.testing.assert_array_equal(tifffile.imread(package/recipe['combined'])[...,0],expected)
 
 
@@ -162,7 +165,7 @@ class NRGFGuiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
 
-    def test_order_controls_and_old_new_settings_round_trip(self):
+    def test_order_controls_and_partial_filter_settings_round_trip(self):
         w=EclipseProcessorApp();w.auto_calculate=False
         try:
             w.full_raw_image=w.raw_image=w.preview_image=corona()
@@ -171,9 +174,8 @@ class NRGFGuiTests(unittest.TestCase):
             self.assertLess(layout.indexOf(w.sec_nrgf),layout.indexOf(w.sec_fnrgf))
             self.assertFalse(w.sec_nrgf.is_filter_active())
             self.assertEqual(w.sl_nrgf_opacity.value(),40)
-            self.assertEqual(w.sl_nrgf_str.value(),100)
-            self.assertLess(w.sec_nrgf.content_layout.indexOf(w.sl_nrgf_opacity.parameter_row),
-                            w.sec_nrgf.content_layout.indexOf(w.sl_nrgf_str.parameter_row))
+            self.assertFalse(hasattr(w,'sl_nrgf_str'))
+            self.assertEqual(w.sec_nrgf.content_layout.indexOf(w.sl_nrgf_opacity.parameter_row),0)
             old=capture_settings(w)
             old['sections'].pop('sec_nrgf')
             old['controls']={k:v for k,v in old['controls'].items() if '_nrgf_' not in k}
@@ -193,4 +195,4 @@ class NRGFGuiTests(unittest.TestCase):
             self.assertTrue(w.sl_nrgf_min_count.parameter_row.isHidden())
             w.chk_advanced.setChecked(True)
             self.assertFalse(w.sl_nrgf_min_count.parameter_row.isHidden())
-        finally:w.close()
+        finally:close_window(w)

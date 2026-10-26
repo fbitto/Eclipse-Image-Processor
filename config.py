@@ -10,103 +10,8 @@ import os
 CPU_CORES = os.cpu_count() or 4  # Auto-detect CPU cores, default to 4
 
 # ============================================================================
-# WINDOW CONFIGURATION
-# ============================================================================
-WINDOW_WIDTH = 1400
-WINDOW_HEIGHT = 900
-
-CANVAS_WIDTH = 600
-CANVAS_HEIGHT = 600
-
-# ============================================================================
-# PERFORMANCE SETTINGS
-# ============================================================================
-FNRGF_THREADS = CPU_CORES  # Number of threads for FNRGF - match your CPU core count
-HISTOGRAM_LEVELS = 256
-PREVIEW_SCALE = 0.5  # Scale factor for faster preview updates
-
-# ============================================================================
-# DEFAULT FILTER PARAMETERS (39 total)
-# ============================================================================
-FILTER_DEFAULTS = {
-    # FNRGF (Radial Normalization - High Performance)
-    'fnrgf_enabled': True,
-    'fnrgf_sigma': 100.0,
-    'fnrgf_power': 1.0,
-    
-    # Histogram Equalization (CLAHE-like)
-    'histogram_enabled': True,
-    'histogram_clip_limit': 0.03,
-    'histogram_grid_size': 8,
-    
-    # Gaussian Blur (Smoothing)
-    'gaussian_enabled': False,
-    'gaussian_sigma': 1.0,
-    
-    # Bilateral Filter (Edge-preserving smoothing)
-    'bilateral_enabled': False,
-    'bilateral_d': 9,
-    'bilateral_sigma_color': 75.0,
-    'bilateral_sigma_space': 75.0,
-    
-    # Median Filter (Noise reduction)
-    'median_enabled': False,
-    'median_kernel': 5,
-    
-    # Morphological Operations
-    'morph_enabled': False,
-    'morph_operation': 'open',  # 'open', 'close', 'gradient'
-    'morph_kernel_size': 5,
-    
-    # Edge Detection (Sobel)
-    'sobel_enabled': False,
-    'sobel_ksize': 3,
-    
-    # Canny Edge Detection
-    'canny_enabled': False,
-    'canny_threshold1': 50.0,
-    'canny_threshold2': 150.0,
-    'canny_aperturesize': 3,
-    
-    # Contrast Enhancement
-    'contrast_enabled': False,
-    'contrast_factor': 1.5,
-    
-    # Brightness Adjustment
-    'brightness_enabled': False,
-    'brightness_factor': 0.0,
-    
-    # Saturation
-    'saturation_enabled': False,
-    'saturation_factor': 1.0,
-    
-    # Color Balance
-    'color_balance_enabled': False,
-    'color_balance_red': 0.0,
-    'color_balance_green': 0.0,
-    'color_balance_blue': 0.0,
-    
-    # Gamma Correction
-    'gamma_enabled': False,
-    'gamma_value': 1.0,
-    
-    # CLAHE (Contrast Limited Adaptive Histogram Equalization)
-    'clahe_enabled': False,
-    'clahe_clip_limit': 2.0,
-    'clahe_tile_size': 8,
-    
-    # Wavelet Denoising
-    'wavelet_enabled': False,
-    'wavelet_sigma': 0.1,
-    
-    # Normalize (0-1 range)
-    'normalize_enabled': False,
-}
-
-# ============================================================================
 # QT STYLESHEET - Neutral dark editing workspace
 # ============================================================================
-# Alias for backward compatibility with main_new.py
 LIGHTROOM_QSS = '''
     QMainWindow {
         background-color: #2b2b2b;
@@ -361,7 +266,3 @@ LIGHTROOM_QSS = '''
         min-width: 60px;
     }
 '''
-
-# Backward compatibility aliases
-STYLESHEET = LIGHTROOM_QSS  # For PyQt5-based code
-DEFAULT_FILTERS = FILTER_DEFAULTS  # For older code

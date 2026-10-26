@@ -1,5 +1,4 @@
 """Black export storage and non-destructive observed-side lunar antialiasing."""
-import io
 import json
 from pathlib import Path
 import tempfile
@@ -84,11 +83,12 @@ class PresentationEdgeTests(unittest.TestCase):
                           layers_format='psb',layer_cache=worker.layer_engine,export_linear=True,input_state='linear')
             final=tifffile.imread(out)
             self.assertEqual(final.shape,self.shape)
-            np.testing.assert_array_equal(final,expected[...,0])
+            neutral=worker.layer_engine.render(worker,self.source,self.params,{})
+            np.testing.assert_array_equal(final,to_u16(finish_presentation(neutral,worker.layer_engine.edge_alpha(self.source,self.params))))
             doc=PSDImage.open(root/'final_PS_layers.psb')
             self.assertEqual(doc[-1].name,'Edge Antialias')
             for plane in doc._record.image_data.get_data(doc._record.header):
-                np.testing.assert_array_equal(np.frombuffer(plane,dtype='>u2').reshape(self.shape),final)
+                np.testing.assert_array_equal(np.frombuffer(plane,dtype='>u2').reshape(self.shape),expected[...,0])
             for path in (root/'final_sources').glob('*.tif'):
                 self.assertTrue(np.isfinite(tifffile.imread(path)).all())
             self.assertTrue(np.isnan(self.source[~self.valid]).all())
