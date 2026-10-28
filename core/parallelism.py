@@ -1,6 +1,7 @@
 """One CPU budget per independent filter, inherited by nested helper tasks."""
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 import os
 
 CPU_CORES = os.cpu_count() or 4
@@ -34,3 +35,21 @@ def layer_workers(source, count):
     memory_limit=max(1,memory//max(1,source.size*128))
     size_limit=2 if source.size>4_000_000 else 4
     return max(1,min(count,CPU_CORES,size_limit,memory_limit))
+
+
+def map_in_threads(function, items, workers=None):
+    """Apply ``function`` to every item on up to ``workers`` threads; results keep input order.
+
+    The default worker count is this filter's CPU budget. Each call runs in its own
+    copy of the caller's context, so cancellation and progress scopes reach the
+    helper threads. NumPy, SciPy, OpenCV and zlib release the GIL in their numerical
+    loops, which is what makes threads pay off here. Split work so that the result
+    does not depend on the number of threads (fixed strips, fixed reduction order).
+    """
+    items=list(items)
+    workers=max(1,min(len(items),int(workers or filter_cpu_budget())))
+    if workers == 1:
+        return [function(item) for item in items]
+    with ThreadPoolExecutor(max_workers=workers,thread_name_prefix='corona-strip') as executor:
+        futures=[executor.submit(copy_context().run,function,item) for item in items]
+        return [future.result() for future in futures]
