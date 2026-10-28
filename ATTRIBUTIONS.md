@@ -7,6 +7,7 @@ Eclipse Image Processor 0.6.0 is developed by Francisco Bitto. Third-party imple
 - **Author:** Pere Guerra Serra (`PeterWar` / Peter War).
 - **Project:** [Agentic Eclipse Library](https://github.com/PeterWar/Agentic-Eclipse-Library).
 - **Source version used for the bundled filter ports, tone curve and PSB writer:** AEL 1.3.3, confirmed from the installed runtime metadata (`pyproject.toml`). This identifies the source used, not a claim about the latest upstream release.
+- **Updated WOW operator and ACHF display:** AEL 1.3.5, commit `9a391b6ab5ec325efb98ea8d9e18d14ff54de9b6` (2026-10-28); other ports retain their stated source versions.
 - **Copyright:** Copyright (c) 2026 Pere Guerra Serra.
 - **License:** MIT. The original full copyright, permission and disclaimer text is retained in [docs/third-party/AEL-MIT.txt](docs/third-party/AEL-MIT.txt).
 

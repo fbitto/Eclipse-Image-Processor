@@ -448,7 +448,7 @@ class GuiInteractionTests(unittest.TestCase):
             QTest.mouseDClick(slider, Qt.MouseButton.LeftButton)
             self.assertEqual(slider.value(), expected)
         self.assertEqual(w.sl_achf_kernel.value(), w.sl_achf_kernel.maximum())
-        self.assertIn('WOW: 6 native scales', output.getvalue())
+        self.assertIn('WOW: 8 native scales', output.getvalue())
         self.assertIn('support radius = 20.0 preview px', output.getvalue())
         self.assertNotIn('arcsec/pixel', output.getvalue())
 

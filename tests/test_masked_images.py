@@ -80,6 +80,16 @@ class MaskedImageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             observed_image(np.full((4, 4), np.nan))
 
+    def test_fractional_area_resize_keeps_valid_borders_and_actual_holes(self):
+        image=np.full((2401,2401),5.,np.float32)
+        resized=resize_observed(image,(1500,1500))
+        self.assertTrue(np.isfinite(resized).all())
+        np.testing.assert_allclose(resized,5.,atol=1e-6)
+        image[-1,-1]=np.nan
+        resized=resize_observed(image,(1500,1500))
+        self.assertTrue(np.isnan(resized[-1,-1]))
+        self.assertTrue(np.isfinite(resized[:-1,:-1]).all())
+
     def test_constant_bilateral_starlet_excludes_missing_buffers_without_overflow(self):
         worker = MaskedWorker(FilterWorker(), self.valid)
         for value in (0., 7., -3., 1e-20):

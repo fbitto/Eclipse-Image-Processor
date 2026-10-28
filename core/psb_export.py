@@ -114,6 +114,8 @@ def _package(package):
         if row.get('mode') not in BLEND_KEYS or not 0 <= row.get('opacity_255',-1) <= 255:
             raise ValueError('Unsupported layer mode or opacity')
         _package_path(package,row['file'])
+        if row.get('mask_file'):
+            _package_path(package,row['mask_file'])
     return package,recipe,shape
 
 
@@ -144,7 +146,7 @@ def _black_composite(composite):
 
 
 def _correction_input(package,recipe,shape):
-    composite=_black_composite(_pixels(_package_path(package,recipe['combined']),shape))
+    composite=_black_composite(_pixels(_package_path(package,recipe.get('corona_combined',recipe['combined'])),shape))
     mask_file=recipe.get('validity_file','VALID.tif')
     valid=tifffile.imread(_package_path(package,mask_file))
     if valid.shape!=shape:
@@ -173,7 +175,10 @@ def verify_psb_package(path,package,*,color_correction=False):
         if channel.get_data(shape[1],shape[0],16,2) != expected:
             raise ValueError('PSB black background pixel mismatch')
     report=[]
-    for layer,row in zip(list(doc)[1:],recipe['layers']):
+    image_layers=[layer for layer in list(doc)[1:] if not layer.is_group()]
+    if len(image_layers) != len(recipe['layers']):
+        raise ValueError('PSB image-layer count does not match the package')
+    for layer,row in zip(image_layers,recipe['layers']):
         layer_start = time.perf_counter()
         check_cancelled()
         if (layer.name,layer.blend_mode,layer.opacity,bool(layer.visible)) != (
@@ -181,14 +186,25 @@ def verify_psb_package(path,package,*,color_correction=False):
                 row['opacity_255'],row.get('visible',True)):
             raise ValueError(f'PSB layer metadata mismatch: {_name(row)}')
         a = _pixels(_package_path(package,row['file']),shape)
+        mask = _layer_mask(package,row,shape)
+        channels={int(info.id) for info in layer._record.channel_info}
+        if channels != ({-2,-1,0,1,2} if mask is not None else {-1,0,1,2}):
+            raise ValueError('PSB layer channels do not match RGB, transparency and optional mask')
         for info,channel in zip(layer._record.channel_info,layer._channels):
             cid = int(info.id)
-            expected = (a[...,3] if a.shape[-1] == 4 else np.full(shape,65535,np.uint16)) if cid == -1 else a[...,cid]
+            if cid == -2:
+                expected=mask
+            elif cid == -1:
+                expected=a[...,3] if a.shape[-1] == 4 else np.full(shape,65535,np.uint16)
+            else:
+                expected=a[...,cid]
             actual = channel.get_data(shape[1],shape[0],16,2)
             if actual != np.ascontiguousarray(expected).astype('>u2').tobytes():
                 raise ValueError(f'PSB pixel mismatch: {_name(row)}, channel {cid}')
-        if {int(info.id) for info in layer._record.channel_info} != {-1,0,1,2}:
-            raise ValueError('PSB must retain exactly RGB and layer transparency')
+        if mask is not None:
+            data=layer._record.mask_data
+            if (data.top,data.left,data.bottom,data.right,data.background_color)!=(0,0,*shape,0) or data.flags.mask_disabled or data.flags.invert_mask:
+                raise ValueError('PSB layer mask bounds or flags mismatch')
         report.append(dict(name=layer.name,mode=row['mode'],opacity_255=layer.opacity,
                            visible=bool(layer.visible),exact_rgb=True,exact_alpha=True))
         del a,actual,expected
@@ -212,6 +228,15 @@ def verify_psb_package(path,package,*,color_correction=False):
                 psd_tools=importlib.metadata.version('psd-tools'))
 
 
+def _layer_mask(package,row,shape):
+    if not row.get('mask_file'):
+        return None
+    mask=tifffile.imread(_package_path(package,row['mask_file']))
+    if mask.dtype != np.uint16 or mask.shape != shape:
+        raise ValueError('PSB editable mask must be full-canvas uint16')
+    return mask
+
+
 def export_psb_package(package,destination,*,color_correction=False):
     """Convert a layer package; publish only after verified writing, never overwrite."""
     total_start = time.perf_counter()
@@ -227,6 +252,7 @@ def export_psb_package(package,destination,*,color_correction=False):
     layer_start = time.perf_counter()
     add_layer(doc,'00_BACKGROUND_Black',np.zeros((*shape,3),np.uint16))
     print(f"[PSB: BACKGROUND ENCODE] Done in {time.perf_counter()-layer_start:.3f}s")
+    correction=None
     for row in recipe['layers']:
         layer_start = time.perf_counter()
         check_cancelled()
@@ -236,9 +262,16 @@ def export_psb_package(package,destination,*,color_correction=False):
                 if hashlib.file_digest(stream,'sha256').hexdigest() != row['sha256']:
                     raise ValueError(f'Layer file changed since package creation: {path.name}')
         a = _pixels(path,shape)
-        add_layer(doc,_name(row),a[...,:3],a[...,3] if a.shape[-1] == 4 else None,
+        if color_correction and row.get('filter') == 'prominences':
+            from .color_correction import add_color_correction
+            correction=add_color_correction(doc,*_correction_input(package,recipe,shape))
+        layer=add_layer(doc,_name(row),a[...,:3],a[...,3] if a.shape[-1] == 4 else None,
                   mode=BLEND_KEYS[row['mode']],opacity=row['opacity_255']/255.,
                   visible=row.get('visible',True))
+        mask=_layer_mask(package,row,shape)
+        if mask is not None:
+            from .color_correction import _mask
+            _mask(layer,mask)
         del a
         print(f"[PSB: {_name(row)} READ/HASH/ENCODE] Done in {time.perf_counter()-layer_start:.3f}s")
     composite_start = time.perf_counter()
@@ -247,8 +280,7 @@ def export_psb_package(package,destination,*,color_correction=False):
     rec=doc._record
     composite = _pixels(_package_path(package,recipe['combined']),shape)
     composite = _black_composite(composite)
-    correction=None
-    if color_correction:
+    if color_correction and correction is None:
         from .color_correction import add_color_correction
         correction=add_color_correction(doc,*_correction_input(package,recipe,shape))
     rec.header.channels=3

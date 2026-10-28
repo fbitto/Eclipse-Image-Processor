@@ -17,6 +17,7 @@ This guide describes the active 0.6.0 implementation. See the [documentation ind
 | `core/filters.py`, `core/masked_filters.py` | Numerical operators, support-aware paths and persistent `FilterWorker` |
 | `core/nrgf.py`, `core/ael_wow.py`, `core/ael_achf.py` | Bundled AEL-derived filters |
 | `core/presentation.py` | PSB tone mapping, un-stretched base and display edge treatment |
+| `core/prominences.py` | Independent exposure and editable red-limb mask from original loaded RGB |
 | `core/export.py`, `core/layer_package.py`, `core/psb_export.py` | Export orchestration, layer-package writing and PSB serialization |
 | `core/layer_export.py` | Quantization, blend/encoding helpers, JSX and package-entry alias |
 | `core/project_settings.py`, `gui/project_settings.py` | JSON envelope and validated widget snapshots/restoration |
@@ -30,6 +31,7 @@ This guide describes the active 0.6.0 implementation. See the [documentation ind
 4. Calculate each enabled filter independently from that shared mono input. Numerical branches never receive a preceding filter's output or a presentation curve.
 5. Encode and compose cached layers. Choose an un-stretched linearly normalized base for the main TIFF, or a PSB presentation base for presentation preview/layer export.
 6. Apply RGB presentation using the native calibrated RGB when calibration is enabled, then display-only edge antialias over black.
+7. Optionally composite original prominences above the PSB presentation. `original_source_rgb` is retained on load and never replaced by background preparation; this branch bypasses working-source filters and colour gains. Export its black-backed RGB16 and mask separately and keep unmasked RGB with an editable mask in Photoshop. The main TIFF remains the corona composition.
 
 The linear input declaration is an assumption. It does not invert a transfer curve in an already stretched file. Enhanced composites are not photometric linear masters.
 

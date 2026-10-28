@@ -30,19 +30,19 @@ class AELWOWTests(unittest.TestCase):
     def test_frozen_upstream_ael_oracle_and_excluded_data(self):
         before=self.image.copy()
         actual,info=ael_wow_layer(self.image,self.p,self.valid)
-        with np.load(Path(__file__).parent/'fixtures/ael_wow_bilateral.npz') as f:
+        with np.load(Path(__file__).parent/'fixtures/ael_wow_guided_135.npz') as f:
             np.testing.assert_allclose(actual,f['expected'],atol=1e-7,equal_nan=True)
         altered=self.image.copy();altered[~self.valid]=1e20
         np.testing.assert_array_equal(ael_wow_layer(altered,self.p,self.valid)[0],actual)
         np.testing.assert_array_equal(self.image,before)
-        self.assertEqual(info['noise_floor'],3.)
+        self.assertEqual(info['range_weights'],'guided (issue #4)')
         self.assertFalse(np.isfinite(actual[~self.valid]).any())
 
-    def test_own_noise_floor_changes_output_and_invalid_parameters_fail(self):
+    def test_retired_noise_floor_is_ignored_and_invalid_parameters_fail(self):
         plain,_=ael_wow_layer(self.image,self.p,self.valid)
         changed,_=ael_wow_layer(self.image,dict(self.p,wow_noise_floor=0),self.valid)
-        self.assertGreater(np.nanmax(abs(plain-changed)),.001)
-        for kw in (dict(wow_noise_floor=np.nan),dict(wow_scales=0.5),dict(wow_scales=11)):
+        np.testing.assert_array_equal(plain,changed)
+        for kw in (dict(wow_scales=0.5),dict(wow_scales=11)):
             with self.subTest(parameters=kw),self.assertRaises(ValueError):
                 ael_wow_layer(self.image,dict(self.p,**kw),self.valid)
 
@@ -125,7 +125,7 @@ class LoadingDefaultsTests(unittest.TestCase):
             self.assertEqual(getattr(w,'sl_'+name+'_opacity').value(),75 if name == 'larson_sekanina' else 19 if name == 'achf' else 20)
         self.assertEqual((p['nrgf_str'],p['nrgf_opacity'],p['nrgf_bin_px']),(100,40,2.))
         self.assertEqual((p['wow_mode'],p['wow_scales'],p['wow_noise_floor'],p['wow_str'],p['wow_opacity']),
-                         ('ael_bilateral',6,3.,100,10))
+                         ('ael_bilateral',8,3.,100,10))
         self.assertEqual(p['achf_ael_parameters']['sigmas'],[1.,2.,4.,8.,16.])
         self.assertEqual((p['achf_str'],p['achf_variants']['ael_iso_04']['opacity']),(100,10))
         self.assertFalse(w.chk_achf_adaptive.isChecked())
@@ -207,6 +207,15 @@ class LoadingDefaultsTests(unittest.TestCase):
         with self.assertRaises(ValueError):validate_settings(w,bad)
         bad=deepcopy(settings);bad['controls']['sl_mgn_str']=dict(kind='slider',value='25')
         with self.assertRaises(ValueError):validate_settings(w,bad)
+
+    def test_old_wow_selector_label_still_loads(self):
+        settings=capture_settings(self.window)
+        settings['controls']['combo_wow_bilateral']=dict(kind='combo',value=2,text='AEL bilateral')
+        validate_settings(self.window,settings)
+        restore_settings(self.window,settings)
+        self.assertEqual(self.window.combo_wow_bilateral.currentIndex(),2)
+        self.assertFalse(self.window.sl_wow_noise_floor.isEnabled())
+        self.assertTrue(self.window.sl_wow_noise_floor.title_label.isHidden())
 
     def test_json_without_any_filter_does_not_fall_back_to_ael(self):
         from gui.project_settings import filter_widgets

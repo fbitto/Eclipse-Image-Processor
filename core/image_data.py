@@ -49,7 +49,9 @@ def resize_observed(image, size):
     a, valid = observed_image(image)
     weights = cv2.resize(valid.astype(np.float32), size, interpolation=cv2.INTER_AREA)
     values = cv2.resize(np.where(valid, a, 0).astype(np.float32), size, interpolation=cv2.INTER_AREA)
-    mask = weights >= 1 - 1e-6
+    # Fractional OpenCV area footprints can sum below one even with complete data.
+    missing = cv2.resize((~valid).astype(np.float32), size, interpolation=cv2.INTER_AREA)
+    mask = missing <= 1e-6
     result = np.full(weights.shape, np.nan, dtype=np.float32)
     np.divide(values, weights, out=result, where=mask)
     return result

@@ -30,7 +30,7 @@ class ImageView(QWidget):
         self.setMinimumSize(1,1)
         self.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Ignored)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setAccessibleName('Image preview; drag or use arrow keys to pan at 100% or 200%')
+        self.setAccessibleName('Image preview; drag or use arrow keys to pan at 50%, 100% or 200%')
 
     @staticmethod
     def _image(pixels):
@@ -70,8 +70,8 @@ class ImageView(QWidget):
         self.update()
 
     def set_zoom(self, zoom):
-        if zoom not in (None,1,2):
-            raise ValueError('Supported zoom levels are Fit, 100% and 200%')
+        if zoom not in (None,.5,1,2):
+            raise ValueError('Supported zoom levels are Fit, 50%, 100% and 200%')
         self.zoom=zoom
         self._clamp_center()
         self._update_cursor()

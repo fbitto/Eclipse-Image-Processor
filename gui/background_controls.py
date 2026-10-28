@@ -4,7 +4,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QCheckBox,QLabel,QPushButton
 from core.background import equalize_background,sample_grid,sample_allowed
 from .background_tasks import TaskThread
-from .components import CollapsibleSection
+from .components import CollapsibleSection,ScrollSafeComboBox
 from .factories import create_slider,create_slider_float
 
 
@@ -19,10 +19,17 @@ class BackgroundExtraction(QObject):
         w=self.w
         w.sec_background=CollapsibleSection('BACKGROUND GRADIENT',has_checkbox=False,is_expanded=False)
         panel=w.sec_background.content_layout
-        w.sec_background.toggle_btn.setToolTip('Fit a linear sky plane outside the corona. Removes slopes only, before all filters; original data remain available.')
+        w.sec_background.toggle_btn.setToolTip('Fit a plane or quadratic sky surface outside the corona. Removes spatial variation only, before all filters; original data remain available.')
         w.chk_background=QCheckBox('Equalize background gradient')
-        w.chk_background.setToolTip('Subtract an independently fitted linear slope from each source channel. Preserve the mean fitted sky level. Requires linear input; review samples for faint corona.')
+        w.chk_background.setToolTip('Subtract independently fitted background variation from each source channel. Preserve the mean fitted sky level. Requires linear input; review samples for faint corona.')
         panel.addWidget(w.chk_background)
+        panel.addWidget(QLabel('Background model'))
+        w.combo_background_degree=ScrollSafeComboBox()
+        w.combo_background_degree.addItem('Plane (degree 1)',1)
+        w.combo_background_degree.addItem('Quadratic (degree 2)',2)
+        w.combo_background_degree.setToolTip('Degree 2 fits smooth curvature and requires at least 12 well-distributed sky samples. Changing model keeps your samples; review them for faint corona.')
+        panel.addWidget(w.combo_background_degree)
+        w.combo_background_degree.currentIndexChanged.connect(lambda _:self.invalidate(False))
         w.sl_background_radius,_=create_slider_float('Exclude corona (disk radii)',15,300,60,10.,panel,
             tooltip='No sample patch may touch this circle. Six disk radii is only a starting point: exclude all visible and faint coronal structures. Changing this regenerates samples.')
         w.sl_background_grid,_=create_slider('Samples per line',6,40,16,panel,
@@ -117,10 +124,10 @@ class BackgroundExtraction(QObject):
             if w.chk_background.isChecked() and w.combo_input_state.currentData()!='linear':
                 raise ValueError('Background equalization requires linear input')
             self.thread=TaskThread(equalize_background,self.base,self.geometry(),w.sl_background_radius.value()/10,
-                                   w.sl_background_grid.value(),self.points,w.chk_background.isChecked(),parent=w)
+                                   w.sl_background_grid.value(),self.points,w.chk_background.isChecked(),w.combo_background_degree.currentData(),parent=w)
             self.thread.finished.connect(self.finished)
             w.control_sidebar.setEnabled(False);w.zoom_toolbar.setEnabled(False)
-            w.status_label.setText('Status: Fitting linear background…')
+            w.status_label.setText('Status: Fitting background model…')
             self.thread.start()
         except Exception as error:
             self.thread=None;self.export_pending=False;w.lbl_background_fit.setText(str(error));w.status_label.setText(f'Status: Background failed — {error}');w.status_label.setToolTip(str(error))
@@ -137,9 +144,10 @@ class BackgroundExtraction(QObject):
             w._display_reference_source=w.full_raw_image;w._display_bounds=result.get('display_bounds')
             w.raw_image=w.preview_image=result['preview'];w.processed_image=w.raw_image
             w._has_layer_result=False;w._full_cache=None
+            w._half_cache=w._half_source=None
             w._colour_cache=w._preview_colour_cache=None;w._colour_revision+=1
             w._native_display_revision=w._native_filter_revision=None
-            w.lbl_background_fit.setText(f"Plane fitted: {self.report['inliers']}/{self.report['samples']} sky samples; mean sky preserved." if self.report else 'Background equalization is off.')
+            w.lbl_background_fit.setText(f"Degree {self.report['degree']} fitted: {self.report['inliers']}/{self.report['samples']} sky samples; mean sky preserved." if self.report else 'Background equalization is off.')
             self.overlay();w.render_matrix_to_screen()
             if self.export_pending:
                 self.export_pending=False;w.export_image_action()

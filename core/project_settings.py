@@ -11,6 +11,8 @@ VERSION=4
 def write_settings(output_path, source_path, settings, parameters, display):
     from .image_data import recipe_parameters
     destination=Path(output_path).with_suffix('.json')
+    from .export_paths import protect_source
+    protect_source([destination], source_path)
     source=Path(source_path).resolve()
     document=dict(format=FORMAT,version=VERSION,source=str(source),
         source_relative=os.path.relpath(source,destination.parent.resolve()),

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QListView,
     QStyledItemDelegate,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QProgressBar,
     QScrollArea,
@@ -36,6 +37,7 @@ from gui.image_view import ImageView
 from gui.background_controls import BackgroundExtraction
 from core.colour import neutralize_tse, set_luminosity
 from core.result_cache import parameter_signature
+from core.export_paths import export_paths, protect_source
 from core.project_settings import read_settings, write_settings
 from gui.project_settings import capture_settings, restore_settings, validate_settings, initialize_filter_defaults, reset_filter_defaults
 from gui.filter_controls import add_controls, collect_controls, add_advanced_mode, add_achf_variants, collect_achf_variants, add_layer_opacities
@@ -70,12 +72,15 @@ class EclipseProcessorApp(QMainWindow):
         self.preview_image: Optional[np.ndarray] = None
         self.source_path: Optional[str] = None
         self.full_source_rgb: Optional[np.ndarray] = None
+        self.original_source_rgb: Optional[np.ndarray] = None
         self.source_rgb_white = 1.
         self._display_reference_source = None
         self._display_bounds = None
         self._colour_cache = None
         self._preview_colour_cache = None
         self._colour_revision = 0
+        self._half_cache = None
+        self._half_source = None
         self._full_cache = None
         self._export_thread = None
         self._load_thread = None
@@ -86,6 +91,7 @@ class EclipseProcessorApp(QMainWindow):
         self._native_filter_revision = None
         self._presentation_revision = 0
         self._closing = False
+        self._running_half_job = False
         self._running_full_job = False
         self._running_signature = None
         self._running_full_source = None
@@ -146,18 +152,18 @@ class EclipseProcessorApp(QMainWindow):
         viewer_layout.setSpacing(6)
         zoom_row=QHBoxLayout()
         view_label=QLabel('View:')
-        view_label.setToolTip('Preview magnification: Fit, 100% or 200% of native pixels.')
+        view_label.setToolTip('Preview magnification: Fit, 50%, 100% or 200% of native pixels.')
         zoom_row.addWidget(view_label)
         self.zoom_buttons=QButtonGroup(self)
         self.zoom_buttons.setExclusive(True)
-        for label,zoom in (('Fit',None),('100%',1),('200%',2)):
+        for label,zoom in (('Fit',None),('50%',.5),('100%',1),('200%',2)):
             button=QPushButton(label)
             button.setCheckable(True)
             button.setEnabled(False)
             button.setToolTip('Fit the complete image; subsequent edits use fast processing unless native verification is checked.' if zoom is None else
-                              f'{label}: native image pixels relative to physical screen pixels. Drag to pan; native filters are calculated only when needed.')
+                              ('50%: calculate filters at half the original width and height. Drag to pan.' if zoom == .5 else f'{label}: native image pixels relative to physical screen pixels. Drag to pan; native filters are calculated only when needed.'))
             button.clicked.connect(lambda checked,zoom=zoom:self.set_preview_zoom(zoom))
-            self.zoom_buttons.addButton(button,0 if zoom is None else zoom)
+            self.zoom_buttons.addButton(button,0 if zoom is None else int(100*zoom))
             zoom_row.addWidget(button)
         self.zoom_buttons.button(0).setChecked(True)
         zoom_row.addStretch()
@@ -170,7 +176,7 @@ class EclipseProcessorApp(QMainWindow):
         self.image_label=ImageView()
         self.image_label.circle_center_requested.connect(self.on_circle_center_requested)
         self.image_label.view_changed.connect(self._update_view_scale_label)
-        self.image_label.setToolTip('Fit shows the complete image. 100% and 200% inspect native pixels: drag, scroll or use arrow keys to pan. Ctrl-click (Command-click on macOS) moves the disk center.')
+        self.image_label.setToolTip('Fit shows the complete image. 50% calculates at half resolution; 100% and 200% inspect native pixels: drag, scroll or use arrow keys to pan. Ctrl-click (Command-click on macOS) moves the disk center.')
         viewer_layout.addWidget(self.image_label,stretch=1)
         main_layout.addWidget(viewer_panel,stretch=3)
 
@@ -222,7 +228,7 @@ class EclipseProcessorApp(QMainWindow):
         top_header_layout.addLayout(btn_row)
         self.chk_verify_preview = QCheckBox('Full-resolution verification preview')
         self.chk_verify_preview.setChecked(False)
-        self.chk_verify_preview.setToolTip('Use native filter calculations even in Fit view. 100% and 200% request native resolution automatically. Export reuses native layers when settings match. Disable and use Fit for fast approximate editing.')
+        self.chk_verify_preview.setToolTip('Use native filter calculations even in Fit view. 50% calculates at half resolution; 100% and 200% request native resolution automatically. Export reuses native layers when settings match. Disable and use Fit for fast approximate editing.')
         self.chk_verify_preview.toggled.connect(self.dispatch_pipeline_request_if_auto)
         top_header_layout.addWidget(self.chk_verify_preview)
         right_layout.addWidget(top_header_panel)
@@ -524,8 +530,8 @@ class EclipseProcessorApp(QMainWindow):
             )
             self.sl_wow_denoise.append(slider)
         self.combo_wow_bilateral = ScrollSafeComboBox()
-        self.combo_wow_bilateral.addItems(["Standard WOW", "Edge-aware WOW (adjustable bilateral)", "AEL bilateral"])
-        self.combo_wow_bilateral.setToolTip("Standard and adjustable edge-aware WOW use the existing backend. AEL bilateral uses a log-luminance radial residual, symmetric observed starlet pairs and its own noise floor. No mode fills missing data.")
+        self.combo_wow_bilateral.addItems(["Standard WOW", "Edge-aware WOW (adjustable bilateral)", "AEL edge-aware (guided)"])
+        self.combo_wow_bilateral.setToolTip("Standard and adjustable edge-aware WOW use the existing backend. AEL edge-aware uses linear luminance, guided range weights and symmetric observed starlet pairs. Worst sectors can still invert faint detail. No mode fills missing data.")
         self.combo_wow_bilateral.setCurrentIndex(1)
         self.combo_wow_bilateral.currentIndexChanged.connect(self.dispatch_pipeline_request_if_auto)
         self.combo_wow_bilateral.currentIndexChanged.connect(lambda _: self.update_wow_controls())
@@ -611,6 +617,23 @@ class EclipseProcessorApp(QMainWindow):
         self.lbl_psb_presentation.setWordWrap(True)
         self.lbl_psb_presentation.setToolTip('P99.5 of positive native luminance outside 1.2 lunar radii. This automatic estimate is our heuristic; the Asinh curve and shared highlight shoulder follow AEL.')
         psb_group.addWidget(self.lbl_psb_presentation)
+        self.chk_prominences = QCheckBox('Export original prominences and chromosphere')
+        self.chk_prominences.setEnabled(False)
+        self.chk_prominences.setToolTip('Use only the originally loaded RGB, before background extraction, colour calibration and filters. Save a separate dark TIFF and mask; add an editable masked layer when Photoshop layers are exported. Requires RGB. Review the automatic red-excess mask.')
+        psb_group.addWidget(self.chk_prominences)
+        self.sl_prominence_exposure, _ = create_slider(
+            'Prominences (EV)', -300, 300, -200, psb_group, divisor=100,
+            tooltip='Independent exposure relative to original red limb highlights. -1 EV halves their intensity. Does not affect the corona or change the original file.')
+        self.prominence_view = ScrollSafeComboBox()
+        self.prominence_view.addItem('Preview composition', 'composition')
+        self.prominence_view.addItem('Preview prominences on black', 'image')
+        self.prominence_view.addItem('Preview prominence mask', 'mask')
+        self.prominence_view.setToolTip('White mask areas reveal the original prominence layer; black areas retain the corona. No lunar-disk exclusion is applied. The mask fades out from 1.3 to 1.5 lunar radii; missing source pixels remain missing.')
+        psb_group.addWidget(self.prominence_view)
+        self.chk_prominences.toggled.connect(self._on_prominence_changed)
+        self.sl_prominence_exposure.valueChanged.connect(self._on_prominence_changed)
+        self.prominence_view.currentIndexChanged.connect(self._on_prominence_changed)
+        self._on_prominence_changed()
         layout.addSpacing(8)
 
         self.chk_export_layers = QCheckBox("Also export editable Photoshop layers")
@@ -714,6 +737,10 @@ class EclipseProcessorApp(QMainWindow):
         if state != 'linear' and self.chk_background.isChecked():
             self.chk_background.setChecked(False)
         self.chk_calibrate_colour.setEnabled(allowed)
+        self.chk_prominences.setEnabled(self.original_source_rgb is not None)
+        if self.original_source_rgb is None:
+            self.chk_prominences.setChecked(False)
+        self._on_prominence_changed()
         self.lbl_colour_hint.setText(
             "Color calibration requires an RGB image." if self.full_source_rgb is None else
             "Color calibration is shown in preview and export." if allowed else
@@ -826,6 +853,14 @@ class EclipseProcessorApp(QMainWindow):
         elif self.raw_image is not None:
             self.status_label.setText('Status: Settings changed — recalculate')
 
+    def _half_resolution_source(self):
+        from core.image_data import resize_observed
+        if self._half_source is None or self._half_source[0] is not self.full_raw_image:
+            h,w=self.full_raw_image.shape[:2]
+            self._half_source=(self.full_raw_image,resize_observed(self.full_raw_image,(max(1,w//2),max(1,h//2))))
+            self._half_cache=None
+        return self._half_source[1]
+
     def dispatch_pipeline_request(self):
         """Run the latest complete recipe; snapshot errors never lock the worker."""
         self.recalculation_timer.stop()
@@ -844,8 +879,10 @@ class EclipseProcessorApp(QMainWindow):
         if self.background.dirty:
             self.background.start()
             return
-        self._running_full_job = self.chk_verify_preview.isChecked() or self.image_label.zoom is not None
-        job_image = self.full_raw_image if self._running_full_job else self.raw_image
+        self._running_half_job = self.image_label.zoom == .5
+        self._running_full_job = not self._running_half_job and (self.chk_verify_preview.isChecked() or self.image_label.zoom is not None)
+        job_image = (self._half_resolution_source() if self._running_half_job else
+                     self.full_raw_image if self._running_full_job else self.raw_image)
         try:
             params = self.collect_filter_parameters(job_image.shape[:2])
             if not np.isfinite([params['sx'], params['sy'], params['sr']]).all() or params['sr'] <= 0:
@@ -903,7 +940,7 @@ class EclipseProcessorApp(QMainWindow):
             "rhef_bin_px": self.sl_rhef_bin.value()/10.0,
             "wow_enabled": self.sec_wow.is_filter_active(),
             "wow_str": 100,
-            "wow_scales": self.sl_wow_scales.value() or (6 if self.combo_wow_bilateral.currentIndex() == 2 else self.sl_wow_scales.maximum()),
+            "wow_scales": self.sl_wow_scales.value() or (8 if self.combo_wow_bilateral.currentIndex() == 2 else self.sl_wow_scales.maximum()),
             "wow_native_scales": True,
             "wow_denoise": [slider.value()/10 for slider in self.sl_wow_denoise if slider.isEnabled()],
             "wow_bilateral": 1 if self.combo_wow_bilateral.currentIndex() else None,
@@ -947,6 +984,8 @@ class EclipseProcessorApp(QMainWindow):
                                     self.preview_image.shape[:2], target_shape)
         data = self.full_raw_image if tuple(target_shape) == self.full_raw_image.shape[:2] else self.preview_image
         if include_mask:
+            if tuple(target_shape) not in (self.full_raw_image.shape[:2],self.preview_image.shape[:2]):
+                data=self._half_resolution_source()
             params["valid_mask"] = np.isfinite(data)
         return params
 
@@ -997,17 +1036,20 @@ class EclipseProcessorApp(QMainWindow):
         current = (self._running_revision is None or
                    (self._running_revision == self._preview_revision
                     and self._running_image is self.raw_image
-                    and self._running_full_source is self.full_raw_image))
+                    and self._running_full_source is self.full_raw_image
+                    and self._running_half_job == (self.image_label.zoom == .5)))
         self.is_processing = False
         self.btn_export.setEnabled(True)
         self._running_revision = None
         self._running_image = None
         if current and not self.recalculation_timer.isActive():
             self._has_layer_result = True
+            if self._running_half_job:
+                self._half_cache = (self.full_raw_image, self._running_signature, output_matrix, self._preview_revision)
             if self._running_full_job:
                 self._full_cache = (self.full_raw_image, self._running_signature, output_matrix, self._preview_revision)
             self.processed_image = output_matrix
-            self.status_label.setText('Status: Full-resolution verification ready' if self._running_full_job else 'Status: Fast preview ready (approximate)')
+            self.status_label.setText('Status: Half-resolution preview ready' if self._running_half_job else 'Status: Full-resolution verification ready' if self._running_full_job else 'Status: Fast preview ready (approximate)')
             self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
             self.render_matrix_to_screen()
         else:
@@ -1033,11 +1075,13 @@ class EclipseProcessorApp(QMainWindow):
         self.sec_wow.chk_active.setEnabled(min(shape) >= 10)
         if min(shape) < 10 and not preserve_settings:
             self.sec_wow.chk_active.setChecked(False)
-        count = self.sl_wow_scales.value() or (6 if ael else maximum)
+        count = self.sl_wow_scales.value() or (8 if ael else maximum)
         for index, slider in enumerate(self.sl_wow_denoise):
             slider.setEnabled(not ael and index < count)
         self.sl_wow_noise.setEnabled(not ael)
-        self.sl_wow_noise_floor.setEnabled(ael)
+        self.sl_wow_noise_floor.setEnabled(False)
+        from .filter_controls import set_control_visible
+        set_control_visible(self.sl_wow_noise_floor, False)
         self.sl_wow_bilateral.setEnabled(self.combo_wow_bilateral.currentIndex() == 1)
 
     def apply_recommended_parameters_to_gui(self, r_full: float, w_full: int, h_full: int):
@@ -1066,7 +1110,7 @@ class EclipseProcessorApp(QMainWindow):
             (self.sl_fnrgf_seg, (2 * rec_fnrgf_ord).bit_length()),
             (self.sl_fnrgf_bin_px, 4),
             (self.sl_fnrgf_rmax, int(round(rec_fnrgf_rmax * 10.0))),
-            (self.sl_wow_scales, 6 if self.combo_wow_bilateral.currentIndex() == 2 else 0),
+            (self.sl_wow_scales, 8 if self.combo_wow_bilateral.currentIndex() == 2 else 0),
             (self.sl_achf_kernel, int(round(rec_achf_kernel_px * 10.0))),
         )
         for slider, value in adaptive_defaults:
@@ -1324,6 +1368,7 @@ class EclipseProcessorApp(QMainWindow):
             self._display_reference_source=self.full_raw_image
             self._display_bounds=loaded['display_bounds']
             self.full_source_rgb = loaded['rgb']
+            self.original_source_rgb = loaded['rgb']
             self.source_rgb_white = loaded['white']
             self._colour_cache = None
             self._preview_colour_cache = None
@@ -1346,6 +1391,7 @@ class EclipseProcessorApp(QMainWindow):
             self.combo_input_state.setVisible(True)
             self.source_path = file_path
             self._full_cache = None
+            self._half_cache = self._half_source = None
             h_full, w_full = self.full_raw_image.shape[:2]
 
             self.preview_scale = loaded['scale']
@@ -1420,7 +1466,7 @@ class EclipseProcessorApp(QMainWindow):
             return
         pending_preview = self.recalculation_timer.isActive()
         self.recalculation_timer.stop()
-        file_path, _ = QFileDialog.getSaveFileName(self, "Export Filtered Image", "", "TIFF Files (*.tiff *.tif)")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Export Filtered Image", "", "TIFF Files (*.tiff *.tif)", options=QFileDialog.Option.DontConfirmOverwrite)
         if not file_path:
             if pending_preview:
                 self.dispatch_pipeline_request_if_auto()
@@ -1428,15 +1474,28 @@ class EclipseProcessorApp(QMainWindow):
         if not file_path.lower().endswith((".tiff", ".tif")):
             file_path += ".tiff"
         try:
+            destinations = export_paths(file_path)
+            protect_source(destinations, self.source_path)
+            collisions = [str(path) for path in destinations if path.exists() or path.is_symlink()]
+            if collisions and QMessageBox.question(self, "Replace export files?",
+                    "Replace these existing files?\n\n" + "\n".join(collisions),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                if pending_preview:
+                    self.dispatch_pipeline_request_if_auto()
+                return
             parameters = self.collect_filter_parameters(self.full_raw_image.shape[:2])
             cached = self._full_cache
             processed = (cached[2] if cached is not None and cached[0] is self.full_raw_image
                          and cached[1] == parameter_signature(parameters) else None)
             request = dict(source=self.full_raw_image.copy(), parameters=parameters,
                 display=self.collect_display_parameters(), file_path=file_path,
-                original_path=self.source_path or file_path,
+                original_path=self.source_path or '',
                 scale_factor=self.full_raw_image.shape[0]/float(self.preview_image.shape[0]),
                 source_rgb=self.full_source_rgb,
+                original_rgb=self.original_source_rgb,
+                export_prominences=self.chk_prominences.isEnabled() and self.chk_prominences.isChecked(),
+                prominence_exposure_ev=self.sl_prominence_exposure.value()/100,
                 calibrate_colour=self.chk_calibrate_colour.isChecked(), white=self.source_rgb_white,
                 export_layers=self.chk_export_layers.isChecked(), layers_format=self.combo_layers_format.currentData(),
                 color_correction=self.chk_color_correction.isEnabled() and self.chk_color_correction.isChecked(),
@@ -1445,8 +1504,10 @@ class EclipseProcessorApp(QMainWindow):
                 input_state=self.combo_input_state.currentData(), processed=processed,
                 project_settings=capture_settings(self))
             request["layer_cache"] = engine_for(self.filter_worker).snapshot(self.full_raw_image,request["source"])
-        except (ValueError, TypeError, OverflowError) as error:
+        except (ValueError, TypeError, OverflowError, OSError) as error:
             self.status_label.setText(f"Status: Export failed - {error}")
+            if pending_preview:
+                self.dispatch_pipeline_request_if_auto()
             return
         self.recalculation_timer.stop()
         self.presentation_timer.stop()
@@ -1498,10 +1559,12 @@ class EclipseProcessorApp(QMainWindow):
         if self.image_label.zoom is not None:
             self.image_label.set_pending(True)
         try:
-            cache = self._full_cache
+            half = self.image_label.zoom == .5
+            half_source = self._half_resolution_source() if half else None
+            cache = self._half_cache if half else self._full_cache
             native = (cache is not None
                       and cache[0] is self.full_raw_image and cache[3] == self._preview_revision)
-            source = self.full_raw_image if native else self.raw_image
+            source = half_source if half else self.full_raw_image if native else self.raw_image
             params = self.collect_filter_parameters(source.shape, include_mask=False)
             display = self.collect_display_parameters()
             if self.show_original_mode:
@@ -1510,17 +1573,21 @@ class EclipseProcessorApp(QMainWindow):
                 revision=self._presentation_revision, filter_revision=self._preview_revision,
                 colour_revision=self._colour_revision,
                 source_identity=self.full_raw_image,
-                source=source, params=params, display=display, native=native,
+                source=source, params=params, display=display, native=native, half=half,
                 fallback=cache[2] if native else (self.processed_image if self.processed_image is not None else source),
                 has_layers=native or getattr(self,'_has_layer_result',False),
                 engine=engine_for(self.filter_worker), worker=self.filter_worker,
                 rgb=self.full_source_rgb, white=self.source_rgb_white,
+                original_rgb=self.original_source_rgb,
+                prominences_enabled=self.chk_prominences.isChecked() and not self.show_original_mode,
+                prominence_exposure_ev=self.sl_prominence_exposure.value()/100,
+                prominence_view=self.prominence_view.currentData(),
                 calibrate=self.chk_calibrate_colour.isChecked(),
                 colour_cache=self._colour_cache, preview_cache=self._preview_colour_cache,
                 neutralize=neutralize_tse, set_luminosity=set_luminosity,
                 psb_preview=self.btn_psb_preview.isChecked(), psb_exposure_ev=self.sl_psb_exposure.value()/100,
                 psb_params=(self.collect_filter_parameters(self.full_raw_image.shape,include_mask=False)
-                            if self.btn_psb_preview.isChecked() else None),
+                            if self.btn_psb_preview.isChecked() or self.chk_prominences.isChecked() else None),
                 preview_size=(self.raw_image.shape[1],self.raw_image.shape[0]))
         except (ValueError, TypeError, OverflowError):
             self._presentation_request = None
@@ -1532,6 +1599,12 @@ class EclipseProcessorApp(QMainWindow):
             self.presentation_timer.start(100)
         else:
             self.lbl_psb_presentation.setText(f'Auto scale + {self.sl_psb_exposure.value()/100:+.2f} EV · Asinh 10')
+
+    def _on_prominence_changed(self, *_):
+        enabled=self.chk_prominences.isEnabled() and self.chk_prominences.isChecked()
+        self.sl_prominence_exposure.parameter_row.setEnabled(enabled)
+        self.prominence_view.setEnabled(enabled)
+        self.presentation_timer.start(100)
 
     def _start_presentation(self):
         if self._presentation_thread is not None or self._presentation_request is None or self._closing:
@@ -1555,7 +1628,8 @@ class EclipseProcessorApp(QMainWindow):
             self._colour_cache, self._preview_colour_cache = thread.result[2:4]
         if (not self._closing and job['revision'] == self._presentation_revision
                 and job['source_identity'] is self.full_raw_image
-                and job['filter_revision'] == self._preview_revision):
+                and job['filter_revision'] == self._preview_revision
+                and job.get('half',False) == (self.image_label.zoom == .5)):
             if thread.error is not None:
                 self.status_label.setText(f'Status: Presentation failed — {thread.error}')
                 self.image_label.set_pending(True,'Native rendering failed · see status')
@@ -1598,40 +1672,44 @@ class EclipseProcessorApp(QMainWindow):
         rect=self.image_label.image_rect()
         physical_width=rect.width()*self.image_label.devicePixelRatioF()
         zoom=physical_width/w if physical_width>0 else 0
-        buffer_scale=(1. if self.image_label._native is not None else
+        buffer_scale=(h/self.image_label._native.height() if self.image_label._native is not None else
                       h/float(self.preview_image.shape[0]) if self.preview_image is not None else 1.)
         self.lbl_scale_info.setText(f'Pipeline: {buffer_scale:.2f}x | Display: {100*zoom:.1f}% ({w}×{h}px native)')
         self.lbl_view_state.setText('Fit' if self.image_label.zoom is None else
-                                   f'{100*self.image_label.zoom}% · native' if self.image_label._native is not None else
+                                   f'{100*self.image_label.zoom}% · '+('half resolution' if self.image_label.zoom == .5 else 'native') if self.image_label._native is not None else
                                    'Preparing native view…')
-        if self.btn_psb_preview.isChecked():
+        if self.chk_prominences.isChecked() and not self.show_original_mode and self.prominence_view.currentData() != 'composition':
+            self.lbl_view_state.setText(self.lbl_view_state.text()+' · '+('Prominence mask' if self.prominence_view.currentData() == 'mask' else 'Prominences'))
+        elif self.btn_psb_preview.isChecked():
             self.lbl_view_state.setText(self.lbl_view_state.text()+' · PSB preview')
 
     def set_preview_zoom(self, zoom):
         if self.full_raw_image is None or self._closing:
             return
-        self.zoom_buttons.button(0 if zoom is None else zoom).setChecked(True)
+        self.zoom_buttons.button(0 if zoom is None else int(100*zoom)).setChecked(True)
         self.image_label.set_zoom(zoom)
         if zoom is None:
             return
-        ready=(self.image_label._native is not None
+        expected_shape = self._half_resolution_source().shape if zoom == .5 else self.full_raw_image.shape
+        ready=(self.image_label._native_pixels is not None
+               and self.image_label._native_pixels.shape[:2] == expected_shape[:2]
                and self._native_filter_revision == self._preview_revision
                and self._native_display_revision == self._presentation_revision
                and not self.presentation_timer.isActive())
         if ready:
             return
         self.image_label.set_pending(True)
-        cache=self._full_cache
+        cache=self._half_cache if zoom == .5 else self._full_cache
         if cache is not None and cache[0] is self.full_raw_image and cache[3] == self._preview_revision:
             scheduled=self._presentation_request or (self._presentation_thread.args[0] if self._presentation_thread is not None else None)
-            if (scheduled is None or not scheduled['native']
+            if (scheduled is None or not scheduled['native'] or scheduled.get('half',False) != (zoom == .5)
                     or scheduled['revision'] != self._presentation_revision
                     or scheduled['filter_revision'] != self._preview_revision
                     or self.presentation_timer.isActive()):
                 self.render_matrix_to_screen()
             return
         # A second zoom click must not cancel the same native job already running.
-        if (self.is_processing and self._running_full_job
+        if (self.is_processing and (self._running_half_job if zoom == .5 else self._running_full_job)
                 and self._running_revision == self._preview_revision
                 and self._running_full_source is self.full_raw_image):
             return

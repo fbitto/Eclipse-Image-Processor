@@ -1,6 +1,6 @@
 """AEL isotropic and angular ACHF variants. Copyright (c) 2026 Pere Guerra Serra.
 
-Adapted from AEL filterbank.py and filters.py (MIT; docs/third-party/AEL-MIT.txt).
+Adapted from AEL 1.3.5 filterbank.py and filters.py (MIT; docs/third-party/AEL-MIT.txt).
 Log-luminance radial spline or angular residual, outer Gaussian and AEL
 MAD/tanh encoding. Missing/nonpositive samples never enter the operator.
 """
@@ -106,12 +106,47 @@ def achf_isotropic(luminance, valid, geometry, *, sigmas=(1,2,4,8,16), outer_sig
     return detail,dict(**info,sigmas_px=list(sigmas),outer_sigma_px=outer_sigma)
 
 
-def display_detail(detail, valid, *, noise_floor=1e-5):
+def display_detail(detail, valid, *, noise_floor=1e-5, scale_region=None):
     good=valid & np.isfinite(detail)
     if not good.any(): raise ValueError('filter produced no observed values')
-    median=float(np.median(detail[good]))
-    scale=max(float(1.4826*np.median(np.abs(detail[good]-median))),noise_floor)
+    sel=good if scale_region is None or (good & scale_region).sum()<1000 else good & scale_region
+    median=float(np.median(detail[sel]))
+    scale=max(float(1.4826*np.median(np.abs(detail[sel]-median))),noise_floor)
     return np.where(good,.5+.5*np.tanh(detail/(2.5*scale)),np.nan).astype(np.float32),dict(scale=scale,tanh=2.5)
+
+
+def display_detail_rings(detail, valid, geometry, *, width_px=2., min_count=50, smooth=3, noise_floor=1e-5):
+    """Map signed detail to a display layer with a level and a spread measured ring by ring (issue #9, Edu).
+
+    Median and 1.4826·MAD in annuli of ``width_px`` around the Sun (each with at least ``min_count`` pixels),
+    averaged over ``smooth`` consecutive annuli and interpolated linearly in r: continuous curves, no ring staircase.
+    Beyond the first and last populated annulus, the end value. Then ``0.5 + 0.5·tanh((detail - level) / (2.5·spread))``.
+    It keeps the high-pass detail next to the limb from saturating when one global spread is dominated by the faint
+    outer field, and it equalises the contrast across radius, which is a presentation choice, as in an NRGF."""
+    good=valid & np.isfinite(detail)
+    if not good.any(): raise ValueError('filter produced no observed values')
+    r=geometry.radius_map()
+    rv=r[good]; k=np.floor(rv/width_px).astype(np.int32)              # 32-bit keys, one sorted copy of the detail
+    cnt=np.bincount(k); rsum=np.bincount(k,weights=rv); del rv
+    ds=detail[good].astype(np.float64)[np.argsort(k,kind='stable')]; del k
+    start=np.concatenate([[0],np.cumsum(cnt)[:-1]]); sel=np.flatnonzero(cnt>=min_count)
+    if len(sel)<3:                                       # too few populated annuli (a narrow wedge of data): the
+        out,info=display_detail(detail,valid,noise_floor=noise_floor)            # whole-image display, said so
+        return out,dict(info,display='one spread for the whole image (fewer than three populated annuli)')
+    med=[];mad=[]
+    for index,i in enumerate(sel):
+        if index % 128 == 0: check_cancelled()
+        seg=ds[start[i]:start[i]+cnt[i]]; md=np.median(seg)
+        med.append(md); mad.append(1.4826*np.median(np.abs(seg-md)))
+    del ds
+    med,mad,rm=np.array(med),np.array(mad),rsum[sel]/cnt[sel]
+    if smooth>1:
+        ker=np.ones(smooth); norm=np.convolve(np.ones(len(med)),ker,'same')
+        med=np.convolve(med,ker,'same')/norm; mad=np.convolve(mad,ker,'same')/norm
+    level=np.interp(r,rm,med).astype(np.float32); spread=np.maximum(np.interp(r,rm,mad),noise_floor).astype(np.float32)
+    out=np.where(good,.5+.5*np.tanh((detail-level)/(np.float32(2.5)*spread)),np.nan).astype(np.float32)
+    return out,dict(display='level and spread per ring',ring_width_px=width_px,ring_min_count=min_count,
+                    ring_smooth_annuli=smooth,display_annuli=int(len(sel)),tanh=2.5)
 
 
 AEL_PRESETS = {
@@ -162,8 +197,8 @@ def ael_achf_layer(image, cx, cy, radius, valid=None, scale=1.,
         detail, info = achf_isotropic(a, mask, geometry,
                                      sigmas=tuple(scale*sigmas), outer_sigma=outer*scale)
         info.update(native_sigmas=sigmas.tolist(), native_outer_sigma=outer)
-    layer, display = display_detail(detail, mask)
-    return layer, dict(info, **display, variant=variant, target_scale=scale)
+    layer, display = display_detail_rings(detail, mask, geometry, width_px=2.*scale)
+    return layer, dict(info, **display, variant=variant, target_scale=scale, upstream_version='1.3.5')
 
 
 def apply_ael_achf(image, strength, cx, cy, radius, valid=None, scale=1.,

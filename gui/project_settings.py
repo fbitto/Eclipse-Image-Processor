@@ -54,7 +54,7 @@ def initialize_filter_defaults(window):
     values['chk_achf_adaptive']['value']=False
     for name,opacity in (('nrgf',40),('wow',10)):
         values['sl_'+name+'_opacity']['value']=opacity
-    values['sl_wow_scales']['value']=6
+    values['sl_wow_scales']['value']=8
     values['sl_wow_noise_floor']['value']=30
     for name,index in (('combo_wow_bilateral',2),('combo_achf_variant',2)):
         values[name]=dict(kind='combo',value=index,text=names[name].itemText(index))
@@ -100,7 +100,7 @@ def validate_settings(window,settings):
         raise ValueError('Settings do not match the current format')
     widgets=controls(window)
     values=settings.get('controls')
-    optional=set(filter_widgets(window))
+    optional=set(filter_widgets(window)) | {'chk_prominences','sl_prominence_exposure','combo_background_degree'}
     if (not isinstance(values,dict) or set(values)-set(widgets) or
             set(widgets)-set(values)-optional):
         raise ValueError('Settings controls do not match this application version')
@@ -111,7 +111,8 @@ def validate_settings(window,settings):
         expected=bool if kind=='check' else int
         if record.get('kind')!=kind or type(value) is not expected:
             raise ValueError(f'Invalid control value: {name}')
-        if kind=='combo' and (not 0<=value<widget.count() or widget.itemText(value)!=record.get('text')):
+        legacy_wow = name=='combo_wow_bilateral' and value==2 and record.get('text')=='AEL bilateral'
+        if kind=='combo' and (not 0<=value<widget.count() or (widget.itemText(value)!=record.get('text') and not legacy_wow)):
             raise ValueError(f'Unknown selector value: {name}')
         if kind=='slider' and not -10**9<=value<=10**9:
             raise ValueError(f'Invalid slider value: {name}')
@@ -164,7 +165,11 @@ def _apply_settings(window,settings):
     window.auto_calculate=False
     try:
         reset_filter_defaults(window,ael=False)
+        window.combo_background_degree.setCurrentIndex(0)
         window.btn_psb_preview.setChecked(True)
+        window.prominence_view.setCurrentIndex(0)
+        window.chk_prominences.setChecked(False)
+        window.sl_prominence_exposure.setValue(-200)
         window.background.points=([tuple(p) for p in settings['background_samples']] if settings.get('background_samples') is not None else None)
         window.background.dirty=window.background.base is not None
         for key,value in settings['geometry'].items():getattr(window,'txt_'+key).setText(value)

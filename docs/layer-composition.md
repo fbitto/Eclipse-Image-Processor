@@ -12,7 +12,7 @@ These are the prepared defaults for the first direct image load. Geometry-depend
 | FNRGF | Multiply | Yes | 20% | — |
 | RHEF | Overlay | No | 20% | — |
 | MGN | Overlay | Yes | 20% | — |
-| WOW (AEL bilateral) | Overlay | Yes | 10% | — |
+| WOW (AEL guided edge-aware) | Overlay | Yes | 10% | — |
 | Tangential Detail | Overlay | No | 20% | — |
 | Larson–Sekanina | Linear Light | No | 75% | 25% |
 | ACHF Adaptive | Overlay | No | 19% | — |
@@ -42,7 +42,7 @@ NRGF adapts AEL 1.3.3 continuous radial statistics: initial annuli 2 native pixe
 
 MGN sigmas are **1.25, 2.5, 5, 10, 20, 40 native pixels**, weights 1, gamma 3.2, k 0.7, h 0.7 and truncation 3. Preview scales sigmas down internally; sliders retain native units.
 
-WOW offers Standard, Edge-aware and AEL bilateral. The default AEL path uses six native B3-starlet scales with equal contributions, radial residuals of log-luminance, observed symmetric pairs and noise-floor multiplier 3. Controls for other WOW modes are disabled while AEL is selected; its noise floor differs from per-band significance thresholds. Preview scale counts adapt approximately.
+WOW offers Standard, adjustable Edge-aware and AEL guided edge-aware. The default AEL path follows AEL 1.3.5: eight native B3 scales on linear luminance, range weights from a smoothed guide, symmetric observed pairs, completeness weighting and local-level removal. Display spread is measured at 1.1–2 reference-disk radii (whole observed image if fewer than 1000 samples). Other backend controls and the retired AEL noise floor do not apply. Existing `ael_bilateral` settings select the updated operator; recalculated results change. Preview scale counts adapt approximately. AEL reports residual sign inversions up to 18–20% in worst sectors and rings in its field tests; this is a display filter, not a photometric measurement. No additional WOW layer or unvalidated radial blend is introduced.
 
 See [ACHF](achf-ael.md), [Larson–Sekanina](larson-sekanina.md) and [RHEF](rhef-continuous.md) for their operators and limitations. More contrast can strengthen noise or boundary artifacts as well as real structure.
 

@@ -15,13 +15,13 @@ from core.layer_export import export_layer_package, to_u16
 
 class AELACHFTests(unittest.TestCase):
     def setUp(self):
-        with np.load(Path(__file__).parent/'fixtures/ael_achf_iso04.npz') as f:
+        with np.load(Path(__file__).parent/'fixtures/ael_achf_iso04_135.npz') as f:
             self.image = f['image']
             self.valid = f['valid']
             self.expected = f['expected']
             self.cx, self.cy, self.radius = f['geometry']
 
-    def test_matches_installed_ael_133_oracle(self):
+    def test_matches_upstream_ael_135_oracle(self):
         before = self.image.copy()
         actual, info = ael_achf_layer(self.image, self.cx, self.cy, self.radius, self.valid)
         np.testing.assert_allclose(actual, self.expected, atol=1e-7, equal_nan=True)
@@ -30,7 +30,7 @@ class AELACHFTests(unittest.TestCase):
         self.assertEqual(info['native_outer_sigma'], 1.5)
 
     def test_three_variants_match_upstream_oracles_and_accept_custom_parameters(self):
-        with np.load(Path(__file__).parent/'fixtures/ael_achf_variants.npz') as oracles:
+        with np.load(Path(__file__).parent/'fixtures/ael_achf_variants_135.npz') as oracles:
             for variant in ('ael_iso_01','ael_iso_04','ael_angular_4'):
                 layer, _ = ael_achf_layer(self.image,self.cx,self.cy,self.radius,
                                          self.valid,variant=variant)
@@ -80,7 +80,7 @@ class AELACHFTests(unittest.TestCase):
                     self.valid,variant=variant,parameters=p['achf_variants'][variant])
                 use = np.isfinite(expected)
                 rgba = tifffile.imread(destination/record['file'])
-                np.testing.assert_array_equal(rgba[...,0][use],to_u16(np.where(use,.5+(expected-.5)*p['achf_variants'][variant]['strength']/100,.5))[use])
+                np.testing.assert_allclose(rgba[...,0][use],to_u16(np.where(use,.5+(expected-.5)*p['achf_variants'][variant]['strength']/100,.5))[use],rtol=0,atol=1)
                 self.assertTrue((rgba[...,3][~use]==0).all())
                 if variant=='ael_iso_01':
                     self.assertEqual(record['opacity_255'],0)

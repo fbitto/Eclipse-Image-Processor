@@ -33,6 +33,64 @@ class ExportWorkerTests(unittest.TestCase):
         self.assertIn('Traceback (most recent call last)',output.getvalue())
         self.assertIn("has no attribute 'prepare'",output.getvalue())
 
+    def test_source_destination_is_rejected_and_pending_preview_resumes(self):
+        w = EclipseProcessorApp()
+        w.auto_calculate = False
+        image = np.ones((8, 10), np.float32)
+        w.full_raw_image = image
+        w.raw_image = image.copy()
+        w.preview_image = image.copy()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = Path(tmp)/'source.tif'
+                source.write_bytes(b'original')
+                w.source_path = str(source)
+                w.recalculation_timer.start(10000)
+                with patch('gui.app.QFileDialog.getSaveFileName', return_value=(str(source), '')), \
+                     patch('gui.app.QMessageBox.question') as question, \
+                     patch('gui.app.ExportThread') as worker, \
+                     patch.object(w, 'dispatch_pipeline_request_if_auto') as resume:
+                    w.export_image_action()
+                    worker.assert_not_called()
+                    question.assert_not_called()
+                    resume.assert_called_once()
+                    self.assertIn('original image', w.status_label.text())
+                    self.assertEqual(source.read_bytes(), b'original')
+        finally:
+            close_window(w)
+
+    def test_companion_collisions_require_one_confirmation_before_worker(self):
+        from PySide6.QtWidgets import QMessageBox
+        w = EclipseProcessorApp()
+        w.auto_calculate = False
+        image = np.ones((8, 10), np.float32)
+        w.full_raw_image = image
+        w.raw_image = image.copy()
+        w.preview_image = image.copy()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                target = Path(tmp)/'new.tif'
+                jpeg = Path(tmp)/'new_preview.jpg'
+                settings = Path(tmp)/'new.json'
+                jpeg.write_bytes(b'old preview')
+                settings.write_bytes(b'old settings')
+                for answer in (QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes):
+                    with patch('gui.app.QFileDialog.getSaveFileName', return_value=(str(target), '')), \
+                         patch('gui.app.QMessageBox.question', return_value=answer) as question, \
+                         patch('gui.app.ExportThread') as worker:
+                        w.export_image_action()
+                        question.assert_called_once()
+                        self.assertIn(str(jpeg), question.call_args.args[2])
+                        self.assertIn(str(settings), question.call_args.args[2])
+                        self.assertEqual(worker.called, answer == QMessageBox.StandardButton.Yes)
+                        if worker.called:
+                            worker.return_value.start.assert_called_once()
+                            w._export_thread = None
+                self.assertEqual(jpeg.read_bytes(), b'old preview')
+                self.assertEqual(settings.read_bytes(), b'old settings')
+        finally:
+            close_window(w)
+
     def test_snapshot_worker_keeps_event_loop_running_and_handles_failure(self):
         for fail in (False, True):
             w = EclipseProcessorApp()

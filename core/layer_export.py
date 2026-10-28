@@ -58,6 +58,36 @@ def photoshop_loader(records):
                 result.activeLayer.blendMode = entry.mode === 'Color' ? BlendMode.COLORBLEND : (entry.mode === 'Normal' ? BlendMode.NORMAL : (entry.mode === 'Linear Light' ? BlendMode.LINEARLIGHT : (entry.mode === 'Multiply' ? BlendMode.MULTIPLY : BlendMode.OVERLAY)));
                 result.activeLayer.opacity = entry.opacity_255 * 100 / 255;
                 result.activeLayer.visible = entry.visible;
+                if (entry.mask_file) {
+                    var targetLayer = result.activeLayer;
+                    var maskInput = ownedCopy(File(folder.fsName + '/' + entry.mask_file));
+                    var maskChannel = null;
+                    try {
+                        app.activeDocument = maskInput;
+                        maskChannel = maskInput.channels[0].duplicate(result);
+                        app.activeDocument = result;
+                        result.activeLayer = targetLayer;
+                        result.selection.load(maskChannel, SelectionType.REPLACE);
+                        var maskMode = 'RvlS';
+                        try { result.selection.bounds; } catch (emptySelection) { maskMode = 'HdAl'; }
+                        var descriptor = new ActionDescriptor();
+                        var channel = new ActionReference();
+                        channel.putClass(charIDToTypeID('Chnl'));
+                        descriptor.putReference(charIDToTypeID('Nw  '), channel);
+                        var at = new ActionReference();
+                        at.putEnumerated(charIDToTypeID('Chnl'), charIDToTypeID('Chnl'), charIDToTypeID('Msk '));
+                        descriptor.putReference(charIDToTypeID('At  '), at);
+                        descriptor.putEnumerated(charIDToTypeID('Usng'), charIDToTypeID('UsrM'), charIDToTypeID(maskMode));
+                        executeAction(charIDToTypeID('Mk  '), descriptor, DialogModes.NO);
+                        result.selection.deselect();
+                    } finally {
+                        if (maskChannel !== null) maskChannel.remove();
+                        app.activeDocument = maskInput;
+                        maskInput.close(SaveOptions.DONOTSAVECHANGES);
+                        app.activeDocument = result;
+                        result.activeChannels = result.componentChannels;
+                    }
+                }
             } finally {
                 app.activeDocument = input;
                 input.close(SaveOptions.DONOTSAVECHANGES);

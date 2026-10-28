@@ -48,7 +48,7 @@ class ImageViewTests(unittest.TestCase):
         v=self.view
         for dpr in (1.,1.5,2.):
             with patch.object(v,'devicePixelRatioF',return_value=dpr):
-                for zoom in (1,2):
+                for zoom in (.5,1,2):
                     v.set_zoom(zoom)
                     image,target,source=v.visible_image()
                     self.assertIs(image,v._native)
@@ -166,6 +166,31 @@ class NativeZoomTests(unittest.TestCase):
         w.render_matrix_to_screen();wait_for_gui(w)
 
     def tearDown(self):close_window(self.w)
+
+    def test_50_percent_button_precedes_100_and_requests_native(self):
+        w=self.w
+        self.assertEqual([button.text() for button in w.zoom_buttons.buttons()],['Fit','50%','100%','200%'])
+        w.zoom_buttons.button(50).setEnabled(True)
+        w.zoom_buttons.button(50).click()
+        self.assertEqual(w.image_label.zoom,.5)
+        self.assertTrue(w.zoom_buttons.button(50).isChecked())
+        self.assertEqual(len(self.requests),1)
+        source,params=self.requests[-1]
+        self.assertEqual(source.shape,(96,128))
+        self.assertEqual(params['valid_mask'].shape,source.shape)
+        self.assertAlmostEqual(params['sx'],63.75)
+        self.complete_native()
+        self.assertEqual(w.image_label._native_pixels.shape[:2],source.shape)
+        self.assertIsNone(w._full_cache)
+        self.assertIsNotNone(w._half_cache)
+        w.set_preview_zoom(1)
+        self.assertEqual(len(self.requests),2)
+        self.assertIs(self.requests[-1][0],w.full_raw_image)
+        self.complete_native()
+        self.assertEqual(w.image_label._native_pixels.shape[:2],w.full_raw_image.shape)
+        w.set_preview_zoom(.5);wait_for_gui(w)
+        self.assertEqual(len(self.requests),2)
+        self.assertEqual(w.image_label._native_pixels.shape[:2],source.shape)
 
     def complete_native(self):
         w=self.w

@@ -96,6 +96,7 @@ def add_controls(window):
     window.sl_wow_bilateral, _ = create_slider_float('Bilateral intensity scale', 1, 50, 10, 10.,
         window.sec_wow.content_layout, tooltip='Positive intensity sensitivity for the bilateral WOW backend (0.1 to 5); enabled only in edge-aware mode.',
         on_release_callback=window.dispatch_pipeline_request_if_auto)
+    # Retain the hidden widget so existing v4 control snapshots still load.
     window.sl_wow_noise_floor, _ = create_slider_float('AEL noise floor', 0, 100, 30, 10.,
         window.sec_wow.content_layout, tooltip='AEL regularization multiplier of measured noise in the whitening denominator. This is not a significance threshold.',
         on_release_callback=window.dispatch_pipeline_request_if_auto)

@@ -143,7 +143,9 @@ def verify_color_correction(doc, rgb, valid, geometry):
     """Verify hierarchy, native parameter blocks, full-resolution mask bytes and profile."""
     from psd_tools.constants import BlendMode, ChannelID, Resource
     from psd_tools.api.adjustments import GradientMap, ColorBalance, HueSaturation
-    group=doc[-1]
+    group=next((layer for layer in doc if layer.is_group() and layer.name=='Color Correction'),None)
+    if group is None:
+        raise ValueError('Color Correction group is missing')
     if not group.is_group() or group.name!='Color Correction' or group.blend_mode!=BlendMode.NORMAL or group.opacity!=128 or not group.visible:
         raise ValueError('Color Correction group metadata mismatch')
     if len(group)!=4 or [l.name for l in list(group)[1:]]!=list(ADJUSTMENT_NAMES):

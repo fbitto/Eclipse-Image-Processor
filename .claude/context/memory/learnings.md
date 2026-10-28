@@ -22,3 +22,11 @@
 - Settings format v4 is the only supported JSON version. Do not restore legacy strength/opacity, Reveal, display-curve or MGN-unit migrations. Missing filter controls remain optional and reset inactive by current product behavior; current global controls are required.
 
 - Disk-overlay visibility is transient viewport state: toggle only ImageView.update(), keep geometry and pixel buffers unchanged, and restore circle/cross visibility on every source load. Larson–Sekanina radial offset is fixed at zero by GUI parameter collection; no radial slider is constructed.
+
+- Prominence presentation receives original_source_rgb, assigned only on file load; full_source_rgb may be replaced by background preparation. Snapshot the original reference and exposure on the GUI thread, calculate masks in render_snapshot/export workers, and keep the prominence view selector transient. New optional prominence settings default off when absent from v4 JSON.
+- Select prominence masks at native resolution before area reduction. Red-excess thresholding after reducing RGB can erase thin features; reduce premultiplied RGB and coverage separately to avoid colour bleeding from excluded neighbours.
+- Prominence presentation has no geometric lunar-disk exclusion. A fitted circle may enclose observed red pixels near a missing-data gap; preserve those pixels. Missing input pixels, including an upstream lunar margin, cannot be restored by exposure or mask changes.
+- A warm orange corona can pass R-max(G,B) and turn the low-exposure Normal layer into a dark ring. Prominence selection discounts max(G-B,0) in both native masks and reference sampling; preserve original exposed RGB, and test orange continuum alongside pink and pure-red signal.
+- Fractional OpenCV INTER_AREA footprints can sum below one at valid borders (2401→1500 gives 0.999167). Determine resized support from area-averaged missingness, not weights≈1; retain value/weight normalization and test an actual missing border pixel separately.
+
+- Export overwrite confirmation covers TIFF, preview JPEG and settings JSON together; disable the native TIFF-only confirmation. Resume pending auto-preview when the dialog is cancelled or source protection rejects the destination, before creating an export worker.

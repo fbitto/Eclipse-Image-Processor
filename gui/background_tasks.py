@@ -11,6 +11,10 @@ from core.presentation import (normalized_base, composition_settings,
 from core.presentation_edges import finish_presentation
 
 
+class UnsupportedTiffError(ValueError):
+    """Recognized TIFF encoding whose pixels cannot be interpreted safely."""
+
+
 class TaskThread(QThread):
     def __init__(self, function, *args, parent=None):
         super().__init__(parent)
@@ -51,7 +55,12 @@ def load_source(file_path, geometry, detect_limb):
     if img is None:
         try:
             with tifffile.TiffFile(file_path) as tif:
-                img = tif.pages[0].asarray()
+                page = tif.pages[0]
+                if page.photometric in (tifffile.PHOTOMETRIC.MINISWHITE, tifffile.PHOTOMETRIC.PALETTE):
+                    raise UnsupportedTiffError(f'Unsupported TIFF photometric interpretation: {page.photometric.name}')
+                img = page.asarray()
+        except UnsupportedTiffError:
+            raise
         except Exception:
             pass
 
@@ -138,10 +147,33 @@ def render_snapshot(job):
         if rgb is not None:
             final=job['set_luminosity'](colour_display(rgb,source,composition_settings(display)),final)
     final = finish_presentation(final, engine.edge_alpha(source, params))
+    if job.get('prominences_enabled') and job.get('original_rgb') is not None:
+        from core.prominences import prominence_settings, prominence_layer
+        original=job['original_rgb']
+        settings=prominence_settings(original,job['psb_params'],job['prominence_exposure_ev'])
+        # Select before reduction: averaging RGB first can erase thin red structures.
+        image,mask=prominence_layer(original,job['psb_params'],settings)
+        coverage=mask.astype(np.float32)/65535.
+        reduced=source.shape != original.shape[:2]
+        size=(source.shape[1],source.shape[0])
+        view=job.get('prominence_view','composition')
+        if view=='mask':
+            final=resize_observed(coverage,size) if reduced else coverage
+        elif view=='image' or job.get('psb_preview'):
+            black=np.empty((*source.shape,3),np.float32)
+            for c in range(3):
+                channel=image[...,c].astype(np.float32)/65535.*coverage
+                black[...,c]=resize_observed(channel,size) if reduced else channel
+            if view=='image':
+                final=black
+            else:
+                alpha=resize_observed(coverage,size) if reduced else coverage
+                base=final[...,None] if final.ndim==2 else final
+                final=base*(1.-alpha[...,None])+black
     native_pixels=display_pixels(final) if job['native'] else None
     if job['native']:
         size = job['preview_size']
         final = (np.stack([resize_observed(final[...,c],size) for c in range(3)],axis=-1)
-                 if rgb is not None else resize_observed(final,size))
+                 if final.ndim == 3 else resize_observed(final,size))
     pixels = display_pixels(final)
     return final, pixels, colour_cache, preview_cache, colour_error, native_pixels, psb_settings

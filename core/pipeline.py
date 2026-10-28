@@ -51,7 +51,7 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
         offset = int(np.floor(np.log2(wavelet_scale) + 0.5))
         p["wow_scales"] = int(np.clip(count + offset, 1, target_max))
         if p.get('wow_mode') == 'ael_bilateral':
-            p['wow_scales'] = int(np.clip(int(requested or 6) + offset, 1, 10))
+            p['wow_scales'] = int(np.clip(int(requested or 8) + offset, 1, 10))
         levels = list(p.get("wow_denoise", []))
         if levels:
             # Keep thresholds attached to the same physical bands. Newly added

@@ -15,7 +15,7 @@ from .layer_engine import engine_for, requests, opacity, LABELS
 
 
 def export_layered_package(worker, source, params, display, original_path, destination,
-                           rgb=None, colour_report=None):
+                           rgb=None, colour_report=None, prominences=None):
     from .layer_export import to_u16, photoshop_loader, write_edge_layer
     source = np.asarray(source)
     if source.ndim != 2 or not source.size:
@@ -96,6 +96,19 @@ def export_layered_package(worker, source, params, display, original_path, desti
         combined=finish_presentation(combined,edge)
         if combined.ndim==2:
             combined=np.repeat(combined[...,None],3,axis=-1)
+        if prominences is not None:
+            from .prominences import composite_prominences
+            image, mask, settings = prominences
+            if image.shape != (*source.shape, 3) or mask.shape != source.shape:
+                raise ValueError('Prominences must match the original canvas')
+            tifffile.imwrite(stage/'CORONA_COMBINED.tif',to_u16(combined),photometric='rgb',compression='zlib',metadata=None)
+            filename=f'{len(records)+1:02d}_PROMINENCES_Normal.tif'
+            tifffile.imwrite(stage/filename,image,photometric='rgb',compression='zlib',metadata=None)
+            tifffile.imwrite(stage/'PROMINENCES_MASK.tif',mask,compression='zlib',metadata=None)
+            records.append(dict(order=len(records)+1,file=filename,name='Prominences and chromosphere',
+                                filter='prominences',mode='Normal',opacity=1.,opacity_255=255,
+                                visible=True,mask_file='PROMINENCES_MASK.tif',normalization=settings))
+            combined=composite_prominences(combined,image,mask)
         combined_file='REFERENCE_COMBINED.tif'
         tifffile.imwrite(stage/combined_file,to_u16(combined),photometric='rgb',compression='zlib',metadata=None)
         tifffile.imwrite(stage/'SOURCE_float32.tif',zero_missing(source,valid).astype(np.float32),compression='zlib')
@@ -111,6 +124,8 @@ def export_layered_package(worker, source, params, display, original_path, desti
                     colour_calibration=colour_report,role='Independent linear-input layers; display composition',
                     alpha='Original validity retained separately; editable Edge Antialias adds display-only black fade',
                     missing_samples='Numerical files store zero; VALID marks unobserved samples')
+        if prominences is not None:
+            recipe['corona_combined']='CORONA_COMBINED.tif'
         (stage/'recipe.json').write_text(json.dumps(recipe,indent=2),encoding='utf-8')
         background_file='00_BACKGROUND_Normal.tif'
         tifffile.imwrite(stage/background_file,np.zeros((*source.shape,3),np.uint16),

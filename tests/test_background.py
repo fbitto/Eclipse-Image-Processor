@@ -45,6 +45,24 @@ class BackgroundTests(unittest.TestCase):
             np.testing.assert_allclose(corrected,expected,atol=2e-6)
             np.testing.assert_array_equal(base['rgb'] if rgb else base['full'],original)
 
+    def test_quadratic_curvature_and_corona_preserved(self):
+        for rgb in (False,True):
+            base,_,corona=scene(rgb)
+            h,w=base['full'].shape;y,x=np.indices((h,w))
+            u=(x+.5)/w*2-1;v=(y+.5)/h*2-1
+            curve=.05*u*u+.03*u*v-.02*v*v
+            if rgb:base['rgb']+=curve[...,None]
+            else:base['full']+=curve
+            result=equalize_background(base,(160,120,15),5,16,degree=2)
+            corrected=result['rgb'] if rgb else result['full']
+            signal=corona[...,None] if rgb else corona
+            sky=corrected-signal
+            self.assertLess(np.ptp(sky,axis=(0,1)).max(),2e-5)
+            self.assertEqual(result['report']['degree'],2)
+            self.assertEqual(len(result['report']['coefficients']),6)
+        for degree in (0,3,True):
+            with self.assertRaises(ValueError):equalize_background(base,(160,120,15),5,16,degree=degree)
+
     def test_zero_and_missing_pixels_preserved_and_bright_patches_rejected(self):
         base,slopes,_=scene(True)
         base['rgb'][100:140,140:180]=0
@@ -58,6 +76,12 @@ class BackgroundTests(unittest.TestCase):
         self.assertTrue((result['rgb'][20,300]<0).all())
         np.testing.assert_allclose(np.asarray(result['report']['coefficients'])[1:],slopes,atol=1e-4)
         self.assertLess(result['report']['inliers'],result['report']['samples'])
+
+    def test_quadratic_rejects_rank_deficient_samples(self):
+        base,_,_=scene()
+        points=[(x,y) for y in (10,230) for x in range(10,310,20)]
+        with self.assertRaises(ValueError):
+            equalize_background(base,(160,120,15),5,16,points,degree=2)
 
     def test_sampling_excludes_whole_patches_and_rejects_insufficient_coverage(self):
         base,_,_=scene()
@@ -166,6 +190,24 @@ class BackgroundGuiTests(unittest.TestCase):
                 np.testing.assert_allclose(reloaded.full_raw_image,expected,atol=1e-6)
                 np.testing.assert_array_equal(tifffile.imread(source),self.base['rgb'])
             finally:close_window(reloaded)
+
+    def test_degree_preserves_samples_and_roundtrips_settings(self):
+        w=self.w;w.background.generate();points=list(w.background.points)
+        w.combo_background_degree.setCurrentIndex(1)
+        self.assertEqual(w.background.points,points)
+        self.assertTrue(w.background.dirty)
+        saved=capture_settings(w)
+        w.combo_background_degree.setCurrentIndex(0)
+        restore_settings(w,saved)
+        self.assertEqual(w.combo_background_degree.currentData(),2)
+        old=deepcopy(saved);old['controls'].pop('combo_background_degree')
+        restore_settings(w,old)
+        self.assertEqual(w.combo_background_degree.currentData(),1)
+        w.combo_background_degree.setCurrentIndex(1)
+        w.chk_background.setChecked(True)
+        w.sl_background_radius.setValue(50)
+        w.dispatch_pipeline_request();wait_for_gui(w)
+        self.assertEqual(w.background.report['degree'],2)
 
     def test_export_applies_pending_background_before_building_export_request(self):
         w=self.w;w.chk_background.setChecked(True);w.sl_background_radius.setValue(50)
