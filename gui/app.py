@@ -207,7 +207,7 @@ class EclipseProcessorApp(QMainWindow):
 
         self.btn_compare = QPushButton("View Original")
         self.btn_compare.setCheckable(True)
-        self.btn_compare.setToolTip("Temporarily bypass detail filters to inspect the working input with the selected PSB presentation or un-stretched view. Enabled background equalization and Calibrate color apply to both views. This comparison does not change filter settings or the export.")
+        self.btn_compare.setToolTip("Temporarily bypass detail filters to inspect the working input with the selected PSB presentation or un-stretched view. Enabled background equalization, Calibrate color and Warm apply to both views. The separate prominence layer is bypassed in View Original. This comparison does not change filter settings or the export.")
         self.btn_compare.clicked.connect(self.toggle_compare_mode)
         btn_row.addWidget(self.btn_compare)
 
@@ -269,11 +269,9 @@ class EclipseProcessorApp(QMainWindow):
         colour_row = QHBoxLayout()
         colour_row.setContentsMargins(0, 0, 0, 0)
         colour_row.addWidget(self.chk_calibrate_colour)
-        colour_controls = QWidget()
-        colour_controls.setLayout(colour_row)
-        top_header_layout.addWidget(colour_controls)
+        top_header_layout.addLayout(colour_row)
         self.sl_warmth, _ = create_slider('Warm', 0, 100, 0, colour_row,
-            tooltip='Artistic color warmth: 0 preserves color; 100 gives a sunset tone. Applies to preview and exports, independently of calibration.')
+            tooltip='Artistic color warmth: 0 preserves color; 100 gives a sunset tone. Requires RGB. Applies to corona color in preview and exports, independently of calibration. The separate original prominence layer retains its own saturation and exposure.')
         self.sl_warmth.title_label.setFixedWidth(40)
         self.sl_warmth.value_label.setFixedWidth(35)
         self.sl_warmth.parameter_row.setMaximumWidth(230)
@@ -631,20 +629,20 @@ class EclipseProcessorApp(QMainWindow):
         psb_group.addWidget(self.lbl_psb_presentation)
         self.chk_prominences = QCheckBox('Export original prominences and chromosphere')
         self.chk_prominences.setEnabled(False)
-        self.chk_prominences.setToolTip('Use only the originally loaded RGB, before background extraction, colour calibration and filters. Save a separate dark TIFF and mask; add an editable masked layer when Photoshop layers are exported. Requires RGB. Review the automatic red-excess mask.')
+        self.chk_prominences.setToolTip('Use the originally loaded RGB, before background extraction, color calibration, Warm and filters. Adjust its display with Prominences (EV) and Prominence saturation. Save a separate dark TIFF and mask; add an editable masked layer when Photoshop layers are exported. Requires RGB. Review the automatic red-excess mask.')
         psb_group.addWidget(self.chk_prominences)
         self.sl_prominence_exposure, _ = create_slider(
             'Prominences (EV)', -300, 300, -200, psb_group, divisor=100,
             tooltip='Independent exposure relative to original red limb highlights. -1 EV halves their intensity. Does not affect the corona or change the original file.')
         self.sl_prominence_saturation, _ = create_slider(
             'Prominence saturation (%)', 0, 100, 65, psb_group,
-            tooltip='Reduce intense reds without changing the original RGB or the prominence mask. 100 preserves original saturation.')
+            tooltip='Saturation of the separate original prominence layer: 0 is grayscale; 65 softens intense reds; 100 preserves original saturation. Applies to preview and prominence exports. Leaves the original RGB and mask unchanged; adjust brightness with Prominences (EV).')
         self.sl_prominence_saturation.valueChanged.connect(self._on_prominence_changed)
         self.prominence_view = ScrollSafeComboBox()
         self.prominence_view.addItem('Preview composition', 'composition')
         self.prominence_view.addItem('Preview prominences on black', 'image')
         self.prominence_view.addItem('Preview prominence mask', 'mask')
-        self.prominence_view.setToolTip('White mask areas reveal the original prominence layer; black areas retain the corona. No lunar-disk exclusion is applied. The mask fades out from 1.3 to 1.5 lunar radii; missing source pixels remain missing.')
+        self.prominence_view.setToolTip('Choose the composition, exposed prominences on black, or selection mask. This view selector affects only the preview. In the mask, white reveals the prominence layer and black retains the corona. No lunar-disk exclusion is applied. The mask fades out from 1.3 to 1.5 lunar radii; missing source pixels remain missing.')
         psb_group.addWidget(self.prominence_view)
         self.chk_prominences.toggled.connect(self._on_prominence_changed)
         self.sl_prominence_exposure.valueChanged.connect(self._on_prominence_changed)
@@ -746,7 +744,7 @@ class EclipseProcessorApp(QMainWindow):
             'Assumed linear; not confirmed.' if state == 'linear' else
             'Input already stretched.' if state == 'nonlinear' else
             'Input linearity unknown.')
-        self.lbl_input_linearity.setToolTip(warning)
+        self.lbl_input_linearity.setToolTip(warning or 'Input linearity declaration. Linear is assumed unless confirmed by the source; this does not undo a previous stretch.')
         self.lbl_input_linearity.setVisible(bool(warning))
         allowed = self.full_source_rgb is not None and self.combo_input_state.currentData() == "linear"
         self.chk_background.setEnabled(self.full_raw_image is not None and state == 'linear')
@@ -761,7 +759,7 @@ class EclipseProcessorApp(QMainWindow):
         self.lbl_colour_hint.setText(
             "Color calibration requires an RGB image." if self.full_source_rgb is None else
             "Color calibration is shown in preview and export." if allowed else
-            "Select 'Input: linear' below to enable color calibration.")
+            "Select 'Input: linear' to enable color calibration.")
         if not allowed:
             self.chk_calibrate_colour.setChecked(False)
 
