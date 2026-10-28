@@ -266,7 +266,19 @@ class EclipseProcessorApp(QMainWindow):
         self._build_presentation_section(control_layout)
         top_header_layout.insertWidget(2, self.combo_input_state)
         top_header_layout.insertWidget(3, self.lbl_input_linearity)
-        top_header_layout.addWidget(self.chk_calibrate_colour)
+        colour_row = QHBoxLayout()
+        colour_row.setContentsMargins(0, 0, 0, 0)
+        colour_row.addWidget(self.chk_calibrate_colour)
+        colour_controls = QWidget()
+        colour_controls.setLayout(colour_row)
+        top_header_layout.addWidget(colour_controls)
+        self.sl_warmth, _ = create_slider('Warm', 0, 100, 0, colour_row,
+            tooltip='Artistic color warmth: 0 preserves color; 100 gives a sunset tone. Applies to preview and exports, independently of calibration.')
+        self.sl_warmth.title_label.setFixedWidth(40)
+        self.sl_warmth.value_label.setFixedWidth(35)
+        self.sl_warmth.parameter_row.setMaximumWidth(230)
+        self.sl_warmth.setEnabled(False)
+        self.sl_warmth.valueChanged.connect(self.on_colour_changed)
         add_advanced_mode(self, top_header_layout)
         top_header_layout.addWidget(self.lbl_colour_hint)
         self.sl_wow_scales.valueChanged.connect(lambda _: self.update_wow_controls())
@@ -624,6 +636,10 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_prominence_exposure, _ = create_slider(
             'Prominences (EV)', -300, 300, -200, psb_group, divisor=100,
             tooltip='Independent exposure relative to original red limb highlights. -1 EV halves their intensity. Does not affect the corona or change the original file.')
+        self.sl_prominence_saturation, _ = create_slider(
+            'Prominence saturation (%)', 0, 100, 65, psb_group,
+            tooltip='Reduce intense reds without changing the original RGB or the prominence mask. 100 preserves original saturation.')
+        self.sl_prominence_saturation.valueChanged.connect(self._on_prominence_changed)
         self.prominence_view = ScrollSafeComboBox()
         self.prominence_view.addItem('Preview composition', 'composition')
         self.prominence_view.addItem('Preview prominences on black', 'image')
@@ -737,6 +753,7 @@ class EclipseProcessorApp(QMainWindow):
         if state != 'linear' and self.chk_background.isChecked():
             self.chk_background.setChecked(False)
         self.chk_calibrate_colour.setEnabled(allowed)
+        self.sl_warmth.setEnabled(self.full_source_rgb is not None)
         self.chk_prominences.setEnabled(self.original_source_rgb is not None)
         if self.original_source_rgb is None:
             self.chk_prominences.setChecked(False)
@@ -1387,6 +1404,10 @@ class EclipseProcessorApp(QMainWindow):
                 if lower_path.endswith(('.jpg', '.jpeg', '.png', '.bmp')) else
                 "Input assumed linear; linearity has not been confirmed. "
                 "If the source was stretched before saving, select 'Input: already stretched / nonlinear'.")
+            if project is None:
+                with QSignalBlocker(self.sl_warmth), QSignalBlocker(self.sl_prominence_saturation):
+                    self.sl_warmth.setValue(0)
+                    self.sl_prominence_saturation.setValue(65)
             self.on_input_state_changed()
             self.combo_input_state.setVisible(True)
             self.source_path = file_path
@@ -1496,6 +1517,8 @@ class EclipseProcessorApp(QMainWindow):
                 original_rgb=self.original_source_rgb,
                 export_prominences=self.chk_prominences.isEnabled() and self.chk_prominences.isChecked(),
                 prominence_exposure_ev=self.sl_prominence_exposure.value()/100,
+                prominence_saturation=self.sl_prominence_saturation.value()/100,
+                warmth=self.sl_warmth.value()/100,
                 calibrate_colour=self.chk_calibrate_colour.isChecked(), white=self.source_rgb_white,
                 export_layers=self.chk_export_layers.isChecked(), layers_format=self.combo_layers_format.currentData(),
                 color_correction=self.chk_color_correction.isEnabled() and self.chk_color_correction.isChecked(),
@@ -1581,6 +1604,8 @@ class EclipseProcessorApp(QMainWindow):
                 original_rgb=self.original_source_rgb,
                 prominences_enabled=self.chk_prominences.isChecked() and not self.show_original_mode,
                 prominence_exposure_ev=self.sl_prominence_exposure.value()/100,
+                prominence_saturation=self.sl_prominence_saturation.value()/100,
+                warmth=self.sl_warmth.value()/100,
                 prominence_view=self.prominence_view.currentData(),
                 calibrate=self.chk_calibrate_colour.isChecked(),
                 colour_cache=self._colour_cache, preview_cache=self._preview_colour_cache,
@@ -1603,6 +1628,7 @@ class EclipseProcessorApp(QMainWindow):
     def _on_prominence_changed(self, *_):
         enabled=self.chk_prominences.isEnabled() and self.chk_prominences.isChecked()
         self.sl_prominence_exposure.parameter_row.setEnabled(enabled)
+        self.sl_prominence_saturation.parameter_row.setEnabled(enabled)
         self.prominence_view.setEnabled(enabled)
         self.presentation_timer.start(100)
 

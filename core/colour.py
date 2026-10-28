@@ -86,3 +86,12 @@ def set_luminosity(colour, luminance):
     high_factor = np.divide(1-luminance, high-luminance, out=np.ones_like(luminance), where=high != luminance)
     c = np.where((high > 1)[..., None], luminance[..., None]+(c-luminance[..., None])*high_factor[..., None], c)
     return np.clip(c, 0, 1)
+
+
+def warm_colour(rgb, amount=0.):
+    """Artistic RGB gains, 0 = unchanged, 1 = sunset; preserve missing pixels."""
+    if not np.isfinite(amount) or not 0 <= amount <= 1:
+        raise ValueError('Warmth must be between 0 and 1')
+    if amount == 0:
+        return rgb
+    return np.asarray(rgb) * np.array([1., 1.-.3*amount, 1.-.8*amount])

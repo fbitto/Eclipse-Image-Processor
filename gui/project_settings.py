@@ -100,7 +100,7 @@ def validate_settings(window,settings):
         raise ValueError('Settings do not match the current format')
     widgets=controls(window)
     values=settings.get('controls')
-    optional=set(filter_widgets(window)) | {'chk_prominences','sl_prominence_exposure','combo_background_degree'}
+    optional=set(filter_widgets(window)) | {'chk_prominences','sl_prominence_exposure','combo_background_degree','sl_warmth','sl_prominence_saturation'}
     if (not isinstance(values,dict) or set(values)-set(widgets) or
             set(widgets)-set(values)-optional):
         raise ValueError('Settings controls do not match this application version')
@@ -170,6 +170,8 @@ def _apply_settings(window,settings):
         window.prominence_view.setCurrentIndex(0)
         window.chk_prominences.setChecked(False)
         window.sl_prominence_exposure.setValue(-200)
+        window.sl_prominence_saturation.setValue(65)
+        window.sl_warmth.setValue(0)
         window.background.points=([tuple(p) for p in settings['background_samples']] if settings.get('background_samples') is not None else None)
         window.background.dirty=window.background.base is not None
         for key,value in settings['geometry'].items():getattr(window,'txt_'+key).setText(value)

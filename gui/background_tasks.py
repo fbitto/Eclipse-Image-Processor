@@ -116,6 +116,8 @@ def render_snapshot(job):
                     rgb, report = job['neutralize'](rgb, job['white'])
                 except ValueError as error:
                     colour_error = str(error)
+            from core.colour import warm_colour
+            rgb = warm_colour(rgb, job.get('warmth', 0.))
             colour_cache = (rgb, None, report)
         rgb = colour_cache[0]
         if job.get('psb_preview'):
@@ -150,7 +152,7 @@ def render_snapshot(job):
     if job.get('prominences_enabled') and job.get('original_rgb') is not None:
         from core.prominences import prominence_settings, prominence_layer
         original=job['original_rgb']
-        settings=prominence_settings(original,job['psb_params'],job['prominence_exposure_ev'])
+        settings=prominence_settings(original,job['psb_params'],job['prominence_exposure_ev'], job.get('prominence_saturation', 1.))
         # Select before reduction: averaging RGB first can erase thin red structures.
         image,mask=prominence_layer(original,job['psb_params'],settings)
         coverage=mask.astype(np.float32)/65535.

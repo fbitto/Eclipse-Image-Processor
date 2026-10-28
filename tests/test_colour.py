@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 import tifffile
 
-from core.colour import neutralize_tse, colour_layer, set_luminosity
+from core.colour import neutralize_tse, colour_layer, set_luminosity, warm_colour
 from core.filters import FilterWorker
 from core.layer_export import export_layer_package, overlay, to_u16
 
@@ -17,6 +17,17 @@ class ColourTests(unittest.TestCase):
         self.t = np.linspace(.02, .95, 80*100).reshape(80, 100)
         self.rgb = np.stack([.1+.6*self.t, .05+.3*self.t, .025+.15*self.t], axis=-1).astype(np.float32)
         self.mono = self.rgb @ np.array([.299, .587, .114])
+
+    def test_warmth_bypass_sunset_and_missing_pixels(self):
+        rgb=np.array([[[.5,.5,.5],[0.,0.,0.],[np.nan]*3]])
+        self.assertIs(warm_colour(rgb,0),rgb)
+        result=warm_colour(rgb,1)
+        np.testing.assert_allclose(result[0,0],[.5,.35,.1])
+        np.testing.assert_array_equal(result[0,1],0)
+        self.assertTrue(np.isnan(result[0,2]).all())
+        self.assertEqual(rgb[0,0,1],.5)
+        for bad in (-1,2,np.nan):
+            with self.assertRaises(ValueError):warm_colour(rgb,bad)
 
     def test_gain_only_percentiles_and_integer_white_equivalence(self):
         a, report = neutralize_tse(self.rgb)

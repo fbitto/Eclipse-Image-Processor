@@ -9,7 +9,7 @@ import numpy as np
 import tifffile
 from .filters import FilterWorker, CPU_CORES
 from .presentation import composition_settings, psb_presentation_settings
-from .colour import neutralize_tse, set_luminosity
+from .colour import neutralize_tse, set_luminosity, warm_colour
 from .image_data import recipe_parameters
 from .layer_export import export_layer_package
 from .export_paths import export_paths, protect_source
@@ -21,7 +21,8 @@ def export_images(source, parameters, display, file_path, original_path,
                   export_layers=False, export_linear=False, input_state='unknown', processed=None,
                   layers_format='tiff', layer_cache=None, project_settings=None, progress=None,
                   color_correction=False, psb_exposure_ev=0., psb_preview_jpeg=False,
-                  original_rgb=None, export_prominences=False, prominence_exposure_ev=-2.):
+                  original_rgb=None, export_prominences=False, prominence_exposure_ev=-2.,
+                  prominence_saturation=1., warmth=0.):
     """Compute/write in the caller's worker; source and cached output stay untouched."""
     destinations = export_paths(file_path, project_settings is not None)
     protect_source(destinations, original_path)
@@ -37,7 +38,7 @@ def export_images(source, parameters, display, file_path, original_path,
         from .prominences import prominence_settings, prominence_layer
         if original_rgb is None or np.shape(original_rgb) != (*source.shape, 3):
             raise ValueError('Prominences require the original loaded RGB on the same canvas')
-        settings=prominence_settings(original_rgb,parameters,prominence_exposure_ev)
+        settings=prominence_settings(original_rgb,parameters,prominence_exposure_ev,prominence_saturation)
         image,mask=prominence_layer(original_rgb,parameters,settings)
         prominences=(image,mask,settings)
     stages=['Preparing export','Calculating filters']
@@ -60,6 +61,9 @@ def export_images(source, parameters, display, file_path, original_path,
     colour_rgb, colour_report = source_rgb, dict(method='none') if source_rgb is not None else None
     if source_rgb is not None and calibrate_colour:
         colour_rgb, colour_report = neutralize_tse(source_rgb, white)
+    if colour_rgb is not None:
+        colour_rgb = warm_colour(colour_rgb, warmth)
+        colour_report['warmth'] = warmth
     stage('Calculating filters')
     from .layer_engine import engine_for
     engine = engine_for(worker)

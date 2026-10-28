@@ -151,6 +151,8 @@ The PSB is verified before publication. Its cached composition matches the PSB-p
 
 - RGB is retained for color presentation; filters use float32 luminance (`0.299 R + 0.587 G + 0.114 B`). Nonfinite values and zero-alpha pixels are missing data. Not all source metadata is preserved.
 - Lunar/statistical exclusions differ from missing-data masks. Verify the center, radius and bright-limb exclusions before trusting radial enhancement.
+- **Warm** beside Calibrate color adds an artistic sunset tint (0–100) to RGB preview and exports. It defaults to 0 and is saved with the project. Original source arrays remain unchanged.
+- **Prominence saturation (%)** softens intense reds; default 65%, with 100% preserving source saturation. Use Prominences (EV) to reduce brightness independently. The mask is unchanged.
 - **Calibrate color** is enabled for eligible linear RGB input. It balances P99−P1 channel spans using gains only, without background subtraction or additive pedestals; a common highlight scale avoids channel clipping. This preserves constant positive input chromaticity across brightness changes. It is not photometric or ICC calibration. Insufficient shared samples or constant channels disable it. Floating HDR input uses an observed working scale, not a measured sensor saturation level.
 - PSB and final display images use a black backdrop. Filter layers retain transparency. Display products are not linear masters or scientific brightness measurements.
 - Fast preview and native processing can differ because resampling changes noise and local statistics. Full-resolution verification is authoritative; it does not establish astrophysical reality or eliminate filter artifacts.

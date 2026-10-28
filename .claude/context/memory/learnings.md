@@ -30,3 +30,5 @@
 - Fractional OpenCV INTER_AREA footprints can sum below one at valid borders (2401→1500 gives 0.999167). Determine resized support from area-averaged missingness, not weights≈1; retain value/weight normalization and test an actual missing border pixel separately.
 
 - Export overwrite confirmation covers TIFF, preview JPEG and settings JSON together; disable the native TIFF-only confirmation. Resume pending auto-preview when the dialog is cancelled or source protection rejects the destination, before creating an export worker.
+
+- Warmth belongs to the colour revision/cache, not the numerical filter signature. Apply gains after neutralization in the presentation worker and export. Prominence saturation uses original RGB after mask selection; keep it independent of corona warmth.
