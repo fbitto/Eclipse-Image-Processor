@@ -38,3 +38,7 @@ P0 native Photoshop, physical macOS-to-exFAT, source/profile integrity and coope
 ## P3/P4 update — 2 November 2026
 
 P3 macOS regression/build/legacy-recipe/export checks passed; Windows remains pending on the owner’s separate machine. See [package evidence](p3-release-validation-20261102.md). P4 [response draft](issue-3-response-draft.md) covers all 50 items with commits and distinguishes fixes, documented choices and incomplete qualification. It has not been posted. P2 remains separate pending work.
+
+## P2 update — 2 November 2026
+
+P2 native runtime, extreme-setting cancellation and Cocoa event-loop scheduling checks completed. Captured default/doubled radius layers took 10.48/35.76 seconds; the maximum radius cancelled 71 ms after request. Inactive edits preserved the job, geometry edits cancelled/resumed the latest request, and the queue ended idle. Keep existing controls/kernel; see [measurements and limits](p2-native-performance-20261102.md). Windows and independent observational acceptance remain pending; no issue response posted.

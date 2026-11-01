@@ -1,6 +1,6 @@
 # Issue #3 response draft
 
-Draft only — not posted. Commit identifiers below are local until published. Prepared 2 November 2026; Windows results and P2 native-cost qualification remain pending. This is an item-by-item response to the original 35d555f review, not a claim that every concern is independently accepted.
+Draft only — not posted. Commit identifiers below are local until published. Prepared 2 November 2026; Windows results remain pending; P2 native-cost and responsiveness measurements are complete. This is an item-by-item response to the original 35d555f review, not a claim that every concern is independently accepted.
 
 ---
 
@@ -25,7 +25,7 @@ The changes are summarized below. “Documented choice” means the behavior was
 | 13 | Documented choice: Larson gain and opacity coincide before clipping; differ when Linear Light clips. Explicit regression demonstrates this. | b87d47f |
 | 14 | Verified: every integer Gaussian truncation 1–6 is honored and matches the independent Gaussian reference. | b87d47f |
 | 15 | Fixed: adaptive GUI uses local symmetric relative differences, supporting signed/zero measurements; numerical absolute API retained. | 4f86a5e |
-| 16 | Partial: measured quadratic support cost and documented extrapolation; cooperative cancellation works. Full-native large-support timing remains P2. | 4f86a5e, 8ff96ed |
+| 16 | Cost qualified: native default/doubled radii took 10.48/35.76 s; extreme support cancelled in 71 ms. Maximum completion time remains unmeasured by design. | 4f86a5e, 8ff96ed |
 | 17 | Fixed: RHEF noise confidence attenuates alpha only; no ranks/input-unit mixture. | 86f747c |
 | 18 | Fixed: RHEF ring widths use native pixels, with preview adaptation. | 00e588f |
 | 19 | Documented choice: Upsilon 0.35 attributed to sunkit-image; wider range explicitly custom. | b87d47f |
@@ -65,6 +65,6 @@ Evidence includes the complete application suite, current AEL 124/124 self-tests
 
 Photoshop 2026 opened and recomposed the full-native PSB: maximum difference from main TIFF was 8/65535 levels, p99 four levels. Float32 RGB and VALID matched the source exactly. Physical macOS-to-exFAT tests covered publication, repeated names, settings/decimal geometry and cancellation. Optional support restored observed targets without filling missing data; it is not promoted by default. Log Larson's stronger display response is not evidence of better astronomical SNR.
 
-Remaining: Windows execution on the owner's separate machine; native large-support adaptive cost qualification (item 16/P2); independent observational fine-detail validation (no split stacks available); Developer ID signing/notarization. The local macOS package is ad-hoc signed. I am not asking to close the issue solely from the local dispositions, and would welcome independent review of these choices and residual limitations.
+Remaining: Windows execution on the owner's separate machine; independent observational fine-detail validation (no split stacks available); Developer ID signing/notarization. Native cost is machine-specific; the maximum-support completion time was not measured. The local macOS package is ad-hoc signed. I am not asking to close the issue solely from the local dispositions, and would welcome independent review of these choices and residual limitations.
 
-Detailed evidence: [P0/P1 acceptance](p0-p1-acceptance-20261102.md), [P3 package regression](p3-release-validation-20261102.md), [execution record](issue-3-follow-up-plan.md).
+Detailed evidence: [P2 native cost and responsiveness](p2-native-performance-20261102.md), [P0/P1 acceptance](p0-p1-acceptance-20261102.md), [P3 package regression](p3-release-validation-20261102.md), [execution record](issue-3-follow-up-plan.md).

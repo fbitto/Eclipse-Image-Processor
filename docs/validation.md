@@ -67,3 +67,7 @@ Local artifacts: `/tmp/eclipse-follow-up-real-20261101/`; full-suite log: `/tmp/
 ## P0/P1 follow-up, 2 November 2026
 
 See the [acceptance report](p0-p1-acceptance-20261102.md) for current AEL parity, native Photoshop differences, physical exFAT exports, two native-image support/log-mode comparisons and remaining limits.
+
+## P2 native performance follow-up
+
+[Native adaptive ACHF and Cocoa responsiveness checks](p2-native-performance-20261102.md) completed on 2 November: default/doubled-radius layers 10.48/35.76 seconds, maximum-setting cancellation latency 71 ms, latest-geometry queue completion and inactive-edit preservation. These measurements did not change application code or defaults.

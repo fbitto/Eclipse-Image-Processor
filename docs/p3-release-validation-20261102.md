@@ -1,6 +1,6 @@
 # P3 release regression — 2 November 2026
 
-macOS portion completed; Windows build/run acceptance remains pending on the owner's separate machine. P4 is prepared as a [local response draft](issue-3-response-draft.md), not posted. P2 native large-support performance qualification is separate and remains pending.
+macOS portion completed; Windows build/run acceptance remains pending on the owner's separate machine. P4 is prepared as a [local response draft](issue-3-response-draft.md), not posted. Subsequent [P2 native cost and responsiveness checks](p2-native-performance-20261102.md) are complete; maximum-support completion time remains deliberately unmeasured.
 
 ## Source and regression checks
 
