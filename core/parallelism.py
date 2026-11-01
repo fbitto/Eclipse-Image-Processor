@@ -11,12 +11,19 @@ _filter_budget = ContextVar('filter_cpu_budget', default=CPU_CORES)
 
 
 def filter_cpu_budget():
-    return _filter_budget.get()
+    """Threads this filter may use now; a callable budget is asked again at every call."""
+    value=_filter_budget.get()
+    return max(1,int(value() if callable(value) else value))
 
 
 @contextmanager
 def filter_budget(workers):
-    token=_filter_budget.set(max(1,int(workers)))
+    """Set this filter's CPU budget: a thread count, or a callable that returns one.
+
+    A callable lets a layer that is still running take the cores of layers that
+    have finished; thread counts never change a result, only when it is ready.
+    """
+    token=_filter_budget.set(workers if callable(workers) else max(1,int(workers)))
     try:
         yield
     finally:

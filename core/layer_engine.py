@@ -18,6 +18,10 @@ from .result_cache import parameter_signature
 from .presentation import normalized_base
 
 ORDER = ('nrgf', 'fnrgf', 'rhef', 'mgn', 'wow', 'tangential', 'larson_sekanina')
+# Relative native cost of each layer, measured on a 10551x7506 frame; only the order in
+# which a batch starts its layers depends on it (longest first), never a result.
+COSTS = dict(wow=10, tangential=6, mgn=4, fnrgf=3, rhef=3, nrgf=2, larson_sekanina=1,
+             adaptive=6, ael_angular_4=4, ael_iso_04=2, ael_iso_01=2)
 VARIANTS = ('adaptive', 'ael_iso_01', 'ael_iso_04', 'ael_angular_4')
 LABELS = dict(adaptive='ACHF_ADAPTIVE', ael_iso_01='ACHF_AEL_ISO_01',
               ael_iso_04='ACHF_AEL_ISO_04', ael_angular_4='ACHF_AEL_ANGULAR')
@@ -74,7 +78,6 @@ def display_base(source, params, display):
 def colour_display(rgb, source, display):
     """Quantized RGB Color samples for the explicitly supplied base recipe."""
     from .colour import colour_layer
-    from .layer_export import to_u16
     from .presentation import quantize_u16, u16_to_unit
     if display.get('mode') == 'ael_presentation':
         from .presentation import ael_tone_map
@@ -180,7 +183,7 @@ class LayerEngine:
     def _calculate(self, worker, source, params, name, variant):
         from .pipeline import apply_filter
         from .statistics_support import statistics_support
-        from .layer_export import branch_domain, neutral_layer, linear_detail_layer, to_u16
+        from .layer_export import branch_domain, neutral_layer, linear_detail_layer
         prepared,valid=observed_image(source,params.get('valid_mask'))
         prepared=prepared.astype(np.float32)
         statistics=statistics_support(prepared,params,valid)
@@ -307,7 +310,8 @@ class LayerEngine:
             yy,xx=np.ogrid[:source.shape[0],:source.shape[1]]
             r=np.hypot(xx-params['sx'],yy-params['sy'])/params['sr']
             alpha*=1-float(params['fnrgf_apply_mask'])/100*np.clip(1-np.abs(r-1)/.05,0,1)
-        result=dict(image=to_u16(image),alpha=to_u16(alpha),mode=mode,mapping=mapping)
+        from .presentation import quantize_u16
+        result=dict(image=quantize_u16(image),alpha=quantize_u16(alpha),mode=mode,mapping=mapping)
         result['image'].setflags(write=False)
         result['alpha'].setflags(write=False)
         result["timings"]=dict(filter=filter_seconds,encoding=time.perf_counter()-encoding_start)
@@ -320,6 +324,8 @@ class LayerEngine:
                  if self.layer(worker,source,p,name,variant,calculate=False) is None]
         if not pending:
             return 0
+        # Longest first: the slowest layer never starts last behind short ones.
+        pending.sort(key=lambda item: -COSTS.get(item[1] or item[0], 1))
         workers=layer_workers(source,len(pending))
         budget=max(1,CPU_CORES//workers)
         started=time.perf_counter()
@@ -337,9 +343,20 @@ class LayerEngine:
                     parent_check()
                     return stopped.is_set()
             token=BatchToken()
+            finished=[0]
+            finished_lock=RLock()
+            def share():
+                # The cores are shared by the places of the batch that still have a layer
+                # to run: once the others are done, the last layer takes all the cores.
+                with finished_lock:
+                    return max(1,CPU_CORES//max(1,min(workers,len(pending)-finished[0])))
             def run(name,variant,p):
-                with cancellation_scope(token), filter_budget(budget):
-                    return self.layer(worker,source,p,name,variant)
+                try:
+                    with cancellation_scope(token), filter_budget(share):
+                        return self.layer(worker,source,p,name,variant)
+                finally:
+                    with finished_lock:
+                        finished[0]+=1
             executor=ThreadPoolExecutor(max_workers=workers,thread_name_prefix='corona-layer')
             futures=[]
             try:
