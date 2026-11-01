@@ -39,6 +39,8 @@ class GuiInteractionTests(unittest.TestCase):
     def test_inactive_controls_do_not_cancel_or_invalidate_running_job(self):
         w=self.window
         w.sec_fnrgf.chk_active.setChecked(False)
+        w.sec_nrgf.chk_active.setChecked(False)
+        w.sec_larson_sekanina.chk_active.setChecked(False)
         w.sec_achf.chk_active.setChecked(True)
         w.achf_ael_controls['ael_iso_01']['enabled'].setChecked(False)
         w.recalculation_timer.stop();w.has_pending_request=False
@@ -47,6 +49,8 @@ class GuiInteractionTests(unittest.TestCase):
             w.combo_fnrgf_mode.setCurrentIndex(1-w.combo_fnrgf_mode.currentIndex())
             w.sl_fnrgf_smooth.setValue(w.sl_fnrgf_smooth.value()+1)
             w.sl_fnrgf_smooth.sliderReleased.emit()
+            for control in (w.sl_nrgf_rad, w.sl_nrgf_bin_px, w.sl_fnrgf_mask, w.sl_larson_sekanina_str):
+                control.sliderReleased.emit()
             slider=w.achf_ael_controls['ael_iso_01']['outer_sigma']
             slider.setValue(slider.value()+1);slider.sliderReleased.emit()
             cancel.assert_not_called()

@@ -174,9 +174,9 @@ def display_detail_rings(detail, valid, geometry, *, width_px=2., min_count=50, 
 
 
 AEL_PRESETS = {
-    'ael_iso_01': dict(sigmas=(2.,4.,8.,16.,32.), outer_sigma=3., strength=10),
-    'ael_iso_04': dict(sigmas=(1.,2.,4.,8.,16.), outer_sigma=1.5, strength=10),
-    'ael_angular_4': dict(angular_sigma=1., outer_sigma=4., strength=10),
+    'ael_iso_01': dict(sigmas=(2.,4.,8.,16.,32.), outer_sigma=3., strength=100),
+    'ael_iso_04': dict(sigmas=(1.,2.,4.,8.,16.), outer_sigma=1.5, strength=100),
+    'ael_angular_4': dict(angular_sigma=1., outer_sigma=4., strength=100),
 }
 
 

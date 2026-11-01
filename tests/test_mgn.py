@@ -54,7 +54,7 @@ class MGNTests(unittest.TestCase):
     def test_official_operations(self):
         a=np.random.default_rng(5).normal(10,4,(43,37))
         a[0,0]=-5; a[1,1]=0
-        for truncate in [1,2,3,6]:
+        for truncate in range(1,7):
             for weights in [None,(.5,1,1.3)]:
                 scales=(1.25,2.5,5)
                 actual=mgn_normalize(a,sigma=scales,weights=weights,truncate=truncate)

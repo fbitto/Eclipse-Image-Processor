@@ -10,7 +10,7 @@ From the project root with runtime dependencies installed:
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -v
 ```
 
-On Windows set the environment variable using PowerShell syntax, or run with a desktop session. The complete suite passed **360 tests** in 94.537 seconds on the local macOS development environment during the P1 layer-values/support update.
+On Windows set the environment variable using PowerShell syntax, or run with a desktop session. The final complete suite passed **390 tests** in 185.853 seconds on the local macOS development environment. Two additional checks added during that run also passed in targeted suites: legacy WOW label/index compatibility and gain-versus-opacity clipping. The affected AEL/default and layer-engine suites passed 12 and 11 tests respectively.
 
 Coverage includes numerical independent references and AEL fixtures, missing/statistical support, native/preview scaling, independent layer inputs/order/blends, bounded caches, cancellation, colour preparation, export separation, PSB structure/bytes, optional Color Correction, JSON v4 validation, GUI interaction/responsiveness, zoom and overlay painting. It does not establish astrophysical truth or pixel identity after native Photoshop recomposition.
 
@@ -55,3 +55,11 @@ Item 33 is addressed for continuous FNRGF/RHEF statistical models only; local op
 The supplied margin--2px TIFF completed native/preview checks for all eight families and combined output with the current pipeline. The actual asynchronous GUI export produced RGB16 at 5608×3744 matching the expected PSB presentation pixel for pixel; the JPEG mean absolute error was 1.8908 eight-bit levels. The separate float32 RGB and validity products matched the source data exactly (missing pixels stored as zero), and the original SHA-256 stayed unchanged. TIFF/JPEG embedded RGB profiles were checked. Outputs were kept outside Git. This run used a direct image load and current application defaults, not a replay of the old background-fit JSON.
 
 Synthetic PSB tests confirm TIFF/merged-PSB byte equality and profiles; no native Photoshop recomposition is claimed. Optional log Larson–Sekanina was also measured on the native source with unchanged checksum and masks. Its increased display amplitude does not establish improved astrophysical SNR.
+
+## Follow-up native-image check — 1 November 2026
+
+The supplied 3744×5608 RGB float32 margin--2px TIFF passed all eight filter-family cases, their combined case and asynchronous GUI export. Main output was RGB uint16 and exactly matched the expected presented pixels; JPEG mean absolute error was 1.89 levels. Float32 RGB working sources and VALID exactly preserved original measured pixels and missing support. Source SHA-256 remained unchanged. No background recipe was silently reapplied.
+
+The installed current AEL 1.4.1 runtime passed 124/124 self-tests, with no skips. Compatibility and opt-in support paths have same-mask parity tests; experimental support separation remains off by default. Real-image filter composition is an operational check, not proof of astrophysical detail recovery or fast-preview equivalence.
+
+Local artifacts: `/tmp/eclipse-follow-up-real-20261101/`; full-suite log: `/tmp/eclipse-final-suite.log`. These private/generated products are outside Git.

@@ -114,7 +114,9 @@ def validate_settings(window,settings):
         expected=bool if kind=='check' else int
         if record.get('kind')!=kind or type(value) is not expected:
             raise ValueError(f'Invalid control value: {name}')
-        legacy_wow = name=='combo_wow_bilateral' and value==2 and record.get('text')=='AEL bilateral'
+        legacy_wow = name=='combo_wow_bilateral' and record.get('text') in {
+            0: ('Standard WOW',), 1: ('Edge-aware WOW (adjustable bilateral)',),
+            2: ('AEL bilateral',)}.get(value, ())
         if kind=='combo' and (not 0<=value<widget.count() or (widget.itemText(value)!=record.get('text') and not legacy_wow)):
             raise ValueError(f'Unknown selector value: {name}')
         if kind=='slider' and not -10**9<=value<=10**9:

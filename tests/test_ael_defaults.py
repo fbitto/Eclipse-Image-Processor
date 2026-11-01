@@ -101,6 +101,11 @@ class LoadingDefaultsTests(unittest.TestCase):
             self.window.load_image_action();wait_for_gui(self.window)
         self.assertNotIn('Error loading',self.window.status_label.text())
 
+    def test_minimal_ael_requests_use_full_operator_strength(self):
+        for variant in ('ael_iso_01', 'ael_iso_04', 'ael_angular_4'):
+            p=dict(achf_enabled=True, achf_variants={variant: dict(enabled=True), 'adaptive': dict(enabled=False)})
+            self.assertEqual(requests(p)[0][2]['achf_str'],100)
+
     def test_first_image_applies_initial_filters_and_psb_preview(self):
         w=self.window
         w.sec_mgn.chk_active.setChecked(True)
@@ -194,6 +199,16 @@ class LoadingDefaultsTests(unittest.TestCase):
         self.load(self.source)
         self.assertEqual([(n,v) for n,v,_,_ in requests(w.collect_filter_parameters(w.full_raw_image.shape))],
                          [('mgn',None)])
+
+    def test_legacy_wow_labels_restore_only_at_their_original_indices(self):
+        w=self.window
+        settings=capture_settings(w)
+        for index,text in ((0,'Standard WOW'),(1,'Edge-aware WOW (adjustable bilateral)'),(2,'AEL bilateral')):
+            settings['controls']['combo_wow_bilateral']=dict(kind='combo',value=index,text=text)
+            restore_settings(w,settings)
+            self.assertEqual(w.combo_wow_bilateral.currentIndex(),index)
+        settings['controls']['combo_wow_bilateral']['value']=0
+        with self.assertRaises(ValueError):validate_settings(w,settings)
 
     def test_full_json_preserves_explicit_values_and_unknown_controls_are_rejected(self):
         self.load(self.source);w=self.window

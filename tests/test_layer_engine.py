@@ -130,6 +130,13 @@ class IndependentLayerTests(unittest.TestCase):
         np.testing.assert_allclose(blend(base,layer,alpha,'Linear Light',amount),
             base*(1-alpha*amount)+np.clip(base+2*layer-1,0,1)*alpha*amount)
 
+    def test_gain_and_opacity_differ_after_linear_light_clipping(self):
+        base=np.array([[.6]]);alpha=np.ones_like(base);detail=.8
+        high_gain=blend(base,np.full_like(base,.5+detail/2),alpha,'Linear Light',.4)
+        low_gain=blend(base,np.full_like(base,.5+.4*detail/2),alpha,'Linear Light',1.)
+        np.testing.assert_allclose(high_gain,.76)
+        np.testing.assert_allclose(low_gain,.92)
+
     def test_multiple_achf_variants_are_independent_and_keep_their_caches(self):
         p=dict(layered_model=True,sx=8,sy=6,sr=2,achf_enabled=True,
                achf_variants={v:dict(enabled=True,opacity=20,strength=80)

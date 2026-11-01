@@ -136,7 +136,7 @@ def export_layered_package(worker, source, params, display, original_path, desti
         loader_records=[dict(file=background_file,mode='Normal',opacity_255=255,visible=True),*records]
         (stage/'Load_layers_Photoshop.jsx').write_text(photoshop_loader(loader_records),encoding='utf-8')
         (stage/'Layers.md').write_text('# Independent filter layers\n\nLoad with File > Scripts > Browse > Load_layers_Photoshop.jsx.\n'
-            'All filters start from the shared linear working input (including optional background equalization; see recipe parameters). Only Larson–Sekanina exposes Gain (0–200%); other filters have no Strength control. Opacity controls blending.\n'
+            'All filters start from the shared linear working input (including optional background equalization; see recipe parameters). Larson–Sekanina exposes Gain (0–200%); adaptive ACHF and tangential detail have operator-specific gains. Other filters have no Strength control. Opacity controls blending.\n'
             'The base uses the PSB Asinh-10 presentation with automatic scale plus manual EV exposure, regardless of the preview toggle. Main TIFF/JPEG share this presented composition and carry sRGB profiles. The hidden scaled input preview is quantized, not a linear master; use the companion float32 working sources for numerical data.\n'
             'Edge Antialias is an editable display-only black overlay at lunar/missing boundaries.\n'
             'Numerical source files store missing samples as zero; VALID preserves their identity.\n',encoding='utf-8')

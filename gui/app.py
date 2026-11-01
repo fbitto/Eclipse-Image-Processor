@@ -379,14 +379,14 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_nrgf_rad, _ = create_slider_float(
             'Inner radius (R)', 10, 25, 10, 10., self.sec_nrgf.content_layout,
             tooltip='Exclude samples at or inside this reference disk radius from NRGF statistics and output. The whole observed rectangle beyond it is processed.',
-            on_release_callback=self.dispatch_pipeline_request_if_auto)
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_nrgf))
         self.sl_nrgf_bin_px, _ = create_slider_float(
             'Ring width (native px)', 5, 320, 20, 10., self.sec_nrgf.content_layout,
             tooltip='Annular measurement width at original resolution. Fast preview scales it to the same physical footprint; no image smoothing.',
-            on_release_callback=self.dispatch_pipeline_request_if_auto)
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_nrgf))
         self.combo_nrgf_statistics = ScrollSafeComboBox()
         self.combo_nrgf_statistics.addItems(['Median / MAD (AEL)', 'Mean / STD'])
-        self.combo_nrgf_statistics.setToolTip('Robust AEL statistics or mean/standard deviation. Both use the continuous radial profile; only observed samples contribute.')
+        self.combo_nrgf_statistics.setToolTip('Median/MAD is the robust AEL/application default; mean/standard deviation follows the original NRGF definition. Both use the continuous radial profile; only observed samples contribute.')
         self.combo_nrgf_statistics.currentIndexChanged.connect(lambda _: self.on_filter_slider_released(self.sec_nrgf))
         self.sec_nrgf.content_layout.addWidget(self.combo_nrgf_statistics)
         self.sec_nrgf.toggled_active.connect(self.on_filter_toggled)
@@ -468,7 +468,7 @@ class EclipseProcessorApp(QMainWindow):
 
         self.sl_fnrgf_mask, _ = create_slider(
             "Limb protection (%)", 0, 100, 0, self.sec_fnrgf.content_layout,
-            on_release_callback=self.dispatch_pipeline_request_if_auto,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf),
             tooltip="Protect the working input near r/R = 1 with a triangular band from 0.95 to 1.05. Zero disables protection; 100 removes FNRGF at the band center. This is not the missing-data mask."
         )
         self.sec_fnrgf.toggled_active.connect(self.on_filter_toggled)
@@ -510,7 +510,7 @@ class EclipseProcessorApp(QMainWindow):
             "Gamma", 1, 100, 32, self.sec_mgn.content_layout,
             divisor=10,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn),
-            tooltip="Global gamma exponent, from 0.1 to 10"
+            tooltip="Global gamma exponent: default 3.2; usual MGN range 2.5–4. The wider 0.1–10 range is custom."
         )
         self.sl_mgn_k, _ = create_slider(
             "Factor k", 0, 500, 70, self.sec_mgn.content_layout,
@@ -551,7 +551,7 @@ class EclipseProcessorApp(QMainWindow):
             )
             self.sl_wow_denoise.append(slider)
         self.combo_wow_bilateral = ScrollSafeComboBox()
-        self.combo_wow_bilateral.addItems(["Standard WOW", "Edge-aware WOW (adjustable bilateral)", "AEL edge-aware (guided)"])
+        self.combo_wow_bilateral.addItems(["Standard WOW (observed support)", "watroo bilateral (observed support)", "AEL edge-aware (guided)"])
         self.combo_wow_bilateral.setToolTip("Standard and adjustable edge-aware WOW use the existing backend. AEL edge-aware uses linear luminance, guided range weights and symmetric observed starlet pairs. Worst sectors can still invert faint detail. No mode fills missing data.")
         self.combo_wow_bilateral.setCurrentIndex(1)
         self.combo_wow_bilateral.currentIndexChanged.connect(lambda _: self.on_filter_slider_released(self.sec_wow))
@@ -568,7 +568,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sec_larson_sekanina = CollapsibleSection("LARSON-SEKANINA", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_larson_sekanina_str, _ = create_slider(
             "Gain (%)", 0, 200, 10, self.sec_larson_sekanina.content_layout,
-            on_release_callback=self.dispatch_pipeline_request_if_auto,
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_larson_sekanina),
             tooltip="Gain scales the signed residual before Linear Light clipping; opacity controls the mixture after clipping.")
         self.sec_larson_sekanina.toggled_active.connect(self.on_filter_toggled)
         sharpening_group.addWidget(self.sec_larson_sekanina)
