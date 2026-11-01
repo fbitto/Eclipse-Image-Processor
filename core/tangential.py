@@ -5,6 +5,7 @@ keeps memory independent of the size of the complete polar canvas. Only detail
 is resampled; missing or off-frame samples carry zero statistical weight.
 """
 from .cancellation import check_cancelled
+from .parallelism import map_in_threads
 import numpy as np
 from scipy.ndimage import map_coordinates, gaussian_filter1d
 from scipy.fft import rfft, irfft
@@ -74,10 +75,13 @@ def tangential_detail(image, cx, cy, radius, arc_sigma_deg=3., gain=1.,
     order = np.argsort(tiles, kind='stable')
     active_rows, tiles = active_rows[order], tiles[order]
     cuts = np.r_[0, np.flatnonzero(np.diff(tiles))+1, len(tiles)]
-    for start, stop in zip(cuts[:-1], cuts[1:]):
+    # Radial tiles write disjoint target pixels: they run on helper threads, each
+    # with the same calls as one at a time, so the detail is the same bit for bit.
+    def tile_detail(bounds):
+        start, stop = bounds
         check_cancelled()
         if stop == start:
-            continue
+            return
         tile = tiles[start]
         first = max(0, tile*128-1)
         radii = np.arange(first, (tile+1)*128+2, dtype=float)[None, :]
@@ -101,6 +105,7 @@ def tangential_detail(image, cx, cy, radius, arc_sigma_deg=3., gain=1.,
             mass=map_coordinates(np.concatenate([sw,sw[:1]],axis=0),coords,order=1,mode='nearest',prefilter=False)
             evaluate=target[excluded]
             detail.ravel()[evaluate]=np.where(mass[excluded]>.05,a.ravel()[evaluate]-background[excluded],np.nan)
+    map_in_threads(tile_detail, list(zip(cuts[:-1], cuts[1:])))
     if denoise:
         # Robust high-pass estimate on observed adjacent pairs; not detector SNR.
         differences = np.diff(signal, axis=1)
