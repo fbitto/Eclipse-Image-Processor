@@ -6,13 +6,13 @@ This optional variant differs from the reference-compatible FNRGF core.
 """
 from .cancellation import check_cancelled
 import numpy as np
-from scipy.ndimage import gaussian_filter1d
+from .nrgf import _local_quadratic
 
 
 def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
                      cutoff=0, width_function='std', valid=None, smooth_px=8.,
                      ridge=.01, width_floor=.05, robust_iterations=2,
-                     min_pixels=1, mean_tail=0., width_tail=0.):
+                     min_pixels=1, mean_tail=0., width_tail=0., target_valid=None):
     a = np.asarray(image, dtype=float)
     r, theta, edges = np.asarray(radii), np.asarray(angles), np.asarray(edges)
     if a.ndim != 2 or r.shape != a.shape or theta.shape != a.shape:
@@ -28,12 +28,18 @@ def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
     if not 0 <= mean_tail <= 1 or not 0 <= width_tail <= 1 or not 0 <= robust_iterations <= 5:
         raise ValueError('Invalid FNRGF attenuation or iteration count')
     observed = np.isfinite(a) & np.isfinite(r) & np.isfinite(theta)
+    target_mask = observed.copy()
+    if target_valid is not None:
+        if np.shape(target_valid) != a.shape:
+            raise ValueError('FNRGF target validity must match image')
+        target_mask &= np.asarray(target_valid, bool)
     if valid is not None:
         if np.shape(valid) != a.shape:
             raise ValueError('FNRGF statistics mask must match image')
         observed &= valid
     bins = np.searchsorted(edges, r, side='right')-1
     observed &= (bins >= 0) & (bins < len(edges)-1)
+    target_mask = observed if target_valid is None else target_mask & (bins >= 0) & (bins < len(edges)-1)
     ids = np.flatnonzero(observed)
     output = np.full(a.shape, np.nan)
     if not ids.size:
@@ -110,17 +116,14 @@ def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
             continue
         local = models[:, run].copy()
         if smooth_px and len(run) > 1:
-            # Log bins have variable spacing: smooth on a uniform physical grid.
-            spacing = max(float(np.min(np.diff(centers[run]))), .25)
-            grid = np.linspace(centers[run[0]], centers[run[-1]], max(2, int(np.ceil(np.ptp(centers[run])/spacing))+1))
+            # Fit at physical nodes; replicated endpoints bend steep radial profiles.
+            spacing = float(np.median(np.diff(centers[run])))
             for family in (0, 1):
-                check_cancelled()
                 for k in range(local.shape[-1]):
                     check_cancelled()
-                    profile = np.interp(grid, centers[run], local[family, :, k])
-                    profile = gaussian_filter1d(profile, smooth_px/(grid[1]-grid[0]), mode='nearest')
-                    local[family, :, k] = np.interp(centers[run], grid, profile)
-        target = observed & (bins >= run[0]) & (bins <= run[-1])
+                    local[family, :, k] = _local_quadratic(
+                        local[family, :, k], smooth_px/spacing, centers[run]/spacing)
+        target = target_mask & (bins >= run[0]) & (bins <= run[-1])
         targets = np.flatnonzero(target)
         attenuation = np.array([np.linspace(1., mean_tail, order+1),
                                 np.linspace(1., width_tail, order+1)])

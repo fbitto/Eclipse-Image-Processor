@@ -6,6 +6,19 @@ from core.filters import fnrgf_normalize
 
 
 class ContinuousFNRGFTests(unittest.TestCase):
+    def test_radial_smoothing_preserves_inner_power_law_profile(self):
+        y,x=np.indices((512,512));r=np.hypot(x-255.5,y-255.5)
+        t=np.arctan2(y-255.5,x-255.5)
+        image=(np.maximum(r,1)/50)**-4
+        inner=(r>=50)&(r<55)
+        medians=[]
+        for smoothing in (0,8):
+            output=continuous_fnrgf(image,r,t,np.arange(50,350,2.),
+                                    order=6,segments=64,smooth_px=smoothing)
+            medians.append(float(np.nanmedian(output[inner])))
+        self.assertLess(abs(medians[1]),.1)
+        self.assertLess(abs(medians[1]-medians[0]),.01)
+
     def test_coverage_changes_between_rings_do_not_introduce_new_steps(self):
         phi=(np.arange(64)+.5)*2*np.pi/64
         radii=np.broadcast_to(np.repeat(np.arange(22,118,4.),2)[:,None],(48,64))

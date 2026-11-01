@@ -204,7 +204,7 @@ class ControlAndVerificationTests(unittest.TestCase):
         self.assertTrue(np.isfinite(w.last_preview_presentation).all())
 
     def test_achf_background_one_and_zero_gain_are_exact_identity(self):
-        w=self.window;w.sl_achf_background.setValue(100);w.sl_achf_boost.setValue(0)
+        w=self.window;w.sl_achf_boost.setValue(0)
         w.combo_achf_variant.setCurrentIndex(0)
         p=w.collect_filter_parameters(w.raw_image.shape);p['achf_enabled']=True;p.pop('layered_model',None)
         np.testing.assert_array_equal(apply_filter(FilterWorker(),w.raw_image,p),w.raw_image)

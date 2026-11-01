@@ -101,6 +101,8 @@ def validate_settings(window,settings):
         raise ValueError('Settings do not match the current format')
     widgets=controls(window)
     values=settings.get('controls')
+    if isinstance(values,dict):
+        values={k:v for k,v in values.items() if k != 'sl_achf_background'}
     optional=set(filter_widgets(window)) | {'btn_psb_preview','chk_prominences','sl_prominence_exposure','combo_background_degree','sl_warmth','sl_prominence_saturation'}
     if (not isinstance(values,dict) or set(values)-set(widgets) or
             set(widgets)-set(values)-optional):
@@ -165,7 +167,7 @@ def restore_settings(window,settings, *, source_shape=None):
 
 def _apply_settings(window,settings):
     widgets=controls(window)
-    values=settings['controls']
+    values={k:v for k,v in settings['controls'].items() if k != 'sl_achf_background'}
     previous=window.auto_calculate
     window.auto_calculate=False
     try:

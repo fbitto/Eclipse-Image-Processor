@@ -8,6 +8,8 @@ The continuous mode estimates 257 log-intensity quantiles per radial ring, inter
 
 Only positive finite selected samples enter the distribution. A ring needs at least 12 samples. Statistics are not interpolated across empty rings, and absent observations are not fabricated. The rank core returns NaN where undefined; unsupported layer pixels remain transparent so the composition preserves its base there. The interior of App Radius is unaffected. Constant distributions map to 0.5; ties use quantile-interval midpoints. Quantile approximation is not identical to exact `rankdata`.
 
+Layer values are the Upsilon-curved ranks themselves, without a second display normalization. Noise confidence changes layer alpha only. Statistical exclusions remove samples from quantile estimation, while excluded positive observed targets can still be evaluated inside populated rings; missing pixels remain transparent.
+
 The compatible mode ranks within individual rings using its established branch conventions. It remains selectable, but is not a separate legacy application pipeline. Native/preview spatial adaptation is shared through `prepare_parameters`; resampling can change ranks and noise statistics.
 
 ## Provenance and checks

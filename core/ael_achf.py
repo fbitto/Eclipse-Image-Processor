@@ -115,12 +115,14 @@ def display_detail(detail, valid, *, noise_floor=1e-5, scale_region=None):
     return np.where(good,.5+.5*np.tanh(detail/(2.5*scale)),np.nan).astype(np.float32),dict(scale=scale,tanh=2.5)
 
 
-def display_detail_rings(detail, valid, geometry, *, width_px=2., min_count=50, smooth=3, noise_floor=1e-5):
+def display_detail_rings(detail, valid, geometry, *, width_px=2., min_count=50, smooth=3, noise_floor=1e-5, sparse_spread=False):
     """Map signed detail to a display layer with a level and a spread measured ring by ring (issue #9, Edu).
 
     Median and 1.4826·MAD in annuli of ``width_px`` around the Sun (each with at least ``min_count`` pixels),
     averaged over ``smooth`` consecutive annuli and interpolated linearly in r: continuous curves, no ring staircase.
     Beyond the first and last populated annulus, the end value. Then ``0.5 + 0.5·tanh((detail - level) / (2.5·spread))``.
+    sparse_spread enables a nonzero-deviation fallback for thresholded non-AEL detail;
+    the default AEL display policy is unchanged.
     It keeps the high-pass detail next to the limb from saturating when one global spread is dominated by the faint
     outer field, and it equalises the contrast across radius, which is a presentation choice, as in an NRGF."""
     good=valid & np.isfinite(detail)
@@ -131,13 +133,24 @@ def display_detail_rings(detail, valid, geometry, *, width_px=2., min_count=50, 
     ds=detail[good].astype(np.float64)[np.argsort(k,kind='stable')]; del k
     start=np.concatenate([[0],np.cumsum(cnt)[:-1]]); sel=np.flatnonzero(cnt>=min_count)
     if len(sel)<3:                                       # too few populated annuli (a narrow wedge of data): the
-        out,info=display_detail(detail,valid,noise_floor=noise_floor)            # whole-image display, said so
+        if sparse_spread:
+            selected=detail[good]
+            nonzero=np.abs(selected-np.median(selected))
+            nonzero=nonzero[nonzero > 0]
+            if nonzero.size and np.median(np.abs(selected-np.median(selected))) == 0:
+                noise_floor=max(noise_floor,float(np.median(nonzero)))
+        out,info=display_detail(detail,valid,noise_floor=noise_floor)
         return out,dict(info,display='one spread for the whole image (fewer than three populated annuli)')
     med=[];mad=[]
     for index,i in enumerate(sel):
         if index % 128 == 0: check_cancelled()
         seg=ds[start[i]:start[i]+cnt[i]]; md=np.median(seg)
-        med.append(md); mad.append(1.4826*np.median(np.abs(seg-md)))
+        spread=1.4826*np.median(np.abs(seg-md))
+        if sparse_spread and spread == 0:
+            nonzero=np.abs(seg-md)
+            nonzero=nonzero[nonzero > 0]
+            spread=float(np.median(nonzero)) if nonzero.size else 0.
+        med.append(md); mad.append(spread)
     del ds
     med,mad,rm=np.array(med),np.array(mad),rsum[sel]/cnt[sel]
     if smooth>1:

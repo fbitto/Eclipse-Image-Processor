@@ -9,11 +9,13 @@ import numpy as np
 
 
 def rhef_continuous_normalize(image, radii, bin_px=2., application_radius=0.,
-                              valid=None, min_count=12, quantile_count=257):
+                              valid=None, min_count=12, quantile_count=257, target_valid=None):
     a = np.asarray(image, dtype=np.float64)
     r = np.asarray(radii, dtype=np.float64)
     if a.ndim != 2 or a.shape != r.shape or not a.size:
         raise ValueError("Image and radii must be matching nonempty 2D arrays")
+    if target_valid is not None and np.shape(target_valid) != a.shape:
+        raise ValueError("RHEF target validity must match image")
     if not np.isfinite([bin_px, application_radius]).all() or bin_px <= 0 or application_radius < 0:
         raise ValueError("Invalid radial bounds")
     if not isinstance(min_count, (int, np.integer)) or min_count < 2:
@@ -41,6 +43,14 @@ def rhef_continuous_normalize(image, radii, bin_px=2., application_radius=0.,
     for k in np.flatnonzero(counts >= min_count):
         check_cancelled()
         table[k] = np.quantile(values[order[cuts[k]:cuts[k + 1]]], probabilities)
+    if target_valid is not None:
+        targets = np.asarray(target_valid, bool) & np.isfinite(a) & (a > 0) & np.isfinite(r) & (r >= application_radius)
+        target_bins = np.floor(np.where(np.isfinite(r),r,0)/bin_px).astype(np.int64)-first
+        targets &= (target_bins >= 0) & (target_bins < len(counts))
+        ids = np.flatnonzero(targets)
+        rr = r.ravel()[ids]
+        bins = target_bins.ravel()[ids]
+        values = np.log(a.ravel()[ids])
     # Interpolate immediate neighbours only. An empty/sparse ring stays undefined;
     # a neighbour never validates it and no interpolation bridges a gap.
     eligible = counts[bins] >= min_count

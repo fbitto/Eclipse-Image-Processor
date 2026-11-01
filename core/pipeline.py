@@ -102,6 +102,7 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
     else:
         img = finite_image(raw_image).astype(np.float32)
 
+    operator_support=None
     if p.get('statistics_exclude_lunar', False) or p.get('statistics_exclude_bright', False) or p.get('statistics_mask') is not None:
         from .statistics_support import statistics_support, StatisticsWorker
         support = statistics_support(raw_image, p, valid) if p.get('statistics_mask') is None else np.asarray(p['statistics_mask'], dtype=bool) & np.isfinite(raw_image) & (valid if valid is not None else True)
@@ -109,7 +110,9 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
             raise ValueError('Statistics mask must match image and contain observations')
         from .masked_filters import MaskedWorker
         base_worker = worker.worker if isinstance(worker, MaskedWorker) else worker
-        worker = StatisticsWorker(base_worker, support)
+        operator_support=support
+        if not p.get("operator_output", False):
+            worker = StatisticsWorker(base_worker, support)
 
     check_cancelled()
     if name == 'nrgf':
@@ -137,6 +140,8 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
             width_function=p.get("fnrgf_width_func", "std"),
             radial_binning=p.get("fnrgf_radial_binning", "linear"),
             apply_mask=p.get("fnrgf_apply_mask", 0),
+            operator_output=p.get("operator_output", False),
+            statistics_valid=operator_support if p.get("operator_output", False) else None,
             mode=p.get('fnrgf_mode', 'legacy'), radial_smooth=p.get('fnrgf_smooth', 8.), boundary_fade=p.get('fnrgf_fade', 0.),
             ridge=p.get('fnrgf_ridge', .01), width_floor=p.get('fnrgf_floor', .05),
             robust_iterations=p.get('fnrgf_robust', 2), min_pixels_per_sector=p.get('fnrgf_min_pixels', 1),
@@ -156,6 +161,8 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
             mode=p.get("rhef_mode", "legacy"), upsilon_h_val=p.get('rhef_upsilon_high'),
             min_count=p.get('rhef_min_count', 12), quantile_count=p.get('rhef_quantiles', 257),
             noise_confidence=p.get('rhef_noise_confidence', 0.),
+            operator_output=p.get("operator_output", False),
+            statistics_valid=operator_support if p.get("operator_output", False) else None,
         )
         if verbose:
             print(f"[{process_label}: RHEF NATIVE] Done in {time.time() - step_start:.3f}s")
@@ -256,7 +263,8 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
             print(f"[{process_label}: ACHF {p.get('achf_variant', 'adaptive')}] Done in {time.time() - step_start:.3f}s")
 
     check_cancelled()
-    finite_image(img)
+    if not p.get("operator_output", False):
+        finite_image(img)
     if verbose:
         print(f"[{process_label}] Complete. Total time: {time.time() - pipeline_start:.3f}s\n{'='*80}\n")
     if valid is not None and not valid.all():

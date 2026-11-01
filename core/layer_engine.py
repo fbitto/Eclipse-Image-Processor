@@ -147,6 +147,7 @@ class LayerEngine:
         if name == 'achf':
             if variant == 'adaptive':
                 controls.pop('achf_ael_parameters',None)
+                controls.pop('achf_background',None)
             controls['variant']=variant
             if variant != 'adaptive':
                 settings=dict(params.get('achf_ael_parameters',{}))
@@ -154,6 +155,8 @@ class LayerEngine:
                 controls={'settings':settings, 'strength':params['achf_str'],
                           **{k:v for k,v in controls.items() if not k.startswith('achf_')}}
                 controls['achf_ael_scale']=params.get('achf_ael_scale',1.)
+        if name == 'tangential' or (name == 'achf' and variant == 'adaptive'):
+            controls['encoding_scale']=params.get('nrgf_scale',1.)
         signature=parameter_signature(controls)
         entries=self._entries(source)
         slot=(name,variant)
@@ -189,6 +192,13 @@ class LayerEngine:
             p[family+'_enabled']=family == name
         p[name+'_str']=100
         p['fnrgf_apply_mask']=0
+        if name in ('fnrgf', 'rhef'):
+            p['operator_output']=True
+        if name == 'tangential':
+            p['tangential_gain']=1.
+        if name == 'achf' and variant == 'adaptive':
+            p['achf_boost']=10
+            p['achf_background']=0
         filter_start=time.perf_counter()
         ael=name == 'achf' and variant != 'adaptive'
         ael_wow=name == 'wow' and p.get('wow_mode') == 'ael_bilateral'
@@ -213,20 +223,43 @@ class LayerEngine:
                     filtered-float(p.get('achf_background',10))/100*prepared if name == 'achf' else filtered)
         filter_seconds=time.perf_counter()-filter_start
         encoding_start=time.perf_counter()
-        domain=branch_domain(source.shape,p,name) & valid & statistics
-        if name == 'nrgf':
+        domain=branch_domain(source.shape,p,name) & valid
+        model_targets = (name == 'fnrgf' and p.get('fnrgf_mode') == 'continuous') or (name == 'rhef' and p.get('rhef_mode') == 'continuous')
+        if not model_targets:
+            domain &= statistics
+        if name in ('nrgf', 'fnrgf', 'rhef'):
             domain &= np.isfinite(values)
         if ael or ael_wow or (name == 'rhef' and p.get('rhef_mode') == 'continuous'):
             domain &= (prepared>0) & np.isfinite(values)
         mode='Multiply' if name in ('nrgf', 'fnrgf') else 'Linear Light' if name == 'larson_sekanina' else 'Overlay'
         if name == 'nrgf':
             image=np.where(domain, values, 1.)
-        elif ael or ael_wow:
+        elif ael or ael_wow or name == 'rhef':
             image=np.where(domain,values,.5)
+            if name == 'rhef':
+                mapping=dict(encoding='Upsilon-curved ranks; no display renormalization')
         elif name == 'larson_sekanina':
             image,mapping=linear_detail_layer(values,domain,np.ptp(prepared[valid]))
+        elif name == 'tangential' or (name == 'achf' and variant == 'adaptive'):
+            from types import SimpleNamespace
+            from .ael_achf import display_detail_rings
+            yy,xx=np.ogrid[:source.shape[0],:source.shape[1]]
+            radii=np.hypot(xx-params['sx'],yy-params['sy'])
+            good=domain & np.isfinite(values)
+            if good.any():
+                floor=float(max(float(np.max(np.abs(values[good])))*np.finfo(np.float32).eps, np.finfo(np.float32).tiny))
+                image,mapping=display_detail_rings(values,good,SimpleNamespace(radius_map=lambda:radii),
+                    width_px=2*params.get('nrgf_scale',1.),noise_floor=floor,sparse_spread=True)
+                gain=float(params.get('tangential_gain',1.) if name == 'tangential' else params.get('achf_boost',20)/10)
+                if not np.isfinite(gain) or not 0 <= gain <= 5:
+                    raise ValueError('Detail gain must lie in [0, 5]')
+                image=np.where(good,.5+gain*(image-.5),.5)
+                mapping=dict(mapping,gain=gain,sparse_spread=True,constant=bool(np.ptp(values[good])==0))
+            else:
+                image=np.full(source.shape,.5)
+                mapping=dict(constant=True)
         else:
-            image,mapping=neutral_layer(values,domain)
+            image,mapping=neutral_layer(values,domain,statistics)
         if mode == 'Multiply' and mapping.get('constant',False):
             image=np.ones_like(image)
         strength=float(params.get(name+'_str',100))/100
@@ -236,6 +269,18 @@ class LayerEngine:
         # Strength changes encoded contrast, opacity independently controls blending.
         image=(1+(image-1)*strength if mode == 'Multiply' else .5+(image-.5)*strength)
         alpha=domain.astype(float)
+        if name == 'rhef' and params.get('rhef_noise_confidence', 0.) > 0:
+            from .statistics_support import radial_confidence
+            yy,xx=np.ogrid[:source.shape[0],:source.shape[1]]
+            radii=np.hypot(xx-params['sx'],yy-params['sy'])
+            alpha*=radial_confidence(prepared,radii,params.get('rhef_bin_px',1.),
+                                     valid & statistics,params['rhef_noise_confidence'],target_valid=valid)
+        if name == 'fnrgf' and params.get('fnrgf_mode', 'legacy') == 'continuous' and params.get('fnrgf_fade',0.) > 0:
+            yy,xx=np.ogrid[:source.shape[0],:source.shape[1]]
+            radii=np.hypot(xx-params['sx'],yy-params['sy'])
+            ramp=np.clip(np.minimum(radii-params['fnrgf_rad']/10*params['sr'],
+                params.get('fnrgf_rmax',30)/10*params['sr']-radii)/params['fnrgf_fade'],0,1)
+            alpha*=ramp*ramp*(3-2*ramp)
         if name == 'fnrgf' and params.get('fnrgf_apply_mask',0):
             yy,xx=np.ogrid[:source.shape[0],:source.shape[1]]
             r=np.hypot(xx-params['sx'],yy-params['sy'])/params['sr']

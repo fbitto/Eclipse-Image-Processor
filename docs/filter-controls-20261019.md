@@ -33,7 +33,7 @@ Every active enhancement has Strength 0–100%; zero is an exact bypass. All sli
 | WOW | 0 = automatic; otherwise 1–min(10, round(log2(min(native shape)/5))) scales. Each native band has a 0–10 sigma threshold in 0.1 steps. Controls beyond the selected count are disabled and omitted from the recipe. Standard or bilateral averaging; bilateral parameter 0.1–5. WOW cannot be enabled for native dimensions below 10 px. |
 | RHEF | Inner radius 0–10 reference radii; ring width 0.5–10 preview px. Lower/upper Upsilon exponents 0.01–5, linked by default; 1 is identity for that tail. Compatible or continuous-global mode. Continuous mode exposes 2–128 minimum samples and 17–1025 quantile nodes. Optional confidence threshold 0–10 (0 off). |
 | Tangential detail | Angular Gaussian sigma 0.1–30 degrees; signed-detail gain 0–5; soft noise threshold 0–10 estimated sigma; inner radius 0–4 reference radii. Optional outer boundary has dynamic minimum > inner radius and maximum 20 reference radii; unchecked means full observed frame. Boundary fade 0–128 preview px. |
-| ACHF | Circular support radius 1–20 preview px; signed-detail gain 0–5; intensity rejection threshold 0–100% of current input span; background retention 0–100%. Gain 0 with background 100% is identity. |
+| ACHF | Circular support radius 1–20 preview px; signed-detail gain 0–5; intensity rejection threshold 0–100% of current input span; Background Retention is retired from the GUI; it remains a numerical API argument. Layer gain acts after ring encoding, and zero gain is neutral. |
 | Statistics support | Lunar exclusion enabled by default, guard 0–64 preview px. Optional bright-limb exclusion uses percentile 90–100 in annulus 1–1.1…3 reference radii; 100 excludes no bright samples. This is a brightness heuristic, not a scientific prominence classifier. |
 | Final presentation | Asinh intensity 1–100; logarithmic K 1–1000000. Original GHS stretch factor ln(D+1) 0–20 (step 0.001), b −5–15 (step 0.01), SP 0–1 (step 0.0005), LP 0–SP and HP SP–1 (step 0.0005). Optional separate post-stretch linear BP −1 to below WP, WP above BP to 2 (step 0.001), default 0/1. Reveal 0–100%. See [GHS validation](ghs-reference-20261019.md). |
 
@@ -47,7 +47,7 @@ Tangential detail uses periodic angular Gaussian convolution normalized by obser
 
 Missing-data validity controls NaN/alpha. Statistical exclusions instead keep finite samples in the base/output, while removing them from the filtering domain/support. The Photoshop package saves both VALID and STATISTICS_SUPPORT TIFFs, and exports tangential signed residuals as an independent Overlay layer. The common statistical mask is retained across preparation and independent branches. Missing/statistical masks select the observed-support WOW variant; that variant is not identical to watroo, and its noise thresholds remain approximate.
 
-The RHEF confidence option attenuates the final blend toward the input rather than changing ranks. Its adjacent-pixel noise estimate can be inaccurate on correlated, stretched or spatially varying noise. It defaults off.
+The RHEF confidence option multiplies layer alpha rather than changing ranks or mixing their units with input intensities. Its adjacent-pixel noise estimate can be inaccurate on correlated, stretched or spatially varying noise. It defaults off.
 
 ## Verification results
 

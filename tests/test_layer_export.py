@@ -129,7 +129,7 @@ class LayerExportTests(unittest.TestCase):
     def test_achf_background_is_not_exported_as_false_detail(self):
         source = np.arange(64, dtype=np.float32).reshape(8, 8)
         worker = Mock()
-        worker.run_achf.side_effect = lambda a, *args, **kwargs: .1 * a
+        worker.run_achf.side_effect = lambda a, *args, **kwargs: kwargs["background"]/100 * a
         params = dict(sx=4., sy=4., sr=1., achf_enabled=True, achf_str=20,
                       achf_kernel=10, achf_boost=10, achf_background=10)
         with tempfile.TemporaryDirectory() as tmp:
@@ -139,3 +139,4 @@ class LayerExportTests(unittest.TestCase):
             layer = tifffile.imread(output / next(r['file'] for r in manifest['layers'] if r['filter']=='achf'))
             np.testing.assert_array_equal(layer[..., 0], 32768)
             self.assertTrue(next(r['normalization'] for r in manifest['layers'] if r['filter']=='achf')['constant'])
+            self.assertEqual(worker.run_achf.call_args.kwargs['background'],0)

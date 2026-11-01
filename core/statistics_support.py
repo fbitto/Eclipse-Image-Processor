@@ -7,6 +7,10 @@ def statistics_support(image, parameters, valid=None):
     observed = np.isfinite(a) if valid is None else np.asarray(valid, dtype=bool) & np.isfinite(a)
     support = observed.copy()
     p = parameters
+    if p.get('statistics_mask') is not None:
+        if np.shape(p['statistics_mask']) != a.shape:
+            raise ValueError('Statistics mask must match image')
+        support &= np.asarray(p['statistics_mask'], bool)
     if p.get('statistics_exclude_lunar', False) or p.get('statistics_exclude_bright', False):
         y, x = np.ogrid[:a.shape[0], :a.shape[1]]
         r = np.hypot(x-p['sx'], y-p['sy'])
@@ -41,7 +45,7 @@ class StatisticsWorker:
         return run
 
 
-def radial_confidence(image, radii, bin_px, valid, threshold):
+def radial_confidence(image, radii, bin_px, valid, threshold, target_valid=None):
     """Approximate contrast/noise blend weight; never modifies the ranking core."""
     from scipy.ndimage import gaussian_filter1d
     a = np.asarray(image, dtype=float)
@@ -50,7 +54,8 @@ def radial_confidence(image, radii, bin_px, valid, threshold):
     diff = np.diff(a, axis=1)[pairs]
     noise = 1.4826*np.median(np.abs(diff-np.median(diff)))/np.sqrt(2) if diff.size else 0.
     if noise == 0:
-        return observed.astype(float)
+        targets = observed if target_valid is None else np.asarray(target_valid, bool) & np.isfinite(a)
+        return targets.astype(float)
     bins = (radii/bin_px).astype(int)
     counts = np.bincount(bins[observed])
     means = np.bincount(bins[observed], weights=a[observed])/np.maximum(counts, 1)
@@ -58,4 +63,5 @@ def radial_confidence(image, radii, bin_px, valid, threshold):
     weight = np.clip(np.sqrt(np.maximum(variance-noise**2, 0))/(threshold*noise), 0, 1)
     support = gaussian_filter1d((counts > 0).astype(float), 2.)
     weight = np.divide(gaussian_filter1d(weight*(counts > 0), 2.), support, out=np.zeros_like(weight), where=support > 0)
-    return np.where(observed, weight[np.minimum(bins, len(weight)-1)], 0)
+    targets = observed if target_valid is None else np.asarray(target_valid, bool) & np.isfinite(a)
+    return np.where(targets, weight[np.minimum(bins, len(weight)-1)], 0)

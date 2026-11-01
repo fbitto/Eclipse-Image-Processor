@@ -21,6 +21,18 @@ class ProjectSettingsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
 
+    def test_retired_achf_background_control_is_ignored_in_existing_recipes(self):
+        w=EclipseProcessorApp();w.auto_calculate=False
+        try:
+            saved=capture_settings(w)
+            self.assertNotIn('sl_achf_background',saved['controls'])
+            saved['controls']['sl_achf_background']=dict(kind='slider',value=17)
+            restore_settings(w,saved)
+            self.assertNotIn('sl_achf_background',capture_settings(w)['controls'])
+            w.full_raw_image=w.raw_image=w.preview_image=np.ones((32,48),np.float32)
+            self.assertEqual(w.collect_filter_parameters((32,48))['achf_background'],100)
+        finally:close_window(w)
+
     def test_larson_nearby_delta_round_trip_and_older_recipes_default_off(self):
         from copy import deepcopy
         from gui.filter_controls import collect_controls

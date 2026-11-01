@@ -420,7 +420,7 @@ class GuiInteractionTests(unittest.TestCase):
 
     def test_achf_starts_with_full_background_retention(self):
         w = self.window
-        self.assertEqual(w.sl_achf_background.value(), 100)
+        self.assertFalse(hasattr(w, "sl_achf_background"))
         self.assertFalse(w.sec_achf.is_filter_active())
         self.assertEqual(w.sl_achf_opacity.value(),19)
         for shape in (w.raw_image.shape, w.full_raw_image.shape):

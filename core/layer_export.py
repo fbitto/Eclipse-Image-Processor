@@ -127,11 +127,12 @@ def write_edge_layer(stage, records, alpha):
                         width_native_px=EDGE_WIDTH_NATIVE_PX,role='Display-only lunar/missing boundary fade to opaque black'))
 
 
-def neutral_layer(values, valid):
+def neutral_layer(values, valid, statistics=None):
     """Median-centred tanh display; S is 1.4826 MAD, in branch units.
 
     No absolute epsilon: near-constant residuals use a relative numerical floor.
-    Excluded pixels have neutral grey and zero alpha, never invented structure.
+    Valid targets use the selected statistical center/spread; missing targets
+    remain neutral grey. The caller supplies output alpha separately.
     """
     a = np.asarray(values, dtype=np.float64)
     mask = np.asarray(valid, dtype=bool)
@@ -140,8 +141,11 @@ def neutral_layer(values, valid):
     result = np.full(a.shape, .5, dtype=np.float64)
     if not mask.any():
         return result, dict(center=0., scale=0., constant=True)
-    selected = a[mask]
-    if not np.isfinite(selected).all():
+    sample_mask=mask if statistics is None else mask & np.asarray(statistics, bool)
+    if not sample_mask.any():
+        return result, dict(center=0., scale=0., constant=True)
+    selected = a[sample_mask]
+    if not np.isfinite(a[mask]).all():
         raise ValueError("Observed layer samples must be finite")
     center = float(np.median(selected))
     residual = selected - center
@@ -150,7 +154,7 @@ def neutral_layer(values, valid):
     constant = bool(np.ptp(selected) <= floor)
     scale = max(mad, floor)
     if not constant:
-        result[mask] = .5 + .5 * np.tanh(residual / (2.5 * scale))
+        result[mask] = .5 + .5 * np.tanh((a[mask]-center) / (2.5 * scale))
     return result, dict(center=center, scale=scale, mad=mad,
                         relative_floor=floor, constant=constant,
                         formula='0.5 + 0.5*tanh((q-center)/(2.5*scale))')

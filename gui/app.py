@@ -591,11 +591,6 @@ class EclipseProcessorApp(QMainWindow):
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf),
             tooltip="Maximum neighbor difference as a percentage of the working input intensity range; both opposite neighbors must pass."
         )
-        self.sl_achf_background, _ = create_slider(
-            "Background Retention (%)", 0, 100, 100, adaptive_layout,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf),
-            tooltip="Percentage of the input image retained by the numerical ACHF filter. The Photoshop ACHF detail layer removes this base component before normalization."
-        )
         add_achf_variants(self)
         def update_achf_controls():
             selected = self.combo_achf_variant.currentData()
@@ -976,7 +971,7 @@ class EclipseProcessorApp(QMainWindow):
             "achf_kernel": self.sl_achf_kernel.value(),
             "achf_boost": self.sl_achf_boost.value(),
             "achf_threshold": self.sl_achf_threshold.value(),
-            "achf_background": self.sl_achf_background.value(),
+            "achf_background": 100,
             "sx": float(self.txt_x.text()),
             "sy": float(self.txt_y.text()),
             "sr": float(self.txt_r.text()),

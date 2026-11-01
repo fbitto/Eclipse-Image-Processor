@@ -20,7 +20,7 @@ These are the prepared defaults for the first direct image load. Geometry-depend
 | ACHF ISO 04 | Overlay | Yes | 10% | — |
 | ACHF Angular | Overlay | Yes | 10% | — |
 
-Only Larson–Sekanina exposes Gain, from 0 to 200%; the radial increment is fixed at zero and angular increment starts at 3°. Other numerical branches run at internal strength 100 and expose opacity rather than redundant strength sliders. Opacity mixes a cached layer; Gain changes Larson–Sekanina encoding before Linear Light clipping and therefore invalidates that layer.
+Larson–Sekanina exposes Gain from 0 to 200%; tangential detail and adaptive ACHF also retain their operator-specific gain controls. The Larson–Sekanina radial increment is fixed at zero and angular increment starts at 3°. Other numerical branches run at internal strength 100 and expose opacity rather than redundant strength sliders. Opacity mixes a cached layer; Gain changes Larson–Sekanina encoding before Linear Light clipping and therefore invalidates that layer.
 
 ACHF's selector chooses the variant to edit. Its Include controls independently enable variants, and the master Active checkbox gates the family. ISO 04 is initially selected for editing. Switching panels preserves each variant's parameters and opacity.
 
@@ -59,3 +59,15 @@ Only completed, uncancelled layers are cached. Completed layers survive later ca
 Cache misses use a bounded pool: up to four concurrent filters at four million pixels or less, two above that, further limited by logical CPUs and an estimate of 128 bytes/pixel/filter within one third of physical RAM. Unknown RAM falls back to 512 MiB. This is a scratch estimate, not a hard resident-memory guarantee. Helpers inherit context-local CPU and cancellation budgets. Failure cancels queued work, signals running siblings and waits for them to exit. Composition order is deterministic regardless of completion order.
 
 Logs identify new filter calculations, encoding time and batch wall time. Do not sum overlapping per-filter durations. Cached-only composition reports that no filters were recalculated. Export and verification timings are separate. Historical speed measurements are in the [dated performance report](performance-optimization-20261021.md); current correctness evidence is in [validation](validation.md).
+
+## Layer values and support (issue #3, P1)
+
+FNRGF layers use the dimensionless operator output, with NaN where no model is defined. Continuous FNRGF's inner/outer smoothstep fade and limb protection affect alpha only; they never mix radiance into the encoded values. Radial coefficient smoothing uses the existing symmetric local quadratic fitter at physical radial nodes, preserving polynomial curvature and avoiding replicated-endpoint bias. This reduces the smoothing-induced inner ring; sector binning and radial interpolation can still leave residuals on a smooth corona.
+
+RHEF layers contain Upsilon-curved ranks directly, without median/MAD display normalization. Confidence multiplies alpha, not a mixture of ranks and input units. The numerical `run_fnrgf_native` and `run_rhef_native` helpers retain their input-unit blend by default; layer construction requests `operator_output=True`.
+
+Tangential and adaptive ACHF layers estimate level and spread in two-native-pixel annuli using the existing ring-display helper. Gain acts after encoding, so normalization cannot cancel it; zero gain is neutral grey. When thresholding makes MAD exactly zero, the median nonzero absolute deviation supplies a finite spread instead of a near-zero floor. Fewer than three populated annuli use the documented global fallback. Adaptive ACHF Background Retention was removed from the GUI because detail-layer construction discards it. The numerical API still accepts it; older v4 recipes containing that slider load with the retired field ignored. Logarithmic AEL ACHF operators and their default display encoding are unchanged.
+
+Explicit statistics masks now reach layer construction. Continuous FNRGF and RHEF distinguish samples used to estimate models from finite observed targets: excluded targets are evaluated only inside populated radial model ranges. Excluded intensities cannot affect those models or FNRGF's display normalization. Missing pixels and undefined/sparse models remain transparent. This addresses item 33 for these continuous radial models; NRGF, compatible modes and local operators still restrict their operator/output support together. Extending that behavior needs operator-specific evaluation rules, particularly for logarithmic and wavelet operators; merely forcing alpha to one would expose undefined values.
+
+Finite zero/negative observations remain distinct from missing data. Background correction includes them; positive-only logarithmic ACHF/WOW support remains a separate operator restriction (item 34).

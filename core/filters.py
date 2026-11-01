@@ -468,17 +468,19 @@ class FilterWorker(QObject):
         min_pixels_per_sector=1, clip_pct=0.0,
         mean_attenuation_range=(1.0, 0.0), std_attenuation_range=(1.0, 0.0),
         valid=None, mode='legacy', radial_smooth=8., ridge=.01,
-        width_floor=.05, robust_iterations=2, boundary_fade=0.,
+        width_floor=.05, robust_iterations=2, boundary_fade=0., operator_output=False, statistics_valid=None,
     ) -> np.ndarray:
         """Fourier Normalizing Radial Gradient Filter plus optional display mix.
 
         Core output is dimensionless and mapped to input units before mixing.
         Outside the application domain the input
         is preserved. clip_pct > 0 explicitly enables percentile display scaling.
+        operator_output returns dimensionless values/NaNs without display mixing.
+        statistics_valid selects model samples separately from observed targets.
         The GUI uses a 5% annular width floor to prevent near-zero Fourier
         divisors from producing isolated spikes and global display jumps.
         """
-        if strength == 0:
+        if strength == 0 and not operator_output:
             return img.copy()
         if valid is None:
             a = finite_image(img)
@@ -506,13 +508,15 @@ class FilterWorker(QObject):
             filtered = continuous_fnrgf(
                 a, r*sun_r, theta, edges*sun_r, order=int(order_fourier),
                 segments=int(angular_segments), cutoff=int(cutoff_val),
-                width_function=width_function, valid=valid,
+                width_function=width_function, valid=(valid if statistics_valid is None else statistics_valid),
+                target_valid=(np.isfinite(a) if valid is None else valid) if operator_output else None,
                 smooth_px=radial_smooth, ridge=ridge, width_floor=width_floor,
                 robust_iterations=robust_iterations, min_pixels=min_pixels_per_sector,
                 mean_tail=mean_attenuation_range[1], width_tail=std_attenuation_range[1])
         else:
             filtered = fnrgf_normalize(
-                a, r, theta, edges, order=int(order_fourier),
+                a if statistics_valid is None else np.where(statistics_valid,a,np.nan),
+                r, theta, edges, order=int(order_fourier),
                 segments=int(angular_segments), cutoff=int(cutoff_val),
                 application_radius=app_r, width_function=width_function,
                 mean_attenuation_range=mean_attenuation_range,
@@ -520,6 +524,8 @@ class FilterWorker(QObject):
                 min_pixels=min_pixels_per_sector,
                 width_floor_fraction=width_floor,
             )
+        if operator_output:
+            return filtered.astype(np.float32)
         valid = np.isfinite(filtered)
         if clip_pct > 0 and np.any(valid):
             if not 0 < clip_pct < 50:
@@ -544,17 +550,19 @@ class FilterWorker(QObject):
     def run_rhef_native(
         self, img, strength, app_radius_val, upsilon_val, sun_x, sun_y, sun_r,
         valid=None, upsilon_h_val=None, vignette_rsun=None, bin_px=1.0, mode="legacy",
-        min_count=12, quantile_count=257, noise_confidence=0.,
+        min_count=12, quantile_count=257, noise_confidence=0., operator_output=False, statistics_valid=None,
     ) -> np.ndarray:
         """RHEF ranks mapped to input units before the external Strength blend.
 
         UI radius is in tenths of disk radius and upsilon in hundredths.
         bin_px is the ring width in pixels of the supplied image.
         Outside application radius preserve input; vignette explicitly returns NaN.
+        operator_output returns curved ranks/NaNs without input-unit mapping.
+        statistics_valid selects continuous-model samples, not output targets.
         Map the theoretical rank range [0, 1] to the finite input min/max;
         do not renormalize individual annuli or include excluded pixels in ranks.
         """
-        if strength == 0:
+        if strength == 0 and not operator_output:
             return img.copy()
         if not np.isfinite([sun_r, bin_px]).all() or sun_r <= 0 or bin_px <= 0:
             raise ValueError("RHEF needs positive disk radius and bin width")
@@ -574,14 +582,15 @@ class FilterWorker(QObject):
         if mode == "legacy":
             filtered = rhef_normalize(
                 a, r, edges, application_radius=float(app_radius_val)/10*sun_r,
-                upsilon=upsilon, valid=valid,
+                upsilon=upsilon, valid=valid if statistics_valid is None else statistics_valid,
                 vignette=None if vignette_rsun is None else float(vignette_rsun)*sun_r,
             )
         elif mode == "continuous":
             from .radial_continuous import rhef_continuous_normalize
             filtered = rhef_continuous_normalize(
                 a, r, bin_px=bin_px, application_radius=float(app_radius_val)/10*sun_r,
-                valid=valid, min_count=min_count, quantile_count=quantile_count,
+                valid=(valid if statistics_valid is None else statistics_valid), min_count=min_count, quantile_count=quantile_count,
+                target_valid=(np.isfinite(a) if valid is None else valid) if operator_output else None,
             )
             if upsilon is not None:
                 low = filtered < .5
@@ -589,6 +598,10 @@ class FilterWorker(QObject):
                                     1 - .5 * (2 - 2 * filtered) ** upsilon[1])
         else:
             raise ValueError("Unknown RHEF mode")
+        if operator_output:
+            if vignette_rsun is not None:
+                filtered[r > float(vignette_rsun)*sun_r] = np.nan
+            return filtered.astype(np.float32)
         selected = np.isfinite(filtered)
         finite = a[np.isfinite(a)]
         if finite.size:
