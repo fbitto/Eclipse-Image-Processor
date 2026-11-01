@@ -38,3 +38,5 @@
 - For cold native FITS GUI smoke checks, run the normal QApplication event loop with timer-based assertions. Tight QTest.qWait polling delayed the load worker beyond 60 s; the same native RGB source and saved recipe completed in 0.81 s with app.exec().
 
 - When retiring a GUI-only filter control, remove its slider and advanced-mode registration together. Explicitly ignore that known retired key during both settings validation and application, so existing v4 recipes still load; omit it from new captures. ACHF background retention remains numerical-API-only.
+
+- Route numerical control releases and value changes through their filter-section activation gate, including combo boxes and advanced scales. ACHF additionally gates excluded variant panels. Use toggled for compare-button state so programmatic unchecking updates its label/mode. Preserve geometry as one blocked-signals snapshot on source replacement.

@@ -36,6 +36,62 @@ class GuiInteractionTests(unittest.TestCase):
     def tearDown(self):
         close_window(self.window)
 
+    def test_inactive_controls_do_not_cancel_or_invalidate_running_job(self):
+        w=self.window
+        w.sec_fnrgf.chk_active.setChecked(False)
+        w.sec_achf.chk_active.setChecked(True)
+        w.achf_ael_controls['ael_iso_01']['enabled'].setChecked(False)
+        w.recalculation_timer.stop();w.has_pending_request=False
+        revision=w._preview_revision;w.is_processing=True
+        with patch.object(w.filter_worker,'cancel') as cancel:
+            w.combo_fnrgf_mode.setCurrentIndex(1-w.combo_fnrgf_mode.currentIndex())
+            w.sl_fnrgf_smooth.setValue(w.sl_fnrgf_smooth.value()+1)
+            w.sl_fnrgf_smooth.sliderReleased.emit()
+            slider=w.achf_ael_controls['ael_iso_01']['outer_sigma']
+            slider.setValue(slider.value()+1);slider.sliderReleased.emit()
+            cancel.assert_not_called()
+        self.assertEqual(revision,w._preview_revision)
+        self.assertFalse(w.has_pending_request)
+        self.assertFalse(w.recalculation_timer.isActive())
+        w.is_processing=False
+
+    def test_full_frame_outer_radius_tracks_geometry_but_manual_limit_stays(self):
+        w=self.window
+        w._on_geometry_changed()
+        w.sl_fnrgf_rmax.setValue(w._fnrgf_frame_extent)
+        old=w.sl_fnrgf_rmax.value()
+        w.txt_r.setText('4')
+        self.assertEqual(w.sl_fnrgf_rmax.value(),w._fnrgf_frame_extent)
+        self.assertGreater(w.sl_fnrgf_rmax.value(),old)
+        w.sl_fnrgf_rmax.setValue(30)
+        w.txt_r.setText('3')
+        self.assertEqual(w.sl_fnrgf_rmax.value(),30)
+
+    def test_full_frame_outer_radius_tracks_replacement_image(self):
+        from pathlib import Path
+        import tempfile
+        import tifffile
+        w=self.window;w.auto_calculate=False
+        w._on_geometry_changed();w.sl_fnrgf_rmax.setValue(w._fnrgf_frame_extent)
+        with tempfile.TemporaryDirectory() as tmp:
+            source=Path(tmp)/'replacement.tif'
+            tifffile.imwrite(source,np.ones((128,128),np.float32))
+            with patch('gui.app.QFileDialog.getOpenFileName',return_value=(str(source),'')), \
+                 patch.object(w,'detect_lunar_limb',return_value=(64,64,4)):
+                w.load_image_action();wait_for_gui(w)
+            self.assertEqual(w.sl_fnrgf_rmax.value(),w._fnrgf_frame_extent)
+            self.assertGreaterEqual(w.sl_fnrgf_rmax.value()/10*4,np.hypot(64,64))
+
+    def test_programmatic_original_toggle_updates_label_and_mode(self):
+        w=self.window
+        with patch.object(w,'render_matrix_to_screen'):
+            w.btn_compare.setChecked(True)
+            self.assertTrue(w.show_original_mode)
+            self.assertEqual(w.btn_compare.text(),'View Processed')
+            w.btn_compare.setChecked(False)
+            self.assertFalse(w.show_original_mode)
+            self.assertEqual(w.btn_compare.text(),'View Original')
+
     def test_pipeline_completion_log_distinguishes_idle_pending_and_running(self):
         w=self.window
         w.recalculation_timer.stop();w.presentation_timer.stop()

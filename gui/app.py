@@ -208,7 +208,7 @@ class EclipseProcessorApp(QMainWindow):
         self.btn_compare = QPushButton("View Original")
         self.btn_compare.setCheckable(True)
         self.btn_compare.setToolTip("Temporarily bypass detail filters to inspect the working input with the selected PSB presentation or un-stretched view. Enabled background equalization, Calibrate color and Warm apply to both views. The separate prominence layer is bypassed in View Original. This comparison does not change filter settings or the export.")
-        self.btn_compare.clicked.connect(self.toggle_compare_mode)
+        self.btn_compare.toggled.connect(self.toggle_compare_mode)
         btn_row.addWidget(self.btn_compare)
 
         self.btn_auto_calc = QPushButton("Auto Calculate")
@@ -262,7 +262,7 @@ class EclipseProcessorApp(QMainWindow):
                 if slider.property("mix_only"):
                     continue
                 slider.valueChanged.connect(
-                    lambda value, section=section: self.on_filter_slider_released(section))
+                    lambda value, section=section, slider=slider: self.on_filter_slider_released(section, slider.property("achf_variant")))
         self._build_presentation_section(control_layout)
         top_header_layout.insertWidget(2, self.combo_input_state)
         top_header_layout.insertWidget(3, self.lbl_input_linearity)
@@ -376,7 +376,7 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_nrgf_statistics = ScrollSafeComboBox()
         self.combo_nrgf_statistics.addItems(['Median / MAD (AEL)', 'Mean / STD'])
         self.combo_nrgf_statistics.setToolTip('Robust AEL statistics or mean/standard deviation. Both use the continuous radial profile; only observed samples contribute.')
-        self.combo_nrgf_statistics.currentIndexChanged.connect(self.dispatch_pipeline_request_if_auto)
+        self.combo_nrgf_statistics.currentIndexChanged.connect(lambda _: self.on_filter_slider_released(self.sec_nrgf))
         self.sec_nrgf.content_layout.addWidget(self.combo_nrgf_statistics)
         self.sec_nrgf.toggled_active.connect(self.on_filter_toggled)
         radial_group.addWidget(self.sec_nrgf)
@@ -435,7 +435,7 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_fnrgf_width.addItems(["STD", "MAD"])
         self.combo_fnrgf_width.setCurrentIndex(1)
         self.combo_fnrgf_width.setToolTip("Estimate sector spread using standard deviation or 1.4826 times median absolute deviation. MAD makes the spread less sensitive to outliers; the brightness model still uses sector means.")
-        self.combo_fnrgf_width.currentIndexChanged.connect(lambda _: self.dispatch_pipeline_request_if_auto())
+        self.combo_fnrgf_width.currentIndexChanged.connect(lambda _: self.on_filter_slider_released(self.sec_fnrgf))
         w_lbl.setToolTip(self.combo_fnrgf_width.toolTip())
         w_row.addWidget(w_lbl)
         w_row.addWidget(self.combo_fnrgf_width)
@@ -449,7 +449,7 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_fnrgf_binning.addItems(["Linear", "Log"])
         self.combo_fnrgf_binning.setCurrentIndex(1)
         self.combo_fnrgf_binning.setToolTip("Linear bins have equal radial widths. Log-spaced bins are finer near the inner boundary and wider farther out.")
-        self.combo_fnrgf_binning.currentIndexChanged.connect(lambda _: self.dispatch_pipeline_request_if_auto())
+        self.combo_fnrgf_binning.currentIndexChanged.connect(lambda _: self.on_filter_slider_released(self.sec_fnrgf))
         b_lbl.setToolTip(self.combo_fnrgf_binning.toolTip())
         b_row.addWidget(b_lbl)
         b_row.addWidget(self.combo_fnrgf_binning)
@@ -470,7 +470,7 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_rhef_mode.addItem("Continuous global", "continuous")
         self.combo_rhef_mode.setCurrentIndex(1)
         self.combo_rhef_mode.setToolTip("Legacy ranks samples independently within rings. Continuous global interpolates positive log-intensity quantiles across populated neighboring rings; nonpositive and sparse samples retain their input values.")
-        self.combo_rhef_mode.currentIndexChanged.connect(lambda _: self.dispatch_pipeline_request_if_auto())
+        self.combo_rhef_mode.currentIndexChanged.connect(lambda _: self.on_filter_slider_released(self.sec_rhef))
         self.sec_rhef.content_layout.addWidget(self.combo_rhef_mode)
         self.sl_rhef_rad, _ = create_slider(
             "Application Radius (disk radii)", 0, 100, 10, self.sec_rhef.content_layout,
@@ -543,7 +543,7 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_wow_bilateral.addItems(["Standard WOW", "Edge-aware WOW (adjustable bilateral)", "AEL edge-aware (guided)"])
         self.combo_wow_bilateral.setToolTip("Standard and adjustable edge-aware WOW use the existing backend. AEL edge-aware uses linear luminance, guided range weights and symmetric observed starlet pairs. Worst sectors can still invert faint detail. No mode fills missing data.")
         self.combo_wow_bilateral.setCurrentIndex(1)
-        self.combo_wow_bilateral.currentIndexChanged.connect(self.dispatch_pipeline_request_if_auto)
+        self.combo_wow_bilateral.currentIndexChanged.connect(lambda _: self.on_filter_slider_released(self.sec_wow))
         self.combo_wow_bilateral.currentIndexChanged.connect(lambda _: self.update_wow_controls())
         self.sec_wow.content_layout.addWidget(self.combo_wow_bilateral)
         self.sec_wow.toggled_active.connect(self.on_filter_toggled)
@@ -577,20 +577,22 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_achf_kernel, _ = create_slider(
             "Support Radius (preview px)", 10, 200, 20, adaptive_layout,
             divisor=10,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf),
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf,"adaptive"),
             tooltip="Circular kernel radius in preview pixels, scaled for full-resolution export. Larger supports increase processing cost."
         )
         self.sl_achf_boost, _ = create_slider(
             "Contrast Gain", 0, 50, 20, adaptive_layout,
             divisor=10,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf),
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf,"adaptive"),
             tooltip="Signed high-pass gain from 0 to 5. Opacity controls its contribution to the composition."
         )
         self.sl_achf_threshold, _ = create_slider(
             "Intensity Threshold (%)", 0, 100, 10, adaptive_layout,
-            on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf),
+            on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf,"adaptive"),
             tooltip="Maximum neighbor difference as a percentage of the working input intensity range; both opposite neighbors must pass."
         )
+        for slider in self.achf_adaptive_panel.findChildren(QSlider):
+            slider.setProperty("achf_variant","adaptive")
         add_achf_variants(self)
         def update_achf_controls():
             selected = self.combo_achf_variant.currentData()
@@ -785,7 +787,14 @@ class EclipseProcessorApp(QMainWindow):
                 h, w = self.full_raw_image.shape[:2]
                 if radius > 0 and all(np.isfinite(v) for v in (cx,cy,radius)):
                     maximum = int(np.ceil(10*max(np.hypot(x-cx,y-cy) for x in (0,w-1) for y in (0,h-1))/radius))
-                    self.sl_fnrgf_rmax.setMaximum(max(self.sl_fnrgf_rmax.maximum(),maximum))
+                    previous=getattr(self,'_fnrgf_frame_extent',None)
+                    follows_frame=self.sl_fnrgf_rmax.value()==previous
+                    self._fnrgf_frame_extent=maximum
+                    with QSignalBlocker(self.sl_fnrgf_rmax):
+                        self.sl_fnrgf_rmax.setMaximum(max(self.sl_fnrgf_rmax.minimum(),maximum,
+                            self.sl_fnrgf_rmax.value() if not follows_frame else maximum))
+                        if follows_frame:self.sl_fnrgf_rmax.setValue(maximum)
+                    update_slider_display(self.sl_fnrgf_rmax)
             except (ValueError,OverflowError):
                 pass
         if self.background.base is not None and self.chk_background.isChecked() and not getattr(self,'_restoring_settings',False):
@@ -844,8 +853,11 @@ class EclipseProcessorApp(QMainWindow):
         """Enable or bypass a layer without changing its opacity."""
         self.dispatch_pipeline_request_if_auto()
 
-    def on_filter_slider_released(self, section):
-        # Parameter edits require this enabled layer to be recalculated.
+    def on_filter_slider_released(self, section, variant=None):
+        # Editing an excluded layer must not invalidate an active calculation.
+        if section is self.sec_achf and variant is not None:
+            included=(self.chk_achf_adaptive if variant == 'adaptive' else self.achf_ael_controls[variant]['enabled'])
+            if not included.isChecked():return
         if section.is_filter_active():
             self.dispatch_pipeline_request_if_auto()
 
@@ -1427,8 +1439,12 @@ class EclipseProcessorApp(QMainWindow):
             cx_full, cy_full, r_full = loaded['circle']
 
             for key,value in zip(('x','y','r'),(cx_full,cy_full,r_full)):
-                getattr(self,'txt_'+key).setText(project['geometry'][key] if project is not None else str(value))
+                with QSignalBlocker(getattr(self,'txt_'+key)):
+                    getattr(self,'txt_'+key).setText(project['geometry'][key] if project is not None else str(value))
 
+            if project is None:
+                self._on_geometry_changed()
+                self.trigger_circle_redraw()
             if project is None and first_image:
                 reset_filter_defaults(self, ael=True)
                 self.apply_recommended_parameters_to_gui(r_full, w_full, h_full)

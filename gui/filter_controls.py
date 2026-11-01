@@ -42,11 +42,11 @@ def add_controls(window):
             if divisor == 1:
                 slider, _ = create_slider(label, minimum, maximum, default,
                                            section.content_layout, tooltip=help_text,
-                                           on_release_callback=window.dispatch_pipeline_request_if_auto)
+                                           on_release_callback=lambda section=section: window.on_filter_slider_released(section))
             else:
                 slider, _ = create_slider_float(label, minimum, maximum, default, divisor,
                                                 section.content_layout, tooltip=help_text,
-                                                on_release_callback=window.dispatch_pipeline_request_if_auto)
+                                                on_release_callback=lambda section=section: window.on_filter_slider_released(section))
             slider.setObjectName('sl_'+attr)
             setattr(window, 'sl_'+attr, slider)
     window.combo_fnrgf_mode = ScrollSafeComboBox()
@@ -54,7 +54,7 @@ def add_controls(window):
     window.combo_fnrgf_mode.addItem('Reference-compatible', 'legacy')
     window.combo_fnrgf_mode.setToolTip('Continuous fits use observed angular support and interpolated radial models. Compatible mode retains the original reference conventions.')
     window.sec_fnrgf.content_layout.insertWidget(0, window.combo_fnrgf_mode)
-    window.combo_fnrgf_mode.currentIndexChanged.connect(window.dispatch_pipeline_request_if_auto)
+    window.combo_fnrgf_mode.currentIndexChanged.connect(lambda _: window.on_filter_slider_released(window.sec_fnrgf))
     def mode_changed():
         continuous = window.combo_fnrgf_mode.currentData() == 'continuous'
         for name in ('smooth', 'fade', 'ridge', 'robust'):
@@ -65,7 +65,7 @@ def add_controls(window):
     window.chk_rhef_symmetric = QCheckBox('Use the same exponent for both tails')
     window.chk_rhef_symmetric.setChecked(True)
     window.chk_rhef_symmetric.setToolTip('Link the upper-tail exponent to the main Upsilon exponent. Uncheck for independent tail control.')
-    window.chk_rhef_symmetric.toggled.connect(window.dispatch_pipeline_request_if_auto)
+    window.chk_rhef_symmetric.toggled.connect(lambda _: window.on_filter_slider_released(window.sec_rhef))
     window.sec_rhef.content_layout.addWidget(window.chk_rhef_symmetric)
     def update_rhef_controls():
         continuous = window.combo_rhef_mode.currentData() == 'continuous'
@@ -82,7 +82,7 @@ def add_controls(window):
         window.sl_tangential_outer.setMinimum(window.sl_tangential_inner.value()+1)
         window.sl_tangential_outer.setEnabled(window.chk_tangential_outer.isChecked())
     window.chk_tangential_outer.toggled.connect(sync_tangential)
-    window.chk_tangential_outer.toggled.connect(window.dispatch_pipeline_request_if_auto)
+    window.chk_tangential_outer.toggled.connect(lambda _: window.on_filter_slider_released(window.sec_tangential))
     window.sl_tangential_inner.valueChanged.connect(sync_tangential)
     sync_tangential()
     window.sl_mgn_sigmas, window.sl_mgn_weights = [], []
@@ -92,15 +92,15 @@ def add_controls(window):
             (window.sl_mgn_weights, 'weight', 200, 100, 'Nonnegative weight of this local MGN scale. Zero disables its contribution; normalization still divides by six scales.')):
             slider, _ = create_slider_float(f'Scale {index+1} {title}', 25 if collection is window.sl_mgn_sigmas else 0,
                                             maximum, default, 100., window.sec_mgn.content_layout,
-                                            tooltip=help_text, on_release_callback=window.dispatch_pipeline_request_if_auto)
+                                            tooltip=help_text, on_release_callback=lambda: window.on_filter_slider_released(window.sec_mgn))
             collection.append(slider)
     window.sl_wow_bilateral, _ = create_slider_float('Bilateral intensity scale', 1, 50, 10, 10.,
         window.sec_wow.content_layout, tooltip='Positive intensity sensitivity for the bilateral WOW backend (0.1 to 5); enabled only in edge-aware mode.',
-        on_release_callback=window.dispatch_pipeline_request_if_auto)
+        on_release_callback=lambda: window.on_filter_slider_released(window.sec_wow))
     # Retain the hidden widget so existing v4 control snapshots still load.
     window.sl_wow_noise_floor, _ = create_slider_float('AEL noise floor', 0, 100, 30, 10.,
         window.sec_wow.content_layout, tooltip='AEL regularization multiplier of measured noise in the whitening denominator. This is not a significance threshold.',
-        on_release_callback=window.dispatch_pipeline_request_if_auto)
+        on_release_callback=lambda: window.on_filter_slider_released(window.sec_wow))
 
 
 def collect_controls(window):
@@ -141,7 +141,7 @@ def add_advanced_mode(window, header_layout):
         'Noise threshold (all scales, sigma)', 0, 100, 0, 10.,
         window.sec_wow.content_layout,
         tooltip='Apply this noise threshold to every native wavelet scale. Zero disables noise suppression. Editing replaces individual advanced thresholds.',
-        on_release_callback=window.dispatch_pipeline_request_if_auto)
+        on_release_callback=lambda: window.on_filter_slider_released(window.sec_wow))
     window.lbl_advanced_values = QLabel('Individual WOW thresholds or separate RHEF tails remain active. Edit the basic control to link them again.')
     window.lbl_advanced_values.setWordWrap(True)
     window.lbl_advanced_values.setStyleSheet('color: #aaaaaa; font-size: 10px;')
@@ -211,7 +211,7 @@ def add_achf_variants(window):
         controls = dict(panel=panel)
         controls['enabled']=QCheckBox('Include in composition')
         controls['enabled'].setToolTip('Enable this variant independently of the other ACHF layers; cached results are retained when disabled.')
-        controls['enabled'].toggled.connect(window.on_filter_toggled)
+        controls['enabled'].toggled.connect(lambda _: window.on_filter_slider_released(window.sec_achf))
         layout.addWidget(controls['enabled'])
         controls['opacity'], _=create_slider('Opacity (%)',0,100,50,layout,
             tooltip='Overlay opacity; changing this only recomposes cached layers.')
@@ -222,16 +222,19 @@ def add_achf_variants(window):
             for i, value in enumerate(preset['sigmas']):
                 slider, _ = create_slider_float(f'Scale {i+1} sigma (native px)',1,1280,round(10*value),10.,layout,
                     tooltip='Gaussian sigma at full source resolution. Fast preview adapts the footprint.',
-                    on_release_callback=window.dispatch_pipeline_request_if_auto)
+                    on_release_callback=lambda variant=variant: window.on_filter_slider_released(window.sec_achf,variant))
+                slider.setProperty('achf_variant',variant)
                 controls['sigmas'].append(slider)
         else:
             controls['angular_sigma'], _ = create_slider_float('Angular sigma (degrees)',1,300,10,10.,layout,
                 tooltip='Gaussian angular width along circles around the reference center, in degrees.',
-                on_release_callback=window.dispatch_pipeline_request_if_auto)
+                on_release_callback=lambda variant=variant: window.on_filter_slider_released(window.sec_achf,variant))
         controls['outer_sigma'], _ = create_slider_float('Final smoothing (native px)',0,640,
             round(10*preset['outer_sigma']),10.,layout,
             tooltip='Gaussian sigma after detail extraction; zero disables it.',
-            on_release_callback=window.dispatch_pipeline_request_if_auto)
+            on_release_callback=lambda variant=variant: window.on_filter_slider_released(window.sec_achf,variant))
+        for key in ('angular_sigma','outer_sigma'):
+            if key in controls:controls[key].setProperty('achf_variant',variant)
         window.achf_ael_controls[variant] = controls
         window.sec_achf.content_layout.addWidget(panel)
 
@@ -272,5 +275,5 @@ def add_layer_opacities(window):
     window.chk_achf_adaptive=QCheckBox('Include Adaptive in composition')
     window.chk_achf_adaptive.setToolTip('Include the adaptive ACHF layer; the other variants can be enabled independently.')
     window.chk_achf_adaptive.setChecked(True)
-    window.chk_achf_adaptive.toggled.connect(window.on_filter_toggled)
+    window.chk_achf_adaptive.toggled.connect(lambda _: window.on_filter_slider_released(window.sec_achf))
     window.achf_adaptive_panel.layout().insertWidget(0,window.chk_achf_adaptive)
