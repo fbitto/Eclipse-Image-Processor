@@ -14,6 +14,7 @@ from .image_data import recipe_parameters
 from .layer_export import export_layer_package
 from .export_paths import export_paths, protect_source, available_export_path
 from .linear_export import export_linear_sources
+from .cancellation import check_cancelled
 
 
 def export_images(source, parameters, display, file_path, original_path,
@@ -55,7 +56,9 @@ def export_images(source, parameters, display, file_path, original_path,
     if export_linear:stages.append('Writing source images')
     stages.extend(['Composing final image','Writing TIFF','Writing JPEG'])
     if project_settings is not None:stages.append('Writing settings JSON')
+    stages.append('Publishing export')
     def stage(label):
+        check_cancelled()
         if progress is not None:progress(round(100*stages.index(label)/len(stages)),label)
     stage('Preparing export')
     export_start = time.time()
@@ -132,6 +135,7 @@ def export_images(source, parameters, display, file_path, original_path,
     img_norm=finish_presentation(img_norm,edge)
     from .layer_export import to_u16
     img_16bit=to_u16(img_norm)
+    settings_path=None
     with ExitStack() as cleanup:
         temporary_paths = []
         for destination in destinations[:2]:
@@ -175,16 +179,20 @@ def export_images(source, parameters, display, file_path, original_path,
             raise OSError("Could not write JPEG preview")
         print(f"[EXPORT: JPEG PREVIEW] Done in {time.time() - t0:.3f}s")
 
+        if project_settings is not None:
+            stage('Writing settings JSON')
+            from .project_settings import write_settings
+            settings_temporary=write_settings(tiff_temporary,original_path,project_settings,parameters,display)
+            cleanup.callback(settings_temporary.unlink,missing_ok=True)
+            temporary_paths.append(str(settings_temporary))
+            settings_path=destinations[2]
+        stage('Publishing export')
+        check_cancelled()
         # shortcut: publication is atomic per file; use a transaction if bundles must commit together.
-        for temporary, destination in zip(temporary_paths, destinations[:2]):
+        # Cancellation ends before publication so an existing image/recipe is never removed by cleanup.
+        for temporary, destination in zip(temporary_paths, destinations[:len(temporary_paths)]):
             protect_source([destination], original_path)
             os.replace(temporary, destination)
-
-    settings_path=None
-    if project_settings is not None:
-        stage('Writing settings JSON')
-        from .project_settings import write_settings
-        settings_path=write_settings(file_path,original_path,project_settings,parameters,display)
 
     print(f"[EXPORT] Finished successfully in {time.time() - export_start:.3f}s\n{'='*80}\n")
 

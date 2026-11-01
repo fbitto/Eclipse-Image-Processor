@@ -40,3 +40,5 @@
 - When retiring a GUI-only filter control, remove its slider and advanced-mode registration together. Explicitly ignore that known retired key during both settings validation and application, so existing v4 recipes still load; omit it from new captures. ACHF background retention remains numerical-API-only.
 
 - Route numerical control releases and value changes through their filter-section activation gate, including combo boxes and advanced scales. ACHF additionally gates excluded variant panels. Use toggled for compare-button state so programmatic unchecking updates its label/mode. Preserve geometry as one blocked-signals snapshot on source replacement.
+
+- Keep Cancel export outside the disabled sidebar/zoom toolbar. Give export workers their own cooperative token; stop accepting cancellation at publication. Distinguish cancellation from exceptions and close by requesting cancellation, never terminating a QThread during a write.

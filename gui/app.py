@@ -172,7 +172,14 @@ class EclipseProcessorApp(QMainWindow):
         zoom_row.addWidget(self.lbl_view_state)
         self.zoom_toolbar=QWidget()
         self.zoom_toolbar.setLayout(zoom_row)
-        viewer_layout.addWidget(self.zoom_toolbar)
+        view_header=QHBoxLayout()
+        view_header.addWidget(self.zoom_toolbar,stretch=1)
+        self.btn_cancel_export=QPushButton('Cancel export')
+        self.btn_cancel_export.setToolTip('Stop at the next safe checkpoint. An active write finishes first; completed companion packages may remain.')
+        self.btn_cancel_export.clicked.connect(self.cancel_export)
+        self.btn_cancel_export.hide()
+        view_header.addWidget(self.btn_cancel_export)
+        viewer_layout.addLayout(view_header)
         self.image_label=ImageView()
         self.image_label.circle_center_requested.connect(self.on_circle_center_requested)
         self.image_label.view_changed.connect(self._update_view_scale_label)
@@ -1565,15 +1572,25 @@ class EclipseProcessorApp(QMainWindow):
         self.export_progress.setFormat("Preparing export — %p%")
         self.export_progress.show()
         self._export_thread.progress.connect(self._on_export_progress)
+        self.btn_cancel_export.setEnabled(True)
+        self.btn_cancel_export.show()
         self._export_thread.start()
 
+    def cancel_export(self):
+        if self._export_thread is not None and self._export_thread.cancel():
+            self.btn_cancel_export.setEnabled(False)
+            self.status_label.setText('Status: Cancelling export at the next safe checkpoint...')
+            self.export_progress.setFormat('Cancelling export — %p%')
+
     def _on_export_progress(self, value, label):
+        if label == 'Publishing export':self.btn_cancel_export.setEnabled(False)
         self.export_progress.setValue(value)
         self.export_progress.setFormat(label+" — %p%")
 
     def _on_export_finished(self):
         thread = self._export_thread
         self._export_thread = None
+        self.btn_cancel_export.hide()
         if (getattr(thread,'source_identity',None) is self.full_raw_image
                 and thread.request.get('layer_cache') is not None):
             engine_for(self.filter_worker).absorb(thread.request['layer_cache'],
@@ -1588,10 +1605,10 @@ class EclipseProcessorApp(QMainWindow):
             self.status_label.setText(f"Status: Export failed - {thread.error}")
             self.status_label.setToolTip(f"Export failed: {thread.error}\nFull traceback is available in the application console.")
             self.status_label.setStyleSheet("color: #ff3333; font-weight: bold;")
-        self.export_progress.setValue(100 if thread.error is None else self.export_progress.value())
-        self.export_progress.setFormat("Export complete" if thread.error is None else "Export failed")
+        self.export_progress.setValue(100 if thread.error is None and not thread.cancelled else self.export_progress.value())
+        self.export_progress.setFormat("Export cancelled" if thread.cancelled else "Export complete" if thread.error is None else "Export failed")
         thread.deleteLater()
-        self._log_processing_end("EXPORT", "Complete" if thread.error is None else "Failed")
+        self._log_processing_end("EXPORT", "Cancelled" if thread.cancelled else "Complete" if thread.error is None else "Failed")
         self._finish_close()
         if not self._closing:
             self._dispatch_pending_preview()
@@ -1776,6 +1793,7 @@ class EclipseProcessorApp(QMainWindow):
         self._presentation_request = None
         self.in_window_tooltips.detach()
         self.filter_worker.cancel()
+        if self._export_thread is not None:self._export_thread.cancel()
         self.persistent_thread.quit()
         busy = (self._export_thread is not None or self._load_thread is not None
                 or self._geometry_thread is not None or self._presentation_thread is not None

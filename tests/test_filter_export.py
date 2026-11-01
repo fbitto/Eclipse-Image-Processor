@@ -14,6 +14,24 @@ from core.export import export_images
 
 
 class FilterExportTests(unittest.TestCase):
+    def test_cancellation_before_publication_preserves_existing_files_and_cleans_temps(self):
+        from threading import Event
+        from core.cancellation import ProcessingCancelled,cancellation_scope
+        image=np.ones((8,10),np.float32)
+        for stage in ('Writing JPEG','Writing settings JSON','Publishing export'):
+            with self.subTest(stage=stage),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);destination=root/'final.tif'
+                existing={root/'final.tif':b'old tiff',root/'final_preview.jpg':b'old jpeg',root/'final.json':b'old settings'}
+                for path,data in existing.items():path.write_bytes(data)
+                token=Event()
+                def progress(value,label):
+                    if label==stage:token.set()
+                with self.assertRaises(ProcessingCancelled),cancellation_scope(token):
+                    export_images(image,{}, {},str(destination),'source.fits',
+                        processed=image,project_settings={},progress=progress)
+                self.assertEqual(set(root.iterdir()),set(existing))
+                for path,data in existing.items():self.assertEqual(path.read_bytes(),data)
+
     def test_cached_composition_must_match_source_canvas(self):
         with tempfile.TemporaryDirectory() as tmp:
             destination=Path(tmp)/'final.tif'
@@ -36,7 +54,7 @@ class FilterExportTests(unittest.TestCase):
                               export_layers=True,processed=image,progress=lambda value,label:updates.append((value,label)))
             self.assertEqual([label for _,label in updates],[
                 'Preparing export','Calculating filters','Writing layer package',
-                'Composing final image','Writing TIFF','Writing JPEG','Export complete'])
+                'Composing final image','Writing TIFF','Writing JPEG','Publishing export','Export complete'])
             self.assertEqual(updates[0][0],0)
             self.assertEqual(updates[-1][0],100)
             self.assertEqual([value for value,_ in updates],sorted(value for value,_ in updates))

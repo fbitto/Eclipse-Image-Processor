@@ -25,11 +25,11 @@ def check_cancelled():
 
 
 @contextmanager
-def cancellation_scope(event):
+def cancellation_scope(event, *, check_at_exit=True):
     token = _active_event.set(event)
     try:
         check_cancelled()
         yield
-        check_cancelled()
+        if check_at_exit:check_cancelled()
     finally:
         _active_event.reset(token)

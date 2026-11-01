@@ -12,7 +12,7 @@ Started 1 November 2026, after commit 86f747c. Scope: the 27 open items and the 
 ## Ordered checkpoints
 
 1. **36, 41, 42**: inactive edits preserve ongoing work; full-frame FNRGF extent follows source/geometry while smaller explicit limits remain; Original button tracks programmatic changes. **Implemented**; 33 GUI tests passed, including replacement-source coverage and inactive/excluded-control cancellation guards.
-2. **40**: cooperative export/close cancellation, safe temporary cleanup and explicit outcome.
+2. **40**: cooperative export/close cancellation, safe temporary cleanup and explicit outcome. **Implemented**; 53 export tests and 8 settings tests passed. Completed companion packages may remain; TIFF/JPEG/JSON cancellation ends before publication.
 3. **8, 18, 20**: unresolved preview scales and consistent physical radial-bin widths, with independent resolution fixtures.
 4. **15, 16**: adaptive ACHF threshold units and measured support cost.
 5. **21, 23–25, 33**: operator-specific observed edges, masked WOW mathematics and independent statistical/output support.

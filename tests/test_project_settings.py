@@ -40,11 +40,13 @@ class ProjectSettingsTests(unittest.TestCase):
         w=EclipseProcessorApp();w.auto_calculate=False
         try:
             w.txt_x.setText('24');w.txt_y.setText('16');w.txt_r.setText('5')
+            w.sec_larson_sekanina.chk_active.setChecked(True)
             slider=w.sl_larson_sekanina_nearby_delta
             self.assertEqual(slider.value(),0)
             self.assertFalse(slider.parameter_row.isHidden())
             with patch.object(w,'dispatch_pipeline_request_if_auto') as dispatch:
                 slider.setValue(50)
+                dispatch.reset_mock()
                 slider.sliderReleased.emit()
                 dispatch.assert_called_once()
             parameters=collect_controls(w)

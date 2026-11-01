@@ -20,6 +20,31 @@ class ExportWorkerTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_export_cancel_is_cooperative_and_not_reported_as_failure(self):
+        from gui.export_worker import ExportThread
+        from core.cancellation import check_cancelled
+        started=Event();release=Event()
+        def export(**kwargs):
+            started.set();release.wait(3);check_cancelled()
+        thread=ExportThread({})
+        try:
+            with patch('gui.export_worker.export_images',side_effect=export):
+                thread.start();self.assertTrue(started.wait(3))
+                self.assertTrue(thread.cancel());release.set()
+                self.assertTrue(thread.wait(3000))
+            self.assertTrue(thread.cancelled)
+            self.assertIsNone(thread.error)
+            self.assertIn('Export cancelled',thread.message)
+            self.assertFalse(thread.publishing)
+        finally:release.set();thread.wait(3000)
+
+    def test_cancel_is_refused_after_publication_begins(self):
+        from gui.export_worker import ExportThread
+        thread=ExportThread({})
+        thread.report_progress(90,'Publishing export')
+        self.assertFalse(thread.cancel())
+        self.assertFalse(thread._cancel_event.is_set())
+
     def test_missing_attribute_reports_full_console_traceback(self):
         import io
         from contextlib import redirect_stderr

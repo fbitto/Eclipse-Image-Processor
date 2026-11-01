@@ -96,7 +96,7 @@ class NativeExportCacheTests(unittest.TestCase):
         copied=original.copy()
         snapshot=LayerEngine()
         thread=SimpleNamespace(source_identity=original,
-            request=dict(source=copied,layer_cache=snapshot),error=None,message='Exported',
+            request=dict(source=copied,layer_cache=snapshot),error=None,message='Exported',cancelled=False,
             deleteLater=lambda:None)
         w._export_thread=thread
         w.full_raw_image=original.copy()  # same shape, different observation identity
