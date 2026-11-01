@@ -9,6 +9,11 @@ import numpy as np
 from scipy.interpolate import LSQUnivariateSpline
 from types import SimpleNamespace
 from .cancellation import check_cancelled
+from .parallelism import filter_cpu_budget, map_in_threads
+
+# The fitpack spline evaluation holds the GIL (about 16 ns per sample); evaluating it over
+# chunks of rows of at most this many samples keeps every hold to a few milliseconds.
+SPLINE_CHUNK_SAMPLES = 1 << 18
 
 def _blur(a: np.ndarray, sigma: float) -> np.ndarray:
     k = int(2 * np.ceil(4.0 * sigma) + 1)
@@ -57,6 +62,9 @@ def radial_log_residual(luminance, valid, geometry, statistics=None):
     Ring medians are observations for a smooth fit, never a stepwise image to
     subtract. An off-centre Moon or a rectangular boundary cannot introduce a
     discontinuity in this profile. No output is produced outside observed data.
+
+    The spline is evaluated over chunks of rows (same values), with a
+    cancellation point between chunks, so the GUI thread never waits long.
     """
     a = np.asarray(luminance, np.float32)
     m = valid & np.isfinite(a) & (a>0)
@@ -91,22 +99,43 @@ def radial_log_residual(luminance, valid, geometry, statistics=None):
         rings=np.floor(r).astype(int)
         supported=(rings<len(cnt)) & (cnt[np.minimum(rings,len(cnt)-1)]>=12)
         targets=m | (observed & supported)
-    ln=np.zeros(a.shape,np.float32); ln[targets]=np.log(a[targets])
-    profile=fit(np.log(np.clip(r,np.exp(lr[0]),np.exp(lr[-1]))))
-    out=np.where(targets,ln-profile,np.nan).astype(np.float32)
+    low, high = np.exp(lr[0]), np.exp(lr[-1])
+    out=np.empty(a.shape,np.float32)
+    rows=max(1,SPLINE_CHUNK_SAMPLES//max(1,a.shape[1]))
+    for y0 in range(0,a.shape[0],rows):
+        check_cancelled()
+        y1=min(a.shape[0],y0+rows)
+        mm=targets[y0:y1]
+        ln=np.zeros(mm.shape,np.float32); ln[mm]=np.log(a[y0:y1][mm])
+        profile=fit(np.log(np.clip(r[y0:y1],low,high)))
+        out[y0:y1]=np.where(mm,ln-profile,np.nan)
     return out,dict(method='cubic spline in ln r fitted to annular log-luminance medians',
                     knots_rsun=(np.exp(knots)/geometry.sun_radius_px).tolist(),
                     annuli=len(bins),fit_rms=float(np.sqrt(np.mean((med-fit(lr))**2))))
 
 
 def achf_isotropic(luminance, valid, geometry, *, sigmas=(1,2,4,8,16), outer_sigma=1.5, statistics=None):
+    """Mean over the bands of (residual - normalised Gaussian).
+
+    Two band means are in flight at a time (cv2 and NumPy release the GIL) and
+    are added in band order, so the result is the same, bit for bit, as one at
+    a time.
+    """
     check_cancelled()
     residual, info=radial_log_residual(luminance,valid,geometry,statistics=statistics)
     m=np.isfinite(residual)
     detail=np.zeros(residual.shape,np.float32)
-    for s in sigmas:
+    in_flight=2 if filter_cpu_budget()>=2 else 1
+    def smooth(s):
         check_cancelled()
-        detail += (residual-normalized_gaussian(residual,m,s,min_support=.01))/len(sigmas)
+        return normalized_gaussian(residual,m,s,min_support=.01)
+    sigmas=list(sigmas)
+    for first in range(0,len(sigmas),in_flight):
+        group=sigmas[first:first+in_flight]
+        for mean in map_in_threads(smooth,group,workers=in_flight):
+            detail += (residual-mean)/len(sigmas)
+            del mean
+    check_cancelled()
     if outer_sigma:
         detail=normalized_gaussian(detail,m,outer_sigma,min_support=.01)
     detail[~m]=np.nan
@@ -256,6 +285,9 @@ def angular_highpass(image, mask, cx, cy, radius, sigma_deg):
     """AEL's linear polar angular residual, tiled to bound temporary memory.
 
     PA sampling, complete bilinear support and inverse mapping follow AEL 1.3.3.
+    The strips of 64 radii and of 128 image rows are independent and run on
+    helper threads; each strip makes the same calls as before, so the result is
+    the same, bit for bit.
     """
     from scipy.ndimage import gaussian_filter1d
     h, w = image.shape
@@ -272,28 +304,32 @@ def angular_highpass(image, mask, cx, cy, radius, sigma_deg):
     signal = np.where(mask,image,0).astype(np.float32)
     support = mask.astype(np.float32)
     polar = np.full((nr,na),np.nan,np.float32)
+    sigma = sigma_deg/(360/na)
     def remap(values, weights, x, y):
         kw = dict(borderMode=cv2.BORDER_CONSTANT,borderValue=0.)
         observed = cv2.remap(weights,x,y,cv2.INTER_LINEAR,**kw)
         samples = cv2.remap(values,x,y,cv2.INTER_LINEAR,**kw)
         return np.where(observed>=.9999,samples,np.nan).astype(np.float32)
-    for first in range(0,nr,64):
+    def forward(first):
         check_cancelled()
         rs = radii[first:first+64,None]
         x = (cx+rs*ux).astype(np.float32)
         y = (cy+rs*uy).astype(np.float32)
         samples = remap(signal,support,x,y)
         ok = np.isfinite(samples)
-        sigma = sigma_deg/(360/na)
         num = gaussian_filter1d(np.where(ok,samples,0),sigma,axis=1,mode='wrap')
         den = gaussian_filter1d(ok.astype(np.float32),sigma,axis=1,mode='wrap')
         smooth = np.where(ok & (den>=.3),num/np.maximum(den,1e-12),np.nan)
         polar[first:first+len(rs)] = samples-smooth
+    map_in_threads(forward, range(0,nr,64))
+    check_cancelled()
     padded = np.concatenate([polar[:,-4:],polar,polar[:,:4]],axis=1)
+    del polar
     weights = np.isfinite(padded).astype(np.float32)
     values = np.nan_to_num(padded)
+    del padded
     output = np.full(image.shape,np.nan,np.float32)
-    for first in range(0,h,128):
+    def inverse(first):
         check_cancelled()
         y = (np.arange(first,min(h,first+128))-cy)[:,None]
         x = (np.arange(w)-cx)[None,:]
@@ -302,5 +338,7 @@ def angular_highpass(image, mask, cx, cy, radius, sigma_deg):
         ri = ((r-r0)/(r1-r0)*(nr-1)).astype(np.float32)
         ci = (pa/(360/na)-.5+4).astype(np.float32)
         output[first:first+len(y)] = remap(values,weights,ci,ri)
+    map_in_threads(inverse, range(0,h,128))
+    check_cancelled()
     output[~mask] = np.nan
     return output
