@@ -34,3 +34,7 @@ Existing private artifacts remain outside Git. Start from `/tmp/eclipse-follow-u
 ## Execution update — 2 November 2026
 
 P0 native Photoshop, physical macOS-to-exFAT, source/profile integrity and cooperative close checks completed; Windows remains unavailable by user confirmation. P1 native comparisons completed on both supplied products, with compatibility defaults retained and current AEL operator fidelity checked. Independent observational fine-detail acceptance remains unavailable (no independent split stacks). See [measurements and limitations](p0-p1-acceptance-20261102.md).
+
+## P3/P4 update — 2 November 2026
+
+P3 macOS regression/build/legacy-recipe/export checks passed; Windows remains pending on the owner’s separate machine. See [package evidence](p3-release-validation-20261102.md). P4 [response draft](issue-3-response-draft.md) covers all 50 items with commits and distinguishes fixes, documented choices and incomplete qualification. It has not been posted. P2 remains separate pending work.

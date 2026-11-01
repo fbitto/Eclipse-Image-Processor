@@ -661,7 +661,7 @@ class EclipseProcessorApp(QMainWindow):
         self.chk_export_layers = QCheckBox("Also export editable Photoshop layers")
         self.chk_export_layers.setChecked(True)
         self.chk_export_layers.setStyleSheet("QCheckBox { color: #dddddd; font-size: 11px; }")
-        self.chk_export_layers.setToolTip("Export a 16-bit PSB or TIFF layer package with a stretched base, independent filter layers and optional RGB Color layer. Uses AEL-style presentation with automatic scale and adjustable exposure even when Preview PSB presentation is off. Includes a hidden working linear reference with its storage scale.")
+        self.chk_export_layers.setToolTip("Export a 16-bit PSB or TIFF layer package with a stretched base, independent filter layers and optional RGB Color layer. Uses AEL-style presentation with automatic scale and adjustable exposure even when Preview PSB presentation is off. Includes a scaled 16-bit input preview; full-precision working data and validity are saved separately as float32 sources.")
         layout.addWidget(self.chk_export_layers)
         self.combo_layers_format = ScrollSafeComboBox()
         self.combo_layers_format.addItem("Photoshop · PSB (16-bit layers)", "psb")

@@ -10,7 +10,7 @@ From the project root with runtime dependencies installed:
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -v
 ```
 
-On Windows set the environment variable using PowerShell syntax, or run with a desktop session. The 2 November final complete suite passed **394 tests** in 174.660 seconds on the local macOS development environment after current-AEL RHEF precision and immutable ICC-profile fixes. The AEL runtime self-test passed 124/124, zero skipped. See the [P0/P1 acceptance report](p0-p1-acceptance-20261102.md) for native and platform evidence.
+On Windows set the environment variable using PowerShell syntax, or run with a desktop session. The 2 November P3 complete suite passed **394 tests** in 178.151 seconds on the local macOS development environment after current-AEL RHEF precision and immutable ICC-profile fixes. Two subsequent tooltip-only corrections passed 33 GUI interaction tests; the rebuilt macOS app passed its legacy-recipe/export smoke test. See [P3 package evidence](p3-release-validation-20261102.md). The AEL runtime self-test passed 124/124, zero skipped. See the [P0/P1 acceptance report](p0-p1-acceptance-20261102.md) for native and platform evidence.
 
 Coverage includes numerical independent references and AEL fixtures, missing/statistical support, native/preview scaling, independent layer inputs/order/blends, bounded caches, cancellation, colour preparation, export separation, PSB structure/bytes, optional Color Correction, JSON v4 validation, GUI interaction/responsiveness, zoom and overlay painting. It does not establish astrophysical truth or pixel identity after native Photoshop recomposition.
 

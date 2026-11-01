@@ -48,3 +48,5 @@
 - Audit explicit sliderReleased callbacks as well as generic valueChanged wiring: built-in NRGF geometry, FNRGF protection and Larson gain need the same inactive-family gate. When clarifying selector labels, whitelist old text at its original index so v4 recipes stay readable.
 
 - Current-AEL RHEF parity includes float32 log/quantile/accumulation and even redundant angular interpolation terms. Keep the independent float64 numerical default explicit; application reference precision must be tested against frozen upstream values. Reuse immutable ICC bytes within a process: profile creation timestamps otherwise make identical JPEG exports differ across a second boundary.
+
+- Package smoke checks must inspect section-level tooltip maps as well as individual sliders: stale presentation help can contradict corrected export semantics. Verify the rebuilt bundle, not only the development interpreter. On this macOS sandbox hdiutil needs elevated tool access to its disk-image service; app building/signature verification can succeed before the DMG step fails.

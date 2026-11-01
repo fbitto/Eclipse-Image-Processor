@@ -254,7 +254,7 @@ def create_filter_group(group_title: str, control_layout: QVBoxLayout) -> QVBoxL
         'RADIAL HISTOGRAM EQUALIZATION':'Adjust contrast by ranking working-input intensities within radial distributions.',
         'MULTI-SCALE / WAVELETS':'Extract contrast at multiple spatial scales from the shared working input, including enabled background equalization.',
         'SHARPENING':'Independent signed-detail layers; each starts from the shared working input, including enabled background equalization.',
-        'PHOTOSHOP PRESENTATION':'Automatic exposure with manual EV adjustment for Photoshop layers. Screen and JPEG follow it only when Preview PSB presentation is on; the main TIFF is unchanged.',
+        'PHOTOSHOP PRESENTATION':'Automatic exposure and manual EV adjustment for presented TIFF, JPEG and Photoshop layers. Preview PSB presentation affects only the viewport; float32 working sources retain their units.',
     }
     title_label.setToolTip(group_help[group_title])
     title_label.setStyleSheet("""
