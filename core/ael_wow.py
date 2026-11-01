@@ -1,6 +1,6 @@
-"""AEL 1.3.5 guided edge-aware WOW. Copyright (c) 2026 Pere Guerra Serra.
+"""AEL 1.4.1 guided edge-aware WOW. Copyright (c) 2026 Pere Guerra Serra.
 
-Adapted from AEL filterbank.py (MIT; docs/third-party/AEL-MIT.txt).
+Adapted from AEL filterbank.py, verified through 1.4.1 (17029c9) (MIT; docs/third-party/AEL-MIT.txt).
 Linear luminance, symmetric observed pairs; no reflected or invented samples.
 """
 import numpy as np
@@ -157,4 +157,4 @@ def ael_wow_layer(image, params, valid=None, statistics=None):
     return encoded,dict(mapping,operator='AEL edge-aware WOW',input='linear luminance',
                         support_mode='experimental statistics separation' if statistics is not None else 'compatibility',
                         n_scales=count,range_weights='guided (issue #4)',completeness=[.6,.995],
-                        level_sigma_px='min(150, max(32, 4*2^j))',upstream_version='1.3.5')
+                        level_sigma_px='min(150, max(32, 4*2^j))',upstream_version='1.4.1', upstream_commit='17029c9284748c087adcd0d40241f7e3faf8d778')

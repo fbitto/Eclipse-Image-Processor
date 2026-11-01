@@ -402,6 +402,7 @@ def nrgf_layer(image, params, valid=None, targets=None):
                        inner_radius=params.get('nrgf_rad', 10)/10., partial_annuli='chain',target_valid=targets)
     good = np.isfinite(q)
     info = dict(input='linear luminance', partial_annuli='chain', upstream_version='1.4.1',
+                upstream_commit='17029c9284748c087adcd0d40241f7e3faf8d778',
                 bin_px=params.get('nrgf_bin_px', 2.), target_scale=scale,
                 min_count=params.get('nrgf_min_count', 12), robust=params.get('nrgf_robust', True),
                 smooth_bins=params.get('nrgf_smooth_bins', 0.),

@@ -1,6 +1,6 @@
 """AEL isotropic and angular ACHF variants. Copyright (c) 2026 Pere Guerra Serra.
 
-Adapted from AEL 1.3.5 filterbank.py and filters.py (MIT; docs/third-party/AEL-MIT.txt).
+Adapted from AEL filterbank.py and filters.py, verified through 1.4.1 (17029c9) (MIT; docs/third-party/AEL-MIT.txt).
 Log-luminance radial spline or angular residual, outer Gaussian and AEL
 MAD/tanh encoding. Missing/nonpositive samples never enter the operator.
 """
@@ -227,7 +227,7 @@ def ael_achf_layer(image, cx, cy, radius, valid=None, scale=1.,
         info['omitted_sigmas_px']=target_sigmas[~resolved].tolist()
         info.update(native_sigmas=sigmas.tolist(), native_outer_sigma=outer)
     layer, display = display_detail_rings(detail, mask, geometry, width_px=2.*scale,statistics=statistics)
-    return layer, dict(info, **display, variant=variant, target_scale=scale, upstream_version='1.3.5',
+    return layer, dict(info, **display, variant=variant, target_scale=scale, upstream_version='1.4.1', upstream_commit='17029c9284748c087adcd0d40241f7e3faf8d778',
                        support_mode='experimental statistics separation' if statistics is not None else 'compatibility')
 
 

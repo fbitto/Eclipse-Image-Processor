@@ -39,7 +39,10 @@ class OperatorLayerTests(unittest.TestCase):
 
     def test_rhef_keeps_curved_ranks_and_confidence_only_changes_alpha(self):
         from core.radial_continuous import rhef_continuous_normalize
-        q=rhef_continuous_normalize(self.source,self.r,bin_px=1,application_radius=10)
+        y,x=np.indices(self.source.shape,dtype=float)
+        angles=np.mod(-np.degrees(np.arctan2(x-self.p['sx'],self.p['sy']-y)),360).astype(np.float32)
+        q=rhef_continuous_normalize(self.source,self.r,bin_px=1,application_radius=10,
+            reference_precision=True,position_angles=angles)
         q=np.where(q<.5,.5*(2*q)**.35,1-.5*(2-2*q)**.35)
         layer=self.layer('rhef')
         good=layer['alpha']>0

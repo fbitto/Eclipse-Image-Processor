@@ -244,6 +244,11 @@ class LayerEngine:
             image=np.where(domain,values,.5)
             if name == 'rhef':
                 mapping=dict(encoding='Upsilon-curved ranks; no display renormalization')
+                if p.get('rhef_mode') == 'continuous':
+                    mapping.update(upstream_version='1.4.1',
+                        upstream_commit='17029c9284748c087adcd0d40241f7e3faf8d778',
+                        operator='global radial quantiles; AEL reference precision',
+                        extensions='custom quantiles, targets, confidence; application Overlay blend')
         elif name == 'larson_sekanina':
             if p.get('larson_sekanina_mode','linear') == 'log':
                 image=np.where(domain,.5+.5*values,.5)

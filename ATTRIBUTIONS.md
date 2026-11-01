@@ -34,8 +34,10 @@ The AEL-derived ACHF code is included in the application. The upstream Python pa
 
 ### Additional bundled AEL adaptations
 
+- [core/radial_continuous.py](core/radial_continuous.py) adapts current AEL 1.4.1 (17029c9) global radial quantile interpolation/inversion for the application reference-precision path. The independent float64 numerical path and custom support/quantile controls remain local extensions. Synthetic current-runtime fixtures retain upstream attribution. ACHF ISO/angular operators are also verified through that current revision.
+
 - [core/nrgf.py](core/nrgf.py) adapts AEL `radial.py` continuous annular statistics/interpolation through 1.4.1, including shared-angle chaining for partial annuli, and uses AEL-derived MAD/tanh display encoding. The numerical API retains the historical observed-annulus default; application layers select chaining.
-- [core/ael_wow.py](core/ael_wow.py) adapts AEL 1.3.3 `filters.py` / `filterbank.py`: radial log-luminance residuals, observed symmetric starlet pairs, noise regularization and detail encoding.
+- [core/ael_wow.py](core/ael_wow.py) adapts AEL `filters.py` / `filterbank.py`, verified through 1.4.1 (17029c9): radial log-luminance residuals, observed symmetric starlet pairs, noise regularization and detail encoding.
 - [core/presentation.py](core/presentation.py) follows AEL 1.3.3 `ael.develop.tone_map` for Asinh strength 10 and its shared 0.9 highlight shoulder. Automatic P99.5 scale selection, EV controls and the mono-base/Color composition are local application choices.
 
 These bundled adaptations retain AEL authorship and the MIT notice above. The upstream AEL package is not a runtime dependency. Standard/Edge-aware WOW continue to use watroo or the application's explicit-support path; they are distinct from the AEL mode.

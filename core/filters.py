@@ -645,6 +645,8 @@ class FilterWorker(QObject):
             filtered = rhef_continuous_normalize(
                 a, r, bin_px=bin_px, application_radius=float(app_radius_val)/10*sun_r,
                 valid=(valid if statistics_valid is None else statistics_valid), min_count=min_count, quantile_count=quantile_count,
+                reference_precision=True,
+                position_angles=np.mod(-np.degrees(np.arctan2(xx-sun_x, sun_y-yy)),360).astype(np.float32),
                 target_valid=(np.isfinite(a) if valid is None else valid) if operator_output else None,
             )
             if upsilon is not None:

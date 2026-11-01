@@ -14,6 +14,6 @@ The compatible mode ranks within individual rings using its established branch c
 
 ## Provenance and checks
 
-Continuous radial interpolation was studied in AEL 1.3.2 by Pere Guerra Serra; this quantile core is implemented locally without importing AEL. See [historical research](ael-filter-review.md) and [full credits](../README.md#algorithm-credits-scientific-references-and-acknowledgments).
+Continuous radial interpolation was studied in AEL 1.3.2 by Pere Guerra Serra; the application now uses a local adaptation of current AEL 1.4.1 (17029c9) global radial-quantile arithmetic, without importing AEL at runtime. Float32 accumulation and inversion follow upstream; the standalone numerical helper retains its independent float64 default. Matched-parameter worker output is checked against frozen current fixtures and both supplied native masters. App-specific ring width, Overlay composition, custom quantiles, target separation and confidence are extensions, not upstream defaults. See [historical research](ael-filter-review.md) and [full credits](../README.md#algorithm-credits-scientific-references-and-acknowledgments).
 
 Tests cover a scalar quantile reference, ties, constants, masks, nonpositive samples, empty/sparse rings, unit rescaling, injected structure and radial-profile controls. Shared pipeline, cache and export tests cover integration. See [current validation](validation.md); older end-to-end sequential comparisons are historical, not the active contract.
