@@ -62,23 +62,24 @@ def blend(base, image, alpha, mode, amount):
 
 
 def display_base(source, params, display):
-    from .layer_export import to_u16
+    from .presentation import quantize_u16
     valid=params.get('valid_mask')
     observed=source if valid is None else np.where(valid,source,np.nan)
     if display.get('mode') == 'ael_presentation':
         from .presentation import ael_tone_map
-        return to_u16(ael_tone_map(observed,np.isfinite(observed),display))
-    return to_u16(normalized_base(observed,display))
+        return quantize_u16(ael_tone_map(observed,np.isfinite(observed),display))
+    return quantize_u16(normalized_base(observed,display))
 
 
 def colour_display(rgb, source, display):
     """Quantized RGB Color samples for the explicitly supplied base recipe."""
     from .colour import colour_layer
     from .layer_export import to_u16
+    from .presentation import quantize_u16, u16_to_unit
     if display.get('mode') == 'ael_presentation':
         from .presentation import ael_tone_map
-        return to_u16(ael_tone_map(rgb,np.isfinite(source) & np.isfinite(rgb).all(axis=-1),display)).astype(float)/65535.
-    return to_u16(colour_layer(rgb,source,display)).astype(float)/65535.
+        return u16_to_unit(quantize_u16(ael_tone_map(rgb,np.isfinite(source) & np.isfinite(rgb).all(axis=-1),display)))
+    return u16_to_unit(quantize_u16(colour_layer(rgb,source,display)))
 
 
 class LayerEngine:
@@ -362,12 +363,14 @@ class LayerEngine:
             computed=self.prepare(worker,source,params)
             if not computed and requests(params):
                 print('[FUSION] Reusing calculated layers; no filters recalculated')
+        from .presentation import row_strips, u16_to_unit
+        from .parallelism import map_in_threads
         if base is None:
-            base=display_base(source,params,display).astype(float)/65535
-        result=base.copy()
+            base=u16_to_unit(display_base(source,params,display))
         reveal=float(display.get('blend',1.))
         if not np.isfinite(reveal) or not 0 <= reveal <= 1:
             raise ValueError('Reveal must be between zero and one')
+        layers=[]
         for name,variant,p,enabled in requests(params):
             check_cancelled()
             amount=round(opacity(name,p,enabled)*reveal*255)/255
@@ -379,9 +382,20 @@ class LayerEngine:
             if layer is None:
                 return None
             if amount:
-                result=blend(result,layer['image'].astype(float)/65535,
-                             layer['alpha'].astype(float)/65535,layer['mode'],amount)
-        return result.astype(np.float32)
+                layers.append((layer['image'],layer['alpha'],layer['mode'],amount))
+        # Every blend works per pixel: fixed row strips on helper threads, each strip
+        # blending the layers in order, give the same values bit for bit.
+        base=np.asarray(base)
+        result=np.empty(base.shape,np.float32)
+        def strip(bounds):
+            check_cancelled()
+            y0,y1=bounds
+            part=base[y0:y1].copy()
+            for image,alpha,mode,amount in layers:
+                part=blend(part,image[y0:y1].astype(float)/65535,alpha[y0:y1].astype(float)/65535,mode,amount)
+            result[y0:y1]=part
+        map_in_threads(strip,row_strips(base.shape[0]))
+        return result
 
 
 def engine_for(worker):
