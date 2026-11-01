@@ -173,6 +173,8 @@ class GuiResponsivenessTests(unittest.TestCase):
         w = self.w
         release = Event()
         thread = TaskThread(lambda:release.wait(5),parent=w)
+        from unittest.mock import Mock
+        thread.cancel=Mock(side_effect=release.set)
         w._export_thread = thread
         def finished():
             w._export_thread = None
@@ -183,6 +185,7 @@ class GuiResponsivenessTests(unittest.TestCase):
         try:
             start = time.monotonic()
             self.assertFalse(w.close())
+            thread.cancel.assert_called_once()
             self.assertLess(time.monotonic()-start,.2)
             heartbeat = []
             QTimer.singleShot(0,lambda:heartbeat.append(True))

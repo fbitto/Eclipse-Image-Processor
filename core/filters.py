@@ -361,10 +361,11 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
 
 
 def adaptive_circular_highpass(image, radius, intensity_threshold, gain=2.0,
-                               background=0.1, regions=None, spatial_scale=1.0):
+                               background=0.1, regions=None, spatial_scale=1.0, threshold_mode="absolute"):
     """Own variable-kernel implementation of Druckmuller et al. (2006), §4.2.
 
-    Threshold is absolute in input intensity units. Opposite neighbors are
+    Absolute thresholds use input units; relative thresholds compare |p-q|
+    with t*(|p|+|q|)/2, including finite zeros and signed samples. Opposite neighbors are
     accepted together, preserving an even, real-spectrum local kernel.
     C_p = background*delta + gain*(delta - W_p), with normalized W_p.
     The paper specifies constraints, not the exact Corona 3.0 algorithm.
@@ -377,6 +378,8 @@ def adaptive_circular_highpass(image, radius, intensity_threshold, gain=2.0,
         raise ValueError("ACHF parameters must be finite")
     if radius <= 0 or spatial_scale <= 0 or intensity_threshold < 0 or gain < 0 or not 0 <= background <= 1:
         raise ValueError("Invalid ACHF radius, threshold, gain or background")
+    if threshold_mode not in ("absolute","relative"):
+        raise ValueError("Unknown ACHF threshold mode")
     labels = np.zeros(a.shape, dtype=np.uint8) if regions is None else np.asarray(regions)
     if labels.shape != a.shape:
         raise ValueError("Region labels must match image dimensions")
@@ -398,8 +401,12 @@ def adaptive_circular_highpass(image, radius, intensity_threshold, gain=2.0,
             plus = a[y0+dy:y1+dy, x0+dx:x1+dx]
             minus = a[y0-dy:y1-dy, x0-dx:x1-dx]
             region = labels[y0:y1, x0:x1]
-            accepted = ((np.abs(plus-center) <= intensity_threshold)
-                        & (np.abs(minus-center) <= intensity_threshold)
+            plus_limit=minus_limit=intensity_threshold
+            if threshold_mode == 'relative':
+                plus_limit=intensity_threshold*.5*(np.abs(plus)+np.abs(center))
+                minus_limit=intensity_threshold*.5*(np.abs(minus)+np.abs(center))
+            accepted = ((np.abs(plus-center) <= plus_limit)
+                        & (np.abs(minus-center) <= minus_limit)
                         & (labels[y0+dy:y1+dy, x0+dx:x1+dx] == region)
                         & (labels[y0-dy:y1-dy, x0-dx:x1-dx] == region))
             weight = accepted * np.exp(-(dx*dx+dy*dy)/(2*sigma*sigma))
@@ -711,7 +718,7 @@ class FilterWorker(QObject):
 
     def run_achf(
         self, img, strength, base_kernel_param, boost_param,
-        sun_x, sun_y, sun_r, intensity_threshold=10.0, background=10.0, spatial_scale=1.0,
+        sun_x, sun_y, sun_r, intensity_threshold=10.0, background=10.0, spatial_scale=1.0, threshold_mode="absolute",
     ) -> np.ndarray:
         """Adaptive symmetric circular filter; UI threshold/background are percent.
 
@@ -723,11 +730,12 @@ class FilterWorker(QObject):
         a = finite_image(img)
         yy, xx = np.ogrid[:a.shape[0], :a.shape[1]]
         regions = ((xx-float(sun_x))**2 + (yy-float(sun_y))**2 <= float(sun_r)**2)
-        threshold = float(intensity_threshold)/100.0 * float(np.ptp(a))
+        threshold = float(intensity_threshold)/100.0
+        if threshold_mode == "absolute":threshold *= float(np.ptp(a))
         filtered = adaptive_circular_highpass(
             a, float(base_kernel_param)/10.0, threshold,
             gain=float(boost_param)/10.0, background=float(background)/100.0,
-            regions=regions, spatial_scale=spatial_scale,
+            regions=regions, spatial_scale=spatial_scale, threshold_mode=threshold_mode,
         )
         alpha = float(strength)/100.0
         return ((1-alpha)*a + alpha*filtered).astype(np.float32)

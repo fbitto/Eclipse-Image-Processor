@@ -263,6 +263,7 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
             img = worker.run_achf(
                 img, p["achf_str"], p["achf_kernel"], p["achf_boost"], p["sx"], p["sy"], p["sr"],
                 intensity_threshold=p.get("achf_threshold", 10),
+                threshold_mode=p.get("achf_threshold_mode","absolute"),
                 background=p.get("achf_background", 10),
                 spatial_scale=p.get("spatial_scale", 1.0),
             )

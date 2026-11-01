@@ -585,7 +585,7 @@ class EclipseProcessorApp(QMainWindow):
             "Support Radius (preview px)", 10, 200, 20, adaptive_layout,
             divisor=10,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf,"adaptive"),
-            tooltip="Circular kernel radius in preview pixels, scaled for full-resolution export. Larger supports increase processing cost."
+            tooltip="Circular kernel radius in preview pixels, scaled for full-resolution export. Doubling support radius costs roughly four times more at the same image size. Full-resolution supports can be expensive; use native verification and Cancel export."
         )
         self.sl_achf_boost, _ = create_slider(
             "Contrast Gain", 0, 50, 20, adaptive_layout,
@@ -594,9 +594,9 @@ class EclipseProcessorApp(QMainWindow):
             tooltip="Signed high-pass gain from 0 to 5. Opacity controls its contribution to the composition."
         )
         self.sl_achf_threshold, _ = create_slider(
-            "Intensity Threshold (%)", 0, 100, 10, adaptive_layout,
+            "Neighbor contrast threshold (%)", 0, 200, 10, adaptive_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf,"adaptive"),
-            tooltip="Maximum neighbor difference as a percentage of the working input intensity range; both opposite neighbors must pass."
+            tooltip="Maximum difference relative to the mean absolute intensity of each neighbor pair; both opposite neighbors must pass. Valid for signed/zero observations. 200% accepts every finite pair."
         )
         for slider in self.achf_adaptive_panel.findChildren(QSlider):
             slider.setProperty("achf_variant","adaptive")
@@ -990,6 +990,7 @@ class EclipseProcessorApp(QMainWindow):
             "achf_kernel": self.sl_achf_kernel.value(),
             "achf_boost": self.sl_achf_boost.value(),
             "achf_threshold": self.sl_achf_threshold.value(),
+            "achf_threshold_mode": "relative",
             "achf_background": 100,
             "sx": float(self.txt_x.text()),
             "sy": float(self.txt_y.text()),

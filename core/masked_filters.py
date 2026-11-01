@@ -74,15 +74,17 @@ class MaskedWorker:
     def run_tangential(self, a, *args, **kwargs):
         return np.where(self.valid, self.worker.run_tangential(a, *args, valid=self.valid, **kwargs), 0)
 
-    def run_achf(self, a, strength, kernel, boost, sx, sy, sr, intensity_threshold=10, background=10, spatial_scale=1.0):
+    def run_achf(self, a, strength, kernel, boost, sx, sy, sr, intensity_threshold=10, background=10, spatial_scale=1.0, threshold_mode="absolute"):
         if strength == 0:
             return a.copy()
         yy, xx = np.ogrid[:a.shape[0], :a.shape[1]]
         regions = ((xx-sx)**2+(yy-sy)**2 <= sr**2).astype(np.uint8)
         regions[~self.valid] = 2
-        filtered = adaptive_circular_highpass(a, kernel/10., intensity_threshold/100.*self.span(a),
+        threshold=intensity_threshold/100.
+        if threshold_mode == "absolute":threshold *= self.span(a)
+        filtered = adaptive_circular_highpass(a, kernel/10., threshold,
                                              gain=boost/10., background=background/100., regions=regions,
-                                             spatial_scale=spatial_scale)
+                                             spatial_scale=spatial_scale,threshold_mode=threshold_mode)
         return np.where(self.valid, (1-strength/100.)*a+strength/100.*filtered, 0).astype(np.float32)
 
     def starlet_blur(self, a, step, bilateral):
