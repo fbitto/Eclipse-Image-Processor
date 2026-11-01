@@ -106,10 +106,13 @@ def achf_isotropic(luminance, valid, geometry, *, sigmas=(1,2,4,8,16), outer_sig
     return detail,dict(**info,sigmas_px=list(sigmas),outer_sigma_px=outer_sigma)
 
 
-def display_detail(detail, valid, *, noise_floor=1e-5, scale_region=None):
+def display_detail(detail, valid, *, noise_floor=1e-5, scale_region=None, statistics=None):
     good=valid & np.isfinite(detail)
     if not good.any(): raise ValueError('filter produced no observed values')
     sel=good if scale_region is None or (good & scale_region).sum()<1000 else good & scale_region
+    if statistics is not None:
+        sel=good & np.asarray(statistics,bool)
+        if not sel.any():raise ValueError("No supported display statistics")
     median=float(np.median(detail[sel]))
     scale=max(float(1.4826*np.median(np.abs(detail[sel]-median))),noise_floor)
     return np.where(good,.5+.5*np.tanh(detail/(2.5*scale)),np.nan).astype(np.float32),dict(scale=scale,tanh=2.5)

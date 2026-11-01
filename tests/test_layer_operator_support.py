@@ -112,11 +112,12 @@ class DetailEncodingTests(unittest.TestCase):
     def test_statistics_exclusion_does_not_remove_radial_model_targets(self):
         case=OperatorLayerTests();case.setUp()
         support=np.ones(case.source.shape,bool);support[40:44,63:67]=False
-        for name in ('fnrgf','rhef'):
-            first=case.layer(name,statistics_mask=support)
+        for name,mode in [('nrgf',None),('fnrgf','continuous'),('fnrgf','legacy'),('rhef','continuous'),('rhef','legacy')]:
+            options={} if mode is None else {name+'_mode':mode}
+            first=case.layer(name,statistics_mask=support,**options)
             self.assertTrue(np.all(first['alpha'][40:44,63:67]>0))
             changed=case.source.copy();changed[40:44,63:67]*=10
-            second=LayerEngine().layer(case.worker,changed,dict(case.p,statistics_mask=support),name)
+            second=LayerEngine().layer(case.worker,changed,dict(case.p,statistics_mask=support,**options),name)
             np.testing.assert_array_equal(first['image'][support],second['image'][support])
             self.assertTrue(np.any(first['image'][~support]!=second['image'][~support]))
 

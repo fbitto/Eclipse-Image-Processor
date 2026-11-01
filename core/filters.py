@@ -197,7 +197,7 @@ def mgn_normalize(image, sigma=None, k=0.7, gamma=3.2, h=0.7,
 
 
 def rhef_normalize(image, radii, bin_edges, application_radius=0.0,
-                   upsilon=0.35, valid=None, vignette=None):
+                   upsilon=0.35, valid=None, vignette=None, target_valid=None):
     """Array RHEF following sunkit-image's scipy ranking and upsilon convention.
 
     Radii, bin edges and radial limits must share units. Ties get average ranks.
@@ -228,6 +228,13 @@ def rhef_normalize(image, radii, bin_edges, application_radius=0.0,
         mask &= np.asarray(valid, dtype=bool)
     bins = np.searchsorted(edges, r, side="right")-1
     mask &= (bins >= 0) & (bins < edges.size-1)
+    output_ids=output_cuts=None
+    if target_valid is not None:
+        if np.shape(target_valid) != a.shape:raise ValueError('RHEF target validity must match image')
+        target_mask=np.asarray(target_valid,bool) & np.isfinite(a) & np.isfinite(r) & (r>=application_radius) & (bins>=0) & (bins<len(edges)-1)
+        output_ids=np.flatnonzero(target_mask)
+        output_ids=output_ids[np.argsort(bins.ravel()[output_ids],kind='stable')]
+        output_cuts=np.r_[0,np.cumsum(np.bincount(bins.ravel()[output_ids],minlength=len(edges)-1))]
     indices = np.flatnonzero(mask)
     indices = indices[np.argsort(bins.ravel()[indices], kind="stable")]
     bin_ids = bins.ravel()[indices]
@@ -239,8 +246,16 @@ def rhef_normalize(image, radii, bin_edges, application_radius=0.0,
         if not target.size:
             continue
         ranks = rankdata(a.ravel()[target], method="average")/target.size
+        middle=ranks.mean()
+        if output_ids is not None:
+            b=bin_ids[start]
+            sample_values=a.ravel()[target]
+            order=np.argsort(sample_values,kind='stable')
+            unique,first=np.unique(sample_values[order],return_index=True)
+            target=output_ids[output_cuts[b]:output_cuts[b+1]]
+            ranks=np.interp(a.ravel()[target],unique,ranks[order][first],left=0.,right=1.)
         if upsilon is not None:
-            low = ranks < ranks.mean()
+            low = ranks < middle
             transformed = np.empty_like(ranks)
             transformed[low] = .5*(2*ranks[low])**exponents[0]
             transformed[~low] = 1-.5*(2-2*ranks[~low])**exponents[1]
@@ -257,7 +272,7 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
                     cutoff=0, application_radius=1.0, width_function="std",
                     mean_attenuation_range=(1.0, 0.0),
                     std_attenuation_range=(1.0, 0.0), min_pixels=1,
-                    width_floor_fraction=0.0):
+                    width_floor_fraction=0.0, sample_valid=None, target_valid=None):
     """Array FNRGF core following sunkit-image's Fourier coefficient convention.
 
     Includes its attenuation[1] convention for the constant terms. Complete
@@ -295,6 +310,16 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
     bins = np.searchsorted(edges, rf, side="right")-1
     valid = ((bins >= 0) & (bins < len(edges)-1) & (rf > application_radius)
              & np.isfinite(flat) & np.isfinite(tf))
+    target_ids=target_cuts=None
+    target_mask=valid.copy()
+    if sample_valid is not None:
+        if np.shape(sample_valid) != a.shape:raise ValueError('FNRGF statistics mask must match image')
+        valid &= np.asarray(sample_valid,bool).ravel()
+    if target_valid is not None:
+        if np.shape(target_valid) != a.shape:raise ValueError('FNRGF target validity must match image')
+        target_ids=np.flatnonzero(target_mask & np.asarray(target_valid,bool).ravel())
+        target_ids=target_ids[np.argsort(bins[target_ids],kind='stable')]
+        target_cuts=np.r_[0,np.cumsum(np.bincount(bins[target_ids],minlength=len(edges)-1))]
     pix = np.flatnonzero(valid)
     sector = np.minimum((tf[pix]*segments/(2*np.pi)).astype(int), segments-1)
     keys = bins[pix]*segments+sector
@@ -320,7 +345,8 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
             means[j] = values.mean()
             widths[j] = (values.std() if width_function == "std" else
                          1.4826*np.median(np.abs(values-np.median(values))))
-        target = pix[offsets[b*segments]:offsets[(b+1)*segments]]
+        target = (pix[offsets[b*segments]:offsets[(b+1)*segments]] if target_ids is None else
+                  target_ids[target_cuts[b]:target_cuts[b+1]])
         if not target.size:
             return
         if cutoff == order+1:
@@ -523,14 +549,14 @@ class FilterWorker(QObject):
                 mean_tail=mean_attenuation_range[1], width_tail=std_attenuation_range[1])
         else:
             filtered = fnrgf_normalize(
-                a if statistics_valid is None else np.where(statistics_valid,a,np.nan),
-                r, theta, edges, order=int(order_fourier),
+                a, r, theta, edges, order=int(order_fourier),
                 segments=int(angular_segments), cutoff=int(cutoff_val),
                 application_radius=app_r, width_function=width_function,
                 mean_attenuation_range=mean_attenuation_range,
                 std_attenuation_range=std_attenuation_range,
                 min_pixels=min_pixels_per_sector,
-                width_floor_fraction=width_floor,
+                width_floor_fraction=width_floor,sample_valid=statistics_valid,
+                target_valid=(np.isfinite(a) if valid is None else valid) if operator_output else None,
             )
         if operator_output:
             return filtered.astype(np.float32)
@@ -591,6 +617,7 @@ class FilterWorker(QObject):
             filtered = rhef_normalize(
                 a, r, edges, application_radius=float(app_radius_val)/10*sun_r,
                 upsilon=upsilon, valid=valid if statistics_valid is None else statistics_valid,
+                target_valid=(np.isfinite(a) if valid is None else valid) if operator_output else None,
                 vignette=None if vignette_rsun is None else float(vignette_rsun)*sun_r,
             )
         elif mode == "continuous":

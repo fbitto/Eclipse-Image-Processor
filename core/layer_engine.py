@@ -204,7 +204,7 @@ class LayerEngine:
         ael_wow=name == 'wow' and p.get('wow_mode') == 'ael_bilateral'
         if name == 'nrgf':
             from .nrgf import nrgf_layer
-            values, mapping = nrgf_layer(prepared, p, valid & statistics)
+            values, mapping = nrgf_layer(prepared, p, valid & statistics,targets=valid)
         elif ael_wow:
             from .ael_wow import ael_wow_layer
             values, mapping = ael_wow_layer(prepared, p, valid & statistics)
@@ -224,7 +224,7 @@ class LayerEngine:
         filter_seconds=time.perf_counter()-filter_start
         encoding_start=time.perf_counter()
         domain=branch_domain(source.shape,p,name) & valid
-        model_targets = (name == 'fnrgf' and p.get('fnrgf_mode') == 'continuous') or (name == 'rhef' and p.get('rhef_mode') == 'continuous')
+        model_targets = name in ('nrgf','fnrgf','rhef')
         if not model_targets:
             domain &= statistics
         if name in ('nrgf', 'fnrgf', 'rhef'):
