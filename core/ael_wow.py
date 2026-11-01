@@ -2,10 +2,19 @@
 
 Adapted from AEL filterbank.py, verified through 1.4.1 (17029c9) (MIT; docs/third-party/AEL-MIT.txt).
 Linear luminance, symmetric observed pairs; no reflected or invented samples.
+
+Threads: the 128-row blocks of every paired step and of the local-power
+convolution run on core.parallelism.map_in_threads, within the layer's CPU
+budget. Each block writes its own rows and each pixel goes through the same
+operations in the same order, so the result is bit-identical for any number of
+threads. The level Gaussians (cv2.GaussianBlur, one call on the whole frame)
+stay on one thread: OpenCV spreads one call over the cores itself.
 """
 import numpy as np
 from .ael_achf import display_detail
 from .cancellation import check_cancelled
+from .parallelism import map_in_threads
+from .progress import report
 
 _B3K = np.array([1, 4, 6, 4, 1], np.float32) / 16
 _TAPS = [(dy, dx) for dy in range(-2, 3) for dx in range(-2, 3)]
@@ -29,16 +38,31 @@ def _shifted(z, d, axis):
     return out
 
 
-def _b3_normalized(a, m, step):
+def _run_blocks(job, h, rows, workers=None):
+    """``job(y0, y1)`` on fixed blocks of ``rows`` rows, on up to ``workers`` threads (default: this filter's CPU
+    budget). Blocks write disjoint rows, so neither the order nor the number of threads changes a bit. A cancelled job
+    stops at the next block."""
+    def run(block):
+        check_cancelled()
+        job(*block)
+    map_in_threads(run, [(y0, min(h, y0 + rows)) for y0 in range(0, h, rows)], workers)
+
+
+def _b3_normalized(a, m, step, rows=128, workers=None):
     """Normalised B3 convolution at ``step`` over the observed pixels: the local power used to whiten a scale (a variance
-    needs no symmetric taps)."""
-    def conv(z):
-        tmp = np.zeros_like(z)
-        for kk, kv in zip(range(-2, 3), _B3K): tmp += kv * _shifted(z, kk * step, 0)
-        out = np.zeros_like(z)
-        for kk, kv in zip(range(-2, 3), _B3K): out += kv * _shifted(tmp, kk * step, 1)
-        return out
-    return conv(np.where(m, a, 0).astype(np.float32)) / np.maximum(conv(m.astype(np.float32)), 1e-20)
+    needs no symmetric taps). By row blocks; each pixel is summed in AEL's order (rows first, then columns)."""
+    z = np.where(m, a, 0).astype(np.float32); mf = m.astype(np.float32)
+    out = np.empty_like(z)
+    def job(y0, y1):
+        def conv(src):
+            tmp = np.zeros((y1 - y0, src.shape[1]), np.float32)
+            for kk, kv in zip(range(-2, 3), _B3K): tmp += kv * _rows_shifted(src, y0, y1, kk * step, 0, 0)
+            res = np.zeros_like(tmp)
+            for kk, kv in zip(range(-2, 3), _B3K): res += kv * _shifted(tmp, kk * step, 1)
+            return res
+        out[y0:y1] = conv(z) / np.maximum(conv(mf), 1e-20)
+    _run_blocks(job, z.shape[0], rows, workers)
+    return out
 
 
 def _weighted_gaussian(x, w, sigma):
@@ -49,15 +73,15 @@ def _weighted_gaussian(x, w, sigma):
     return num / np.maximum(den, 1e-6)
 
 
-def _paired_b3_step(c, m, step, bilateral=False, guide=None, rows=128):
+def _paired_b3_step(c, m, step, bilateral=False, guide=None, rows=128, workers=None):
     """One à-trous B3 step over symmetric observed pairs: a tap counts only if its mirror tap is observed too, so the
     local mean never leans to one side of an edge of the data. With ``bilateral``, each tap is also weighted by
     exp(-(v - c)² / 2σ²), σ² the local variance of the tap differences; with ``guide``, those range weights come from the
-    guide and the mean from ``c``. Returns (smoothed, observed share of the kernel, 1 where some pair is observed)."""
-    h, w = c.shape; out = np.zeros_like(c); compl = np.zeros_like(c); pair = np.zeros_like(c)
-    for y0 in range(0, h, rows):
-        check_cancelled()
-        y1 = min(h, y0 + rows); ctr = c[y0:y1]; mc = m[y0:y1]; ctg = ctr if guide is None else guide[y0:y1]
+    guide and the mean from ``c``. Returns (smoothed, observed share of the kernel, 1 where some pair is observed).
+    The blocks of ``rows`` rows run on threads (_run_blocks); each block is AEL's loop body, unchanged."""
+    out = np.zeros_like(c); compl = np.zeros_like(c); pair = np.zeros_like(c)
+    def block(y0, y1):
+        ctr = c[y0:y1]; mc = m[y0:y1]; ctg = ctr if guide is None else guide[y0:y1]
         V, VG, VAL = {}, {}, {}
         for dy, dx in _TAPS:
             V[dy, dx] = _rows_shifted(c, y0, y1, dy * step, dx * step, 0)
@@ -84,6 +108,7 @@ def _paired_b3_step(c, m, step, bilateral=False, guide=None, rows=128):
                 wt = k * g
             num += wt * (v - ctr); den += wt; ks += k * g
         out[y0:y1] = ctr + num / np.maximum(den, 1e-20); compl[y0:y1] = ks; pair[y0:y1] = kn > 0
+    _run_blocks(block, c.shape[0], rows, workers)
     return out, compl, pair
 
 
@@ -105,13 +130,17 @@ def wow_edge_aware(img, valid, *, n_scales=8, guided=True, completeness=(.6, .99
     ran in 2026."""
     a = np.asarray(img, np.float32); m = valid & np.isfinite(a)
     c = np.where(m, a, 0).astype(np.float32); out = np.zeros_like(c); lo, hi = completeness
+    total = 3 * n_scales
     for s in range(n_scales):
         check_cancelled()
         step = 2 ** s
+        report(3 * s, total, f'WOW scale {s + 1}/{n_scales}: guide')
         guide = np.where(m, _paired_b3_step(c, m, step)[0], 0).astype(np.float32) if guided else None
+        report(3 * s + 1, total, f'WOW scale {s + 1}/{n_scales}: range weights')
         nxt, compl, pair = _paired_b3_step(c, m, step, True, guide); nxt = np.where(m, nxt, 0).astype(np.float32)
         wave = np.where(m, c - nxt, 0).astype(np.float32)
         wave[np.abs(wave) <= 8 * np.finfo(np.float32).eps * np.maximum(np.abs(c), np.abs(nxt))] = 0
+        report(3 * s + 2, total, f'WOW scale {s + 1}/{n_scales}: whitening')
         g = np.where(m & (compl > 0), wave / np.sqrt(np.maximum(_b3_normalized(wave * wave, m, step), 1e-20)), 0).astype(np.float32)
         if s >= 3:
             q = np.clip((compl - lo) / (hi - lo), 0, 1); w = (q * q * (3 - 2 * q) * m).astype(np.float32)
@@ -121,6 +150,7 @@ def wow_edge_aware(img, valid, *, n_scales=8, guided=True, completeness=(.6, .99
         g = g - (float(np.mean(g[whole], dtype=np.float64)) if whole.any() else 0.)
         g = g - pair * _weighted_gaussian(g, w * pair, min(150., max(32., 4. * step)))
         out += w * g; c = nxt
+    report(total, total, 'WOW done')
     return np.where(m, out, np.nan).astype(np.float32)
 
 
