@@ -13,6 +13,73 @@ from core.layer_export import export_layer_package, linear_light, linear_detail_
 
 
 class LarsonSekaninaTests(unittest.TestCase):
+    def test_nearby_delta_averages_three_angles_and_preserves_limits(self):
+        y,x=np.indices((161,161));r=np.hypot(x-80.3,y-79.8)
+        a=np.random.default_rng(28).normal(size=r.shape)
+        before=a.copy();use=(r>30)&(r<65)
+        classic=larson_sekanina_residual(a,80.3,79.8,8,0,3)
+        np.testing.assert_array_equal(classic,larson_sekanina_residual(a,80.3,79.8,8,0,3,nearby_delta=0))
+        averaged=larson_sekanina_residual(a,80.3,79.8,8,0,3,nearby_delta=.5)
+        expected=sum(larson_sekanina_residual(a,80.3,79.8,8,0,d) for d in (2.5,3,3.5))/3
+        np.testing.assert_allclose(averaged[use],expected[use],atol=1e-14)
+        theta=np.arctan2(y-79.8,x-80.3)
+        harmonic=np.cos(6*theta)
+        response=larson_sekanina_residual(harmonic,80.3,79.8,8,nearby_delta=.5)
+        amplitude=np.mean(2*(1-np.cos(6*np.deg2rad([2.5,3,3.5]))))
+        np.testing.assert_allclose(response[use],amplitude*harmonic[use],atol=.012)
+        for angle in (0.,180.):
+            np.testing.assert_array_equal(larson_sekanina_residual(a,80.3,79.8,8,0,angle,nearby_delta=.5),
+                larson_sekanina_residual(a,80.3,79.8,8,0,angle))
+        for angle in (.1,179.9):
+            delta=min(angle,180-angle)
+            expected=sum(larson_sekanina_residual(a,80.3,79.8,8,0,d) for d in (angle-delta,angle,angle+delta))/3
+            np.testing.assert_allclose(larson_sekanina_residual(a,80.3,79.8,8,0,angle,nearby_delta=.5)[use],expected[use],atol=1e-14)
+        np.testing.assert_array_equal(a,before)
+
+    def test_nearby_delta_preserves_masks_and_requires_every_sampling_footprint(self):
+        from scipy.ndimage import map_coordinates
+        y,x=np.indices((65,65));r=np.hypot(x-32,y-32)
+        valid=np.ones(r.shape,bool);valid[10:20,35:40]=False
+        support=valid&(r>8)
+        complete=support.copy()
+        for angle in (2.5,3.,3.5):
+            sine,cosine=np.sin(np.deg2rad(angle)),np.cos(np.deg2rad(angle))
+            for sign in (-1,1):
+                coordinates=[32+cosine*(y-32)+sign*sine*(x-32),32+cosine*(x-32)-sign*sine*(y-32)]
+                complete &= map_coordinates(support.astype(float),coordinates,order=1,mode='constant',cval=0,prefilter=False)>=1-1e-12
+        a=np.random.default_rng(3).normal(size=r.shape)
+        actual=larson_sekanina_residual(a,32,32,8,valid=valid,nearby_delta=.5)
+        self.assertFalse(actual[~complete].any())
+        poisoned=np.where(support,a,1e20)
+        np.testing.assert_array_equal(actual,larson_sekanina_residual(poisoned,32,32,8,valid=valid,nearby_delta=.5))
+        np.testing.assert_allclose(np.rot90(actual),
+            larson_sekanina_residual(np.rot90(a),32,32,8,valid=np.rot90(valid),nearby_delta=.5),atol=1e-12)
+
+    def test_nearby_delta_reaches_worker_cache_and_export(self):
+        from unittest.mock import patch
+        from core.layer_engine import LayerEngine
+        a=np.random.default_rng(18).uniform(1,2,(48,64)).astype(np.float32)
+        p=dict(sx=32.,sy=24.,sr=5.,larson_sekanina_enabled=True,larson_sekanina_str=100,
+            larson_sekanina_opacity=75,larson_sekanina_nearby_delta=.5)
+        detail=larson_sekanina_residual(a,32,24,5,nearby_delta=.5)
+        np.testing.assert_allclose(apply_filter(FilterWorker(),a,p,verbose=False),a+detail,atol=1e-7)
+        engine=LayerEngine();worker=FilterWorker()
+        with patch('core.filters.larson_sekanina_residual',wraps=larson_sekanina_residual) as operator:
+            classic=engine.layer(worker,a,dict(p,larson_sekanina_nearby_delta=0.),'larson_sekanina')
+            averaged=engine.layer(worker,a,p,'larson_sekanina')
+            engine.layer(worker,a,p,'larson_sekanina')
+        self.assertEqual(operator.call_count,2)
+        self.assertTrue(np.any(classic['image']!=averaged['image']))
+        self.assertEqual(operator.call_args.kwargs['nearby_delta'],.5)
+        with tempfile.TemporaryDirectory() as tmp:
+            out=Path(tmp)/'layers'
+            export_layer_package(worker,a,p,{},'test.tif',out)
+            recipe=json.loads((out/'recipe.json').read_text())
+            self.assertEqual(recipe['parameters']['larson_sekanina_nearby_delta'],.5)
+            row=next(row for row in recipe['layers'] if row.get('filter')=='larson_sekanina')
+            exported=tifffile.imread(out/row['file'])
+            np.testing.assert_array_equal(exported[...,0],averaged['image'])
+
     def test_classic_formula_at_exact_quarter_turns(self):
         a = np.arange(81, dtype=float).reshape(9, 9)**2
         original = a.copy()
@@ -83,7 +150,7 @@ class LarsonSekaninaTests(unittest.TestCase):
         self.assertEqual(scaled['larson_sekanina_radial'], 3.)
         self.assertEqual(scaled['larson_sekanina_angular'], 7.)
         a = np.ones((16, 16))
-        for extra in (dict(radial_increment=-1), dict(angular_increment=181), dict(cx=np.nan), dict(radius=0), dict(valid=np.ones((2, 2)))):
+        for extra in (dict(radial_increment=-1), dict(angular_increment=181), dict(cx=np.nan), dict(radius=0), dict(valid=np.ones((2, 2))),dict(nearby_delta=-1),dict(nearby_delta=np.nan),dict(nearby_delta=np.inf)):
             args = dict(cx=8, cy=8, radius=2, **{})
             args.update(extra)
             with self.assertRaises(ValueError):

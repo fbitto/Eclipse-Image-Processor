@@ -24,7 +24,7 @@ def sample_grid(shape, geometry, radius, count):
 
 
 def equalize_background(base, geometry, radius, grid, points=None, enabled=True, degree=1):
-    """Fit patch medians per channel, subtract spatial variation, and preserve missing/zero pixels.
+    """Fit finite patch medians per channel and subtract variation, including at measured zeros.
 
     Coordinates are native pixel centres normalized to [-1,1]. One shared robust
     weight per RGB sample protects channel consistency. Reference is the weighted
@@ -47,7 +47,6 @@ def equalize_background(base, geometry, radius, grid, points=None, enabled=True,
         if not sample_allowed((x,y),(h,w),geometry,radius):continue
         patch=a[y-half:y+half+1,x-half:x+half+1]
         valid=np.isfinite(patch).all(axis=-1) if patch.ndim==3 else np.isfinite(patch)
-        valid &= np.any(patch!=0,axis=-1) if patch.ndim==3 else patch!=0
         if valid.sum()<.9*valid.size:continue
         samples.append(np.atleast_1d(np.median(patch[valid],axis=0)))
         accepted.append((x,y))
@@ -93,7 +92,6 @@ def equalize_background(base, geometry, radius, grid, points=None, enabled=True,
         block=a[first:last]
         if a.ndim==2:slope=slope[...,0]
         valid=np.isfinite(block).all(axis=-1) if a.ndim==3 else np.isfinite(block)
-        valid &= np.any(block!=0,axis=-1) if a.ndim==3 else block!=0
         corrected[first:last]=block
         np.subtract(block,slope,out=corrected[first:last],where=valid[...,None] if a.ndim==3 else valid,casting='unsafe')
     rgb=corrected if a.ndim==3 else None

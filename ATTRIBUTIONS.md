@@ -8,6 +8,7 @@ Eclipse Image Processor 0.6.0 is developed by Francisco Bitto. Third-party imple
 - **Project:** [Agentic Eclipse Library](https://github.com/PeterWar/Agentic-Eclipse-Library).
 - **Source version used for the bundled filter ports, tone curve and PSB writer:** AEL 1.3.3, confirmed from the installed runtime metadata (`pyproject.toml`). This identifies the source used, not a claim about the latest upstream release.
 - **Updated WOW operator and ACHF display:** AEL 1.3.5, commit `9a391b6ab5ec325efb98ea8d9e18d14ff54de9b6` (2026-10-28); other ports retain their stated source versions.
+- **Updated NRGF partial-annulus statistics:** AEL 1.4.1 `radial.py`, commit `17029c9284748c087adcd0d40241f7e3faf8d778` (2026-10-31), including shared-angle chaining and its cut-corona regression control.
 - **Copyright:** Copyright (c) 2026 Pere Guerra Serra.
 - **License:** MIT. The original full copyright, permission and disclaimer text is retained in [docs/third-party/AEL-MIT.txt](docs/third-party/AEL-MIT.txt).
 
@@ -33,7 +34,7 @@ The AEL-derived ACHF code is included in the application. The upstream Python pa
 
 ### Additional bundled AEL adaptations
 
-- [core/nrgf.py](core/nrgf.py) adapts AEL 1.3.3 `radial.py` continuous annular statistics/interpolation and uses AEL-derived MAD/tanh display encoding.
+- [core/nrgf.py](core/nrgf.py) adapts AEL `radial.py` continuous annular statistics/interpolation through 1.4.1, including shared-angle chaining for partial annuli, and uses AEL-derived MAD/tanh display encoding. The numerical API retains the historical observed-annulus default; application layers select chaining.
 - [core/ael_wow.py](core/ael_wow.py) adapts AEL 1.3.3 `filters.py` / `filterbank.py`: radial log-luminance residuals, observed symmetric starlet pairs, noise regularization and detail encoding.
 - [core/presentation.py](core/presentation.py) follows AEL 1.3.3 `ael.develop.tone_map` for Asinh strength 10 and its shared 0.9 highlight shoulder. Automatic P99.5 scale selection, EV controls and the mono-base/Color composition are local application choices.
 

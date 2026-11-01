@@ -63,19 +63,50 @@ class BackgroundTests(unittest.TestCase):
         for degree in (0,3,True):
             with self.assertRaises(ValueError):equalize_background(base,(160,120,15),5,16,degree=degree)
 
-    def test_zero_and_missing_pixels_preserved_and_bright_patches_rejected(self):
-        base,slopes,_=scene(True)
-        base['rgb'][100:140,140:180]=0
-        base['rgb'][:8,:8]=np.nan
-        base['rgb'][20,300]=-1
-        points=sample_grid(base['full'].shape,(160,120,15),5,16)
-        for x,y in points[:5]:base['rgb'][y-2:y+3,x-2:x+3]+=2
-        result=equalize_background(base,(160,120,15),5,16)
-        np.testing.assert_array_equal(result['rgb'][100:140,140:180],0)
-        self.assertTrue(np.isnan(result['rgb'][:8,:8]).all())
-        self.assertTrue((result['rgb'][20,300]<0).all())
-        np.testing.assert_allclose(np.asarray(result['report']['coefficients'])[1:],slopes,atol=1e-4)
-        self.assertLess(result['report']['inliers'],result['report']['samples'])
+    def test_measured_zeros_corrected_missing_preserved_and_bright_patches_rejected(self):
+        for rgb in (False,True):
+            with self.subTest(rgb=rgb):
+                base,slopes,_=scene(rgb)
+                source=base['rgb'] if rgb else base['full']
+                source[100:140,140:180]=0
+                source[:8,:8]=np.nan
+                source[20,300]=-1
+                points=sample_grid(base['full'].shape,(160,120,15),5,16)
+                for x,y in points[:5]:source[y-2:y+3,x-2:x+3]+=2
+                before=source.copy()
+                result=equalize_background(base,(160,120,15),5,16)
+                corrected=result['rgb'] if rgb else result['full']
+                y,x=np.mgrid[100:140,140:180]
+                u=(x+.5)/source.shape[1]*2-1
+                v=(y+.5)/source.shape[0]*2-1
+                reference=np.asarray(result['report']['reference'])
+                coefficients=np.asarray(result['report']['coefficients'])
+                expected=-(u-reference[0])[...,None]*coefficients[1]-(v-reference[1])[...,None]*coefficients[2]
+                np.testing.assert_allclose(corrected[100:140,140:180],expected if rgb else expected[...,0],atol=1e-7)
+                self.assertGreater(np.max(np.abs(corrected[100:140,140:180])),.001)
+                self.assertTrue(np.isnan(corrected[:8,:8]).all())
+                self.assertTrue((corrected[20,300]<0).all())
+                np.testing.assert_array_equal(np.isfinite(corrected),np.isfinite(source))
+                np.testing.assert_array_equal(source,before)
+                np.testing.assert_allclose(coefficients[1:],slopes,atol=1e-4)
+                self.assertLess(result['report']['inliers'],result['report']['samples'])
+
+    def test_zero_sky_samples_are_observed_and_alpha_masked_zeros_are_missing(self):
+        from core.linear_export import split_source_channels
+        for rgb in (False,True):
+            with self.subTest(rgb=rgb):
+                image=np.zeros((240,320,4 if rgb else 2),np.float32)
+                image[...,-1]=1
+                image[:8,:8,-1]=0
+                mono,color=split_source_channels(image)
+                base=dict(full=mono,rgb=color,preview=resize_observed(mono,(80,60)))
+                points=sample_grid(mono.shape,(160,120,15),5,16)
+                result=equalize_background(base,(160,120,15),5,16,points)
+                self.assertEqual(result['points'],points[1:])
+                self.assertEqual(points[0],(2,2))
+                np.testing.assert_array_equal(result['full'],mono)
+                self.assertTrue(np.isnan(result['full'][:8,:8]).all())
+                np.testing.assert_allclose(result['report']['coefficients'],0,atol=1e-12)
 
     def test_quadratic_rejects_rank_deficient_samples(self):
         base,_,_=scene()

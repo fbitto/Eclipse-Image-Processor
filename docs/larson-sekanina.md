@@ -11,6 +11,10 @@ D(r, theta) = 2 I(r, theta)
 
 The application uses `dr = 0`: symmetric angular differences around the reference centre. The numerical helper still accepts an inward radial offset for developer experiments. Angles do not scale with resolution. Bilinear sampling operates directly on Cartesian input in cancellable row tiles.
 
+**Nearby angle delta** ranges from 0 to 1 degree and defaults to 0 (classic mode). A positive delta averages three residuals at `da-delta`, `da` and `da+delta`; for example, 3° with delta 0.5° averages 2.5°, 3° and 3.5°. This reduces spatial variation in interpolated noise but also changes the response to real detail and requires roughly three times the sampling. The common delta shrinks near 0° and 180° so the three angles remain symmetric and within range; at either endpoint it becomes zero. Zero angular and radial increments still bypass the operator.
+
+Every interpolation footprint at all three angles must be observed; otherwise that target receives zero residual. The delta is stored in settings and layer recipes as `larson_sekanina_nearby_delta`, participates in numerical cache invalidation, and stays in degrees in fast preview and native export. Existing settings that omit it restore classic mode.
+
 Only targets outside the reference lunar disk with both interpolation footprints fully observed and outside the disk receive detail. Statistical exclusions also restrict sampling when enabled. Unsupported targets retain their numerical input; missing data remain missing. Both increments zero give zero residual. The direct numerical helper returns `I + strength/100 * D` without clipping or normalization; this helper return is not the GUI composition contract.
 
 ## Layer encoding

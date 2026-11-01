@@ -205,7 +205,8 @@ class LayerEngine:
         elif name == 'larson_sekanina':
             from .filters import larson_sekanina_residual
             values=larson_sekanina_residual(prepared,p['sx'],p['sy'],p['sr'],
-                p.get('larson_sekanina_radial',0.),p.get('larson_sekanina_angular',3.),valid & statistics)
+                p.get('larson_sekanina_radial',0.),p.get('larson_sekanina_angular',3.),valid & statistics,
+                nearby_delta=p.get('larson_sekanina_nearby_delta',0.))
         else:
             filtered=apply_filter(worker,prepared,p,process_label='INDEPENDENT '+name.upper(),verbose=False)
             values=(filtered-prepared if name == 'tangential' else

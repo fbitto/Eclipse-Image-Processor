@@ -78,18 +78,20 @@ def ordered_scale_results(function, items, image):
 
 
 def larson_sekanina_residual(image, cx, cy, radius, radial_increment=0.,
-                             angular_increment=3., valid=None):
+                             angular_increment=3., valid=None, nearby_delta=0.):
     """Classic 2I-I(r-dr, theta-da)-I(r-dr, theta+da), in input units.
 
     2D samples use bilinear interpolation, dr in image pixels, da in degrees.
     Only fully observed interpolation footprints outside the lunar disk count.
+    nearby_delta > 0 averages da and da±nearby_delta (degrees); spacing is
+    reduced at the 0/180 limits. Zero selects the classic operator.
     Unsupported targets have zero residual; no clipping or normalization.
     """
     from scipy.ndimage import map_coordinates
     a = np.asarray(image, dtype=float)
     if a.ndim != 2 or not a.size:
         raise ValueError('Larson-Sekanina needs a nonempty 2D image')
-    if not np.isfinite([cx, cy, radius, radial_increment, angular_increment]).all() or radius <= 0 or radial_increment < 0 or not 0 <= angular_increment <= 180:
+    if not np.isfinite([cx, cy, radius, radial_increment, angular_increment, nearby_delta]).all() or radius <= 0 or radial_increment < 0 or nearby_delta < 0 or not 0 <= angular_increment <= 180:
         raise ValueError('Invalid Larson-Sekanina geometry or increments')
     if valid is None:
         finite_image(a)
@@ -107,8 +109,8 @@ def larson_sekanina_residual(image, cx, cy, radius, radial_increment=0.,
     support = observed & (np.hypot(x-cx, y-cy) > radius)
     signal = np.where(support, a, 0)
     weights = support.astype(float)
-    delta = np.deg2rad(angular_increment)
-    sine, cosine = np.sin(delta), np.cos(delta)
+    half_width = min(nearby_delta, angular_increment, 180-angular_increment)
+    angles = (angular_increment-half_width, angular_increment, angular_increment+half_width) if half_width else (angular_increment,)
     for first in range(0, a.shape[0], 128):
         check_cancelled()
         stop = min(first+128, a.shape[0])
@@ -119,12 +121,15 @@ def larson_sekanina_residual(image, cx, cy, radius, radial_increment=0.,
         usable = support[first:stop].copy() & (shifted_r > radius)
         detail = 2*np.where(usable, a[first:stop], 0)
         factor = np.divide(shifted_r, r, out=np.zeros_like(r), where=r > 0)
-        for sign in (-1, 1):
-            coordinates = [cy+factor*(cosine*dy+sign*sine*dx),
-                           cx+factor*(cosine*dx-sign*sine*dy)]
-            weight = map_coordinates(weights, coordinates, order=1, mode='constant', cval=0, prefilter=False)
-            usable &= weight >= 1-1e-12
-            detail -= map_coordinates(signal, coordinates, order=1, mode='constant', cval=0, prefilter=False)
+        for angle in angles:
+            check_cancelled()
+            sine, cosine = np.sin(np.deg2rad(angle)), np.cos(np.deg2rad(angle))
+            for sign in (-1, 1):
+                coordinates = [cy+factor*(cosine*dy+sign*sine*dx),
+                               cx+factor*(cosine*dx-sign*sine*dy)]
+                weight = map_coordinates(weights, coordinates, order=1, mode='constant', cval=0, prefilter=False)
+                usable &= weight >= 1-1e-12
+                detail -= map_coordinates(signal, coordinates, order=1, mode='constant', cval=0, prefilter=False)/len(angles)
         result[first:stop] = np.where(usable, detail, 0)
     return result
 
@@ -254,8 +259,9 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
                     width_floor_fraction=0.0):
     """Array FNRGF core following sunkit-image's Fourier coefficient convention.
 
-    Includes its attenuation[1] convention for the constant terms. Empty
-    sectors contribute zero, as in the reference. Nonfinite samples are ignored;
+    Includes its attenuation[1] convention for the constant terms. Complete
+    annuli retain reference coefficients; partial annuli fit observed sectors
+    only, reducing the order to the available support. Nonfinite samples are ignored;
     nonpositive reconstructed widths use 1 (reference only guards exact zero).
     MAD changes width only, never the mean. Unprocessed pixels are NaN.
     No display scaling, smoothing, original-image mix or limb mask is applied.
@@ -302,25 +308,40 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
     def process_bin(b):
         check_bin_cancelled()
         means, widths = np.zeros(segments), np.zeros(segments)
+        populated = np.zeros(segments, dtype=bool)
         for j in range(segments):
             check_bin_cancelled()
             key = b*segments+j
             values = flat[pix[offsets[key]:offsets[key+1]]]
             if values.size < min_pixels:
                 continue
+            populated[j] = True
             means[j] = values.mean()
             widths[j] = (values.std() if width_function == "std" else
                          1.4826*np.median(np.abs(values-np.median(values))))
         target = pix[offsets[b*segments]:offsets[(b+1)*segments]]
         if not target.size:
             return
+        if cutoff == order+1:
+            out[target] = flat[target]
+            return
         ct = np.cos(np.outer(tf[target], harmonics))
         st = np.sin(np.outer(tf[target], harmonics))
         profiles = []
         for values, atten in zip((means, widths), attenuation):
-            profiles.append(values.mean()*atten[1] +
-                            ct @ ((2/segments)*(values @ cos)*atten[1:]) +
-                            st @ ((2/segments)*(values @ sin)*atten[1:]))
+            if populated.all():
+                profiles.append(values.mean()*atten[1] +
+                                ct @ ((2/segments)*(values @ cos)*atten[1:]) +
+                                st @ ((2/segments)*(values @ sin)*atten[1:]))
+            else:
+                degree = min(order, (np.count_nonzero(populated)-1)//2)
+                if degree < 1:
+                    return
+                design = np.column_stack([np.ones(segments), cos[:, :degree], sin[:, :degree]])
+                coefficients = np.linalg.lstsq(design[populated], values[populated], rcond=None)[0]
+                profiles.append(coefficients[0]*atten[1] +
+                                ct[:, :degree] @ (coefficients[1:degree+1]*atten[1:degree+1]) +
+                                st[:, :degree] @ (coefficients[degree+1:]*atten[1:degree+1]))
         mean, width = profiles
         if width_floor_fraction and cutoff < order + 1:
             positive_widths = widths[widths > 0]
@@ -665,13 +686,13 @@ class FilterWorker(QObject):
         return result.astype(np.float32)
 
     def run_larson_sekanina(self, img, strength, sun_x, sun_y, sun_r,
-                            radial_increment=0., angular_increment=3., valid=None):
+                            radial_increment=0., angular_increment=3., valid=None, nearby_delta=0.):
         if strength == 0:
             return img.copy()
         if not np.isfinite(strength) or not 0 <= strength <= 200:
             raise ValueError('Larson-Sekanina gain must lie in [0, 200]')
         detail = larson_sekanina_residual(img, sun_x, sun_y, sun_r,
-                                         radial_increment, angular_increment, valid)
+                                         radial_increment, angular_increment, valid, nearby_delta)
         return (np.asarray(img, dtype=float)+float(strength)/100*detail).astype(np.float32)
 
     def run_achf(

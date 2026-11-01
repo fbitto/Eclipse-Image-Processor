@@ -33,6 +33,35 @@ class NRGFTests(unittest.TestCase):
         self.p=dict(sx=47.3,sy=39.7,sr=8.,nrgf_enabled=True,nrgf_str=100,
                     nrgf_opacity=39,nrgf_bin_px=2.,nrgf_min_count=12)
 
+    def test_upstream_chain_oracle_reduces_cut_corona_rings_and_keeps_whole_annuli(self):
+        # AEL 1.4.1 test_review's cut-corona control, Pere Guerra Serra (MIT).
+        y,x=np.mgrid[:900,:1400]
+        rp=np.hypot(x-820.,y-330.);r=rp/150.;theta=np.arctan2(y-330.,x-820.)
+        image=np.where(r>.5,r,1)**-3*(1+.6*np.cos(2*theta)+.3*np.cos(theta+.4))*1e4
+        image=(image+np.random.default_rng(1).normal(0,1,r.shape)*np.sqrt(image)*.05).astype(np.float32)
+        valid=r>1.03
+        plain=nrgf_normalize(image,820.,330.,150.,valid)
+        chain=nrgf_normalize(image,820.,330.,150.,valid,partial_annuli='chain')
+        with np.load(Path(__file__).parent/'fixtures/ael_nrgf_chain_141.npz') as oracle:
+            coordinates=tuple(oracle['coordinates'].T)
+            np.testing.assert_allclose(chain[coordinates],oracle['expected'],rtol=1e-6,atol=1e-6)
+        for deg in (180,135,90):
+            near=np.abs(((np.degrees(theta)-deg+180)%360)-180)<4
+            def spread(q):
+                profile=np.array([np.nanmedian(q[near&(r>=lo)&(r<lo+.1)]) for lo in np.arange(1.2,3.6,.1)])
+                return np.std(profile[np.isfinite(profile)])
+            self.assertLess(spread(chain),.5*spread(plain))
+            self.assertLess(spread(chain),.06)
+        for support in ((rp>=156)&(rp<322),(rp>=155)&(rp<321.3)):
+            np.testing.assert_array_equal(nrgf_normalize(image,820.,330.,150.,support),
+                nrgf_normalize(image,820.,330.,150.,support,partial_annuli='chain'))
+
+    def test_gui_layer_selects_shared_angle_chain_and_records_it(self):
+        with patch('core.nrgf.nrgf_normalize',wraps=nrgf_normalize) as operator:
+            _,info=nrgf_layer(self.image,self.p)
+        self.assertEqual(operator.call_args.kwargs['partial_annuli'],'chain')
+        self.assertEqual(info['partial_annuli'],'chain')
+
     def test_matches_bundled_ael_133_oracles(self):
         y,x=np.indices(self.image.shape,dtype=float)
         valid=np.hypot(x-47.3,y-39.7)>8
@@ -86,7 +115,7 @@ class NRGFTests(unittest.TestCase):
 
     def test_invalid_parameters_and_strength_zero(self):
         for kw in (dict(bin_px=0),dict(bin_px=np.nan),dict(min_count=1),dict(min_count=2.5),
-                   dict(smooth_bins=-1),dict(valid=np.ones((2,2),bool))):
+                   dict(smooth_bins=-1),dict(valid=np.ones((2,2),bool)),dict(partial_annuli='invalid')):
             with self.subTest(parameters=kw),self.assertRaises(ValueError):
                 nrgf_normalize(self.image,47.3,39.7,8.,**kw)
         worker=FilterWorker()

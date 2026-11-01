@@ -21,6 +21,33 @@ class ProjectSettingsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
 
+    def test_larson_nearby_delta_round_trip_and_older_recipes_default_off(self):
+        from copy import deepcopy
+        from gui.filter_controls import collect_controls
+        from core.pipeline import prepare_parameters
+        w=EclipseProcessorApp();w.auto_calculate=False
+        try:
+            w.txt_x.setText('24');w.txt_y.setText('16');w.txt_r.setText('5')
+            slider=w.sl_larson_sekanina_nearby_delta
+            self.assertEqual(slider.value(),0)
+            self.assertFalse(slider.parameter_row.isHidden())
+            with patch.object(w,'dispatch_pipeline_request_if_auto') as dispatch:
+                slider.setValue(50)
+                slider.sliderReleased.emit()
+                dispatch.assert_called_once()
+            parameters=collect_controls(w)
+            self.assertEqual(parameters['larson_sekanina_nearby_delta'],.5)
+            parameters.update(sx=24.,sy=16.,sr=5.)
+            self.assertEqual(prepare_parameters(parameters,(64,96),(32,48),(64,96))['larson_sekanina_nearby_delta'],.5)
+            saved=capture_settings(w)
+            slider.setValue(0)
+            restore_settings(w,saved)
+            self.assertEqual(capture_settings(w),saved)
+            older=deepcopy(saved);older['controls'].pop('sl_larson_sekanina_nearby_delta')
+            restore_settings(w,older)
+            self.assertEqual(slider.value(),0)
+        finally:close_window(w)
+
     def test_save_settings_only_writes_reloadable_json_without_processing(self):
         w=EclipseProcessorApp()
         try:

@@ -4,6 +4,24 @@ from core.filters import fnrgf_normalize, FilterWorker
 
 
 class FNRGFTests(unittest.TestCase):
+    def test_partial_annuli_fit_observed_sectors_without_zero_padding(self):
+        phi=(np.arange(64)+.5)*2*np.pi/64
+        mean=10+2*np.cos(phi)+.5*np.sin(2*phi)
+        width=2+.2*np.cos(phi)
+        image=np.stack([mean-width,mean+width])
+        angles=np.broadcast_to(phi,image.shape);radii=np.full(image.shape,1.5)
+        kw=dict(order=6,segments=64,mean_attenuation_range=(1,1),std_attenuation_range=(1,1))
+        full=fnrgf_normalize(image,radii,angles,[1,2],**kw)
+        for count in (32,8):
+            valid=np.broadcast_to(np.arange(64)<count,image.shape)
+            for scale in (1e-25,1.,1e25):
+                with self.subTest(sectors=count,scale=scale):
+                    partial=fnrgf_normalize(np.where(valid,image*scale,np.nan),radii,angles,[1,2],**kw)
+                    np.testing.assert_allclose(partial[valid],full[valid],atol=1e-9)
+                    self.assertTrue(np.isnan(partial[~valid]).all())
+        sparse=np.where(np.broadcast_to(np.arange(64)<2,image.shape),image,np.nan)
+        self.assertTrue(np.isnan(fnrgf_normalize(sparse,radii,angles,[1,2],**kw)).all())
+
     def test_width_floor_bounds_high_order_amplification_in_input_units(self):
         n = 64
         phi = (np.arange(n) + .5) * 2 * np.pi / n
@@ -50,6 +68,9 @@ class FNRGFTests(unittest.TestCase):
         theta = np.broadcast_to((np.arange(16)+.5)*2*np.pi/16, a.shape)
         out = fnrgf_normalize(a, np.full(a.shape,1.5), theta, [1,2], order=3, segments=16, cutoff=4)
         np.testing.assert_allclose(out, a)
+        partial=np.where(np.broadcast_to(np.arange(16)<2,a.shape),a,np.nan)
+        out=fnrgf_normalize(partial,np.full(a.shape,1.5),theta,[1,2],order=3,segments=16,cutoff=4)
+        np.testing.assert_array_equal(out,partial)
 
     def test_domain_and_local_limb_protection(self):
         yy,xx = np.indices((101,101))

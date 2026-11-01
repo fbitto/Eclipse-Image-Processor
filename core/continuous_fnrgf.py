@@ -52,28 +52,31 @@ def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
     cuts = np.r_[0, np.cumsum(counts)]
     phi = (np.arange(segments)+.5)*2*np.pi/segments
     design = np.column_stack([np.ones(segments)] + [f(k*phi) for k in range(1, order+1) for f in (np.cos, np.sin)])
-    penalty = np.r_[0., np.repeat(np.arange(1, order+1, dtype=float)**2, 2)]
+    # Preserve smooth sky trends; regularize only harmonics above k=2.
+    harmonics = np.arange(1, order+1, dtype=float)
+    penalty = np.r_[0., np.repeat(np.where(harmonics > 2, harmonics**2, 0.), 2)]
     models = np.full((2, len(edges)-1, design.shape[1]), np.nan)
     floors = np.full(len(edges)-1, np.nan)
     centers = (edges[:-1]+edges[1:])/2
 
     def fit(values, populations):
         good = populations > 0
-        X, y = design[good], values[good]
+        columns = 2*min(order, (np.count_nonzero(good)-1)//2)+1
+        X, y = design[good, :columns], values[good]
         base = populations[good]/populations[good].sum()
         weights = base.copy()
         coverage = good.mean()
-        regularizer = np.diag(np.sqrt(ridge/max(coverage, 1/segments)**4*penalty))
+        regularizer = np.diag(np.sqrt(ridge/max(coverage, 1/segments)**4*penalty[:columns]))
         for iteration in range(int(robust_iterations)+1):
             check_cancelled()
             coef = np.linalg.lstsq(np.vstack([X*np.sqrt(weights[:, None]), regularizer]),
-                                   np.r_[y*np.sqrt(weights), np.zeros(len(penalty))], rcond=None)[0]
+                                   np.r_[y*np.sqrt(weights), np.zeros(columns)], rcond=None)[0]
             residual = y-X@coef
             scatter = 1.4826*np.median(np.abs(residual-np.median(residual)))
             if iteration == robust_iterations or scatter <= np.finfo(float).eps*max(1., np.max(np.abs(y))):
                 break
             weights = base/np.maximum(np.abs(residual)/(2*scatter), 1.)
-        return coef
+        return np.pad(coef, (0, design.shape[1]-columns))
 
     for b in range(len(edges)-1):
         check_cancelled()

@@ -23,7 +23,8 @@ CONTROLS = {
         ('rhef_quantiles', 'rhef_quantiles', 'Quantile samples', 17, 1025, 257, 1., 'Continuous mode: integer number of quantile nodes, including both endpoints. Any count from 17 to 1025 is valid; powers of two are not required. Odd counts include the median node. Default 257 gives 256 intervals. More nodes increase cost.'),
         ('rhef_noise_confidence', 'rhef_noise_confidence', 'Noise confidence (0 = off)', 0, 100, 0, 10., 'Optional blend attenuation where angular spread is near estimated noise. Adjacent-pixel noise is approximate, particularly on correlated stacks.')],
     'larson_sekanina': [
-        ('larson_sekanina_angular', 'larson_sekanina_angular', 'Angular increment (degrees)', 0, 1800, 30, 10., 'Symmetric rotations by plus/minus this angle. The radial increment is fixed at zero; zero angular increment bypasses the operator.')],
+        ('larson_sekanina_angular', 'larson_sekanina_angular', 'Angular increment (degrees)', 0, 1800, 30, 10., 'Symmetric rotations by plus/minus this angle. The radial increment is fixed at zero; zero angular increment bypasses the operator.'),
+        ('larson_sekanina_nearby_delta', 'larson_sekanina_nearby_delta', 'Nearby angle delta (degrees)', 0, 100, 0, 100., 'Average the selected rotation and its two neighbors at plus/minus this delta. Zero keeps the classic operator. Reduces interpolation noise variation but changes fine-detail response and costs about three times the sampling. Spacing shrinks near 0 and 180 degrees.')],
     'tangential': [
         ('tangential_arc', 'tangential_arc', 'Angular Gaussian sigma (degrees)', 1, 300, 30, 10., 'Angular blur sigma, 0.1 to 30 degrees. The corresponding arc length increases with radius.'),
         ('tangential_gain', 'tangential_gain', 'Detail gain', 0, 50, 10, 10., 'Multiplier of the signed angular residual before layer encoding and opacity blending.'),
@@ -157,7 +158,7 @@ def add_advanced_mode(window, header_layout):
                 window.sl_statistics_outer]
     for family, specs in CONTROLS.items():
         for attr, *_ in specs:
-            if attr not in ('tangential_arc', 'tangential_denoise', 'larson_sekanina_angular'):
+            if attr not in ('tangential_arc', 'tangential_denoise', 'larson_sekanina_angular', 'larson_sekanina_nearby_delta'):
                 advanced.append(getattr(window, 'sl_' + attr))
 
     def update_visibility(checked):

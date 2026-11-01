@@ -34,6 +34,23 @@ def reference_mgn(source, scales, k=.7, gamma=3.2, h=.7, weights=None, truncate=
 
 
 class MGNTests(unittest.TestCase):
+    def test_masked_extreme_units_preserve_output_and_ignore_missing_values(self):
+        from core.masked_filters import MaskedWorker
+        a=np.random.default_rng(4).uniform(1,2,(64,80))
+        valid=np.ones(a.shape,bool);valid[:8,:9]=False
+        worker=MaskedWorker(FilterWorker(),valid)
+        before=a.copy()
+        expected=worker.run_mgn_native(a,100,32,70,70,3,(1.25,2.5,5))
+        for scale in (1e-25,1e-8,1e25):
+            with self.subTest(scale=scale):
+                image=a*scale
+                image[~valid]=1e300
+                actual=worker.run_mgn_native(image,100,32,70,70,3,(1.25,2.5,5))
+                self.assertTrue(np.isfinite(actual).all())
+                self.assertFalse(actual[~valid].any())
+                np.testing.assert_allclose(actual[valid]/scale,expected[valid],rtol=3e-5,atol=3e-5)
+        np.testing.assert_array_equal(a,before)
+
     def test_official_operations(self):
         a=np.random.default_rng(5).normal(10,4,(43,37))
         a[0,0]=-5; a[1,1]=0

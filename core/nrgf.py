@@ -1,6 +1,6 @@
 """AEL continuous NRGF. Copyright (c) 2026 Pere Guerra Serra.
 
-Adapted from AEL 1.3.3 radial.py (MIT; docs/third-party/AEL-MIT.txt).
+Adapted from AEL radial.py through 1.4.1 (17029c9) (MIT; docs/third-party/AEL-MIT.txt).
 Annular statistics are evaluated at each pixel's radius, without image blur.
 Undefined/sparse/constant annuli remain NaN, so their layer alpha is zero.
 """
@@ -82,7 +82,57 @@ def _radial_smooth(rr, z, step, least=24, distinct=4):
     return CubicSpline(centre, level, bc_type='not-a-knot')(rr)
 
 
-def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=12, smooth_bins=0.):
+def _covered_cells(geometry, center, m, bin_px, nb=360):
+    """Annulus by annulus, which of ``nb`` position-angle cells hold observed light: the cell lies whole inside the image
+    (its four corners do: a cell that the frame's edge cuts is not covered) and has an observed pixel, or no pixel at all
+    (a small annulus leaves cells empty; that is no missing angle). An annulus cut short in radius keeps its angles.
+    Where a cell would hold fewer than six pixels on average, every cell counts as covered: a missing angle cannot
+    be told from the pixel grid there. Also the cell of every pixel."""
+    cx, cy = geometry.center(center)
+    h, w = geometry.shape
+    y = (np.arange(h, dtype=np.float64) - cy)[:, None]
+    x = (np.arange(w, dtype=np.float64) - cx)[None, :]
+    cell = (np.floor((np.arctan2(y, x) + np.pi) / (2 * np.pi) * nb).astype(np.int64) % nb)
+    ring = np.floor(np.hypot(x, y) / bin_px).astype(np.int64)
+    n = int(ring.max()) + 1
+    inside = np.bincount((ring * nb + cell).ravel(), minlength=n * nb).reshape(n, nb)
+    seen = np.bincount((ring * nb + cell)[m], minlength=n * nb).reshape(n, nb)
+    edges = -np.pi + 2 * np.pi * np.arange(nb + 1) / nb
+    whole = np.ones((n, nb), bool)
+    check_cancelled()
+    for radius in (np.arange(n) * bin_px, (np.arange(n) + 1) * bin_px):
+        ex = cx + radius[:, None] * np.cos(edges)[None, :]
+        ey = cy + radius[:, None] * np.sin(edges)[None, :]
+        ok = (ex >= -.5) & (ex <= w - .5) & (ey >= -.5) & (ey <= h - .5)
+        whole &= ok[:, :-1] & ok[:, 1:]
+    sparse = np.pi * bin_px ** 2 * (2 * np.arange(n) + 1) / nb < 6
+    return (whole & ((seen > 0) | (inside == 0))) | sparse[:, None], cell
+
+
+def _chain_terms(sets, covered, statistic):
+    """For each annulus after the first of a run: how much the step of ``statistic`` (in logarithm) from the annulus
+    before changes when it is measured on the position-angle cells both annuli cover, instead of on all their pixels.
+    Zero where the covered cells do not change, so a run of whole annuli is left exactly as it is; ``None`` if a
+    statistic is not positive."""
+    terms = np.zeros(len(sets))
+    for i in range(1, len(sets)):
+        check_cancelled()
+        if np.array_equal(covered[i - 1], covered[i]):
+            continue
+        both = covered[i - 1] & covered[i]
+        (z0, c0), (z1, c1) = sets[i - 1], sets[i]
+        a, b = z1[both[c1]], z0[both[c0]]
+        if len(a) < 12 or len(b) < 12:
+            continue                                            # nothing shared to bridge the step on
+        s = [statistic(v) for v in (a, b, z1, z0)]
+        if not all(np.isfinite(s)) or min(s) <= 0:
+            return None
+        terms[i] = (np.log(s[0]) - np.log(s[1])) - (np.log(s[2]) - np.log(s[3]))
+    return terms
+
+
+
+def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=12, smooth_bins=0., partial_annuli='observed'):
     """Evaluate annular mean/spread at the actual radius, without image smoothing.
 
     Statistical nodes are measured annulus by annulus and interpolated separately across each contiguous run of
@@ -99,6 +149,8 @@ def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=
     clipping, integers coarser than the noise); an annulus whose residuals vary with radius only (no angular spread
     above a float32 step of its own values). Nodes are smoothed only if ``smooth_bins`` > 0.
     """
+    if partial_annuli not in ('observed', 'chain'):
+        raise ValueError("partial_annuli must be 'observed' or 'chain'")
     a = np.asarray(img, np.float32)
     m = np.asarray(valid, bool) & np.isfinite(a)
     out = np.full(a.shape, np.nan, np.float32)
@@ -116,6 +168,10 @@ def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=
     order = np.argsort(r[m], kind='stable')                    # by radius (annuli stay contiguous)
     values, radii = v[order], r[m][order]
     pos = np.flatnonzero(m.ravel())[order]
+    covered = cellof = None
+    if partial_annuli == 'chain':
+        covered, cell = _covered_cells(geometry, 'sun', m, bin_px)
+        cellof = cell.ravel()[pos]
     # 1.3.2. Each annulus gives a node at the mean radius of its own pixels (a node placed at the annulus' centre would
     # be extrapolated from its data where an edge cuts the annulus), with the profile's local slope and curvature
     # removed inside the annulus. Both come from the quartic through the five nearest nodes (the cubic through four
@@ -257,6 +313,20 @@ def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=
             if best is None or score < best[0]:
                 best = (score, tr, nd, s1, res, sp)
         _, tr, nd, s1, res, sp = best
+        if covered is not None:
+            here = cellof[lo:hi]
+            pieces = [slice(cuts[k]-lo, cuts[k+1]-lo) for k in run]
+            terms = _chain_terms([(au[s], here[s]) for s in pieces], covered[run], np.median if robust else np.mean)
+            if terms is not None and terms.any():
+                nd = fwd(tr, inv(tr, nd)*np.exp(np.cumsum(terms)))
+                s1 = _node_derivatives(nd, anchors[run])[0]
+                y = smooth(nd, run)
+                res = au-along(y, run, ru, tr, s1 if smooth_bins == 0 else _node_derivatives(y, anchors[run])[0])
+                sp, _ = spread(res, run)
+            spread_of = ((lambda z: 1.4826*np.median(np.abs(z-np.median(z)))) if robust else np.std)
+            terms = _chain_terms([(res[s], here[s]) for s in pieces], covered[run], spread_of)
+            if terms is not None and terms.any():
+                sp = sp*np.exp(np.cumsum(terms))
         resid[lo:hi] = res; sd2[run] = sp; angular[run] = angular_spread(res, run, au)
         dIdy = 1. if tr[0] == 'lin' else np.exp(nd) if tr[0] == 'log' else tr[1]*np.cosh(nd)
         floor[run] = eps*(mag[run]+np.abs(s1*dIdy)*anchors[run])+4*tiny
@@ -272,11 +342,13 @@ def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=
     return out
 
 def nrgf_normalize(image, cx, cy, radius, valid=None, *, bin_px=2., min_count=12,
-                   robust=True, smooth_bins=0., inner_radius=1.):
+                   robust=True, smooth_bins=0., inner_radius=1., partial_annuli='observed'):
     """Return signed dimensionless NRGF on a 2D linear image; widths are target px.
 
     Uses finite observed samples outside max(1, inner_radius) disk radii.
     Negative/zero sky-subtracted radiance is allowed. No missing data is filled.
+    The numerical API retains observed-annulus statistics by default; GUI layers
+    use AEL 1.4.1 shared-angle chaining to stabilize partial annuli.
     """
     a = np.asarray(image, dtype=np.float32)
     if a.ndim != 2 or not a.size:
@@ -296,8 +368,9 @@ def nrgf_normalize(image, cx, cy, radius, valid=None, *, bin_px=2., min_count=12
     r = np.hypot(x-cx, y-cy)
     mask &= r > max(1., inner_radius)*radius
     check_cancelled()
-    return _continuous_nrgf(a, mask, SimpleNamespace(radius_map=lambda: r),
-                            bin_px=bin_px, min_count=min_count, robust=robust, smooth_bins=smooth_bins)
+    geometry = SimpleNamespace(shape=a.shape, center=lambda _: (cx, cy), radius_map=lambda: r)
+    return _continuous_nrgf(a, mask, geometry, bin_px=bin_px, min_count=min_count,
+                            robust=robust, smooth_bins=smooth_bins, partial_annuli=partial_annuli)
 
 
 def nrgf_layer(image, params, valid=None):
@@ -310,9 +383,10 @@ def nrgf_layer(image, params, valid=None):
                        min_count=params.get('nrgf_min_count', 12),
                        robust=params.get('nrgf_robust', True),
                        smooth_bins=params.get('nrgf_smooth_bins', 0.),
-                       inner_radius=params.get('nrgf_rad', 10)/10.)
+                       inner_radius=params.get('nrgf_rad', 10)/10., partial_annuli='chain')
     good = np.isfinite(q)
-    info = dict(input='linear luminance', bin_px=params.get('nrgf_bin_px', 2.), target_scale=scale,
+    info = dict(input='linear luminance', partial_annuli='chain', upstream_version='1.4.1',
+                bin_px=params.get('nrgf_bin_px', 2.), target_scale=scale,
                 min_count=params.get('nrgf_min_count', 12), robust=params.get('nrgf_robust', True),
                 smooth_bins=params.get('nrgf_smooth_bins', 0.),
                 profile_evaluation='local cubic Hermite; spread about continuous profile')

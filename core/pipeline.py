@@ -223,7 +223,8 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
         img = worker.run_larson_sekanina(
             img, p['larson_sekanina_str'], p['sx'], p['sy'], p['sr'],
             radial_increment=p.get('larson_sekanina_radial', 0.),
-            angular_increment=p.get('larson_sekanina_angular', 3.))
+            angular_increment=p.get('larson_sekanina_angular', 3.),
+            nearby_delta=p.get('larson_sekanina_nearby_delta', 0.))
         if verbose:
             print(f"[{process_label}: LARSON-SEKANINA] Done in {time.time() - step_start:.3f}s")
 

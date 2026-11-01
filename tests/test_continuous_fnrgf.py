@@ -6,6 +6,46 @@ from core.filters import fnrgf_normalize
 
 
 class ContinuousFNRGFTests(unittest.TestCase):
+    def test_coverage_changes_between_rings_do_not_introduce_new_steps(self):
+        phi=(np.arange(64)+.5)*2*np.pi/64
+        radii=np.broadcast_to(np.repeat(np.arange(22,118,4.),2)[:,None],(48,64))
+        angles=np.broadcast_to(phi,radii.shape)
+        width=np.exp(.5+.2*np.sin(angles))
+        image=10+.2*radii+2*np.cos(angles)+.5*np.sin(2*angles)+np.tile([-1.,1.],24)[:,None]*width
+        valid=(radii<62)|((radii<94)&(np.arange(64)[None,:]<32))|(np.arange(64)[None,:]<8)
+        edges=np.arange(20,122,4)
+        for mode in ('legacy','continuous'):
+            with self.subTest(mode=mode):
+                def run(support):
+                    if mode=='continuous':
+                        return continuous_fnrgf(image,radii,angles,edges,valid=support,order=6,
+                            segments=64,smooth_px=8,mean_tail=1,width_tail=1)
+                    return fnrgf_normalize(np.where(support,image,np.nan),radii,angles,edges,
+                        segments=64,order=6,application_radius=20,
+                        mean_attenuation_range=(1,1),std_attenuation_range=(1,1))
+                full=run(np.ones_like(valid));partial=run(valid)
+                np.testing.assert_allclose(partial[valid],full[valid],atol=1e-8)
+                self.assertTrue(np.isnan(partial[~valid]).all())
+
+    def test_partial_coverage_does_not_penalize_low_harmonic_sky_trends(self):
+        phi=(np.arange(64)+.5)*2*np.pi/64
+        mean=10+2*np.cos(phi)+.5*np.sin(2*phi)
+        width=np.exp(.5+.2*np.sin(phi))
+        image=np.stack([mean-width,mean+width])
+        radii=np.full(image.shape,1.5);angles=np.broadcast_to(phi,image.shape)
+        expected=np.broadcast_to(np.array([-1.,1.])[:,None],image.shape)
+        for count in (64,32,8):
+            valid=np.broadcast_to(np.arange(64)<count,image.shape)
+            for scale in (1e-25,1.,1e25):
+                with self.subTest(sectors=count,scale=scale):
+                    source=np.where(valid,image*scale,1e30)
+                    out=continuous_fnrgf(source,radii,angles,[1,2],order=6,segments=64,valid=valid,
+                        smooth_px=0,ridge=.01,mean_tail=1,width_tail=1)
+                    np.testing.assert_allclose(out[valid],expected[valid],atol=1e-9)
+                    self.assertTrue(np.isnan(out[~valid]).all())
+        valid=np.broadcast_to(np.arange(64)<2,image.shape)
+        self.assertTrue(np.isnan(continuous_fnrgf(image,radii,angles,[1,2],segments=64,valid=valid)).all())
+
     def test_analytic_mean_and_log_width(self):
         theta = (np.arange(64)+.5)*2*np.pi/64
         mean, width = 10+2*np.cos(theta), np.exp(.5+.2*np.sin(theta))

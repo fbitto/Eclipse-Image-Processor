@@ -38,7 +38,11 @@ class MaskedWorker:
     def run_mgn_native(self, a, strength, gamma, k, h, truncate, sigmas, weights=None):
         if strength == 0 or self.span(a) == 0:
             return a.copy()
-        data = np.where(self.valid, np.maximum(a, 1e-15), 0).astype(float)
+        data = np.where(self.valid, a, 0).astype(float)
+        magnitude = np.max(np.abs(data))
+        if magnitude > 0 and (magnitude < 1e-10 or magnitude > 1e10):
+            data /= magnitude
+        data = np.where(self.valid, np.maximum(data, 1e-15), 0)
         result = np.zeros_like(a, dtype=float)
         weights = np.ones(len(sigmas)) if weights is None else weights
         def scale_detail(item):

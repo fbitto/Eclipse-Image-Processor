@@ -35,7 +35,7 @@ class BackgroundExtraction(QObject):
         w.sl_background_radius,_=create_slider_float('Exclude corona (disk radii)',15,300,60,10.,panel,
             tooltip='No sample patch may touch this circle. Six disk radii is only a starting point: exclude all visible and faint coronal structures. Changing this regenerates samples.')
         w.sl_background_grid,_=create_slider('Samples per line',6,40,16,panel,
-            tooltip='Candidate grid density. Patches inside the excluded circle, missing data and zero-filled areas are rejected. Changing density regenerates samples.')
+            tooltip='Candidate grid density. Patches must clear the excluded circle and contain at least 90% finite pixels. Measured zeros are included. Changing density regenerates samples.')
         w.btn_background_generate=QPushButton('Regenerate samples')
         w.btn_background_generate.setToolTip('Replace manual edits with a fresh grid outside the coronal exclusion radius. Fit immediately when enabled.')
         panel.addWidget(w.btn_background_generate)

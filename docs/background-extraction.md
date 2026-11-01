@@ -6,7 +6,7 @@ The optional Background Gradient section is off initially and available only for
 
 The initial 16 × 16 grid excludes six reference lunar radii. This is an adjustable starting point; faint corona can extend into the sample field. Review green sample squares and the dashed yellow exclusion circle. In sample-edit mode, left-click adds a point, right-click removes a nearby point and middle-drag pans. Changing grid density or exclusion radius regenerates samples. A new image receives new samples; JSON preserves explicit native-pixel coordinates.
 
-Each patch has half-width `max(2, min(32, int(min(height, width)/200)))` native pixels. The whole square must clear the circular exclusion (using its half diagonal). At least 90% of patch pixels must be finite and nonzero; an RGB pixel is nonzero if any channel is nonzero. Patch medians provide the fitted values.
+Each patch has half-width `max(2, min(32, int(min(height, width)/200)))` native pixels. The whole square must clear the circular exclusion (using its half diagonal). At least 90% of patch pixels must be finite in every channel. Finite zeros and negative values are observations and enter the patch medians.
 
 ## Robust plane
 
@@ -14,7 +14,9 @@ Each patch has half-width `max(2, min(32, int(min(height, width)/200)))` native 
 
 Twelve robust IRLS iterations use Tukey weights with cutoff 4.685. RGB channels share sample weights; per-channel MAD scales have relative/absolute floors. The fitted slopes are subtracted relative to the weighted sample centroid. The constant sky level at that anchor is retained. A first-order model intentionally cannot remove curved illumination patterns.
 
-Correction is tiled in 128-row strips. Missing values and zero-filled regions retain their support and storage behaviour; negative corrected floats are permitted. RGB correction precedes mono recomputation. The native corrected working source, normalization bounds, calibration, filters, presentation and exports share this result; fast preview reduces that prepared source.
+Correction is tiled in 128-row strips. Finite pixels, including measured zeros, receive the fitted correction; negative corrected floats are permitted. Missing values remain missing. Input alpha masks are converted to NaN during loading; black padding must be explicitly masked or stored as NaN to exclude it. Zero intensity alone does not identify missing data. RGB correction precedes mono recomputation. The native corrected working source, normalization bounds, calibration, filters, presentation and exports share this result; fast preview reduces that prepared source.
+
+Image validity is separate from filter support. A logarithmic operator such as AEL ACHF requires positive intensities and excludes nonpositive samples from its operator support, even when they are valid observations. The current AEL WOW port also uses positive-only support; its compatibility policy is separate from background sampling and image validity. Neither restriction changes the source validity mask or justifies adding a pedestal.
 
 ## Reproducibility and limits
 
