@@ -93,7 +93,8 @@ class ColorCorrectionTests(unittest.TestCase):
 
     def test_final_tiff_jpeg_are_identical_with_correction_on_and_off(self):
         source=np.linspace(1,10,np.prod(self.shape),dtype=np.float32).reshape(self.shape)
-        with patch('core.export.export_layer_package',return_value=self.package):
+        from core.psb_export import _folder_package
+        with patch('core.layer_package.build_layer_package',side_effect=lambda *a,**k:_folder_package(self.package)):
             for name,enabled in (('plain',False),('corrected',True)):
                 export_images(source,self.geometry,{},str(self.root/(name+'.tif')),'source.fits',
                               export_layers=True,layers_format='psb',color_correction=enabled)

@@ -2,7 +2,9 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
+import ctypes
 import os
+import sys
 
 CPU_CORES = os.cpu_count() or 4
 _filter_budget = ContextVar('filter_cpu_budget', default=CPU_CORES)
@@ -19,6 +21,31 @@ def filter_budget(workers):
         yield
     finally:
         _filter_budget.reset(token)
+
+
+class _MemoryStatusEx(ctypes.Structure):
+    _fields_ = [('dwLength', ctypes.c_uint32), ('dwMemoryLoad', ctypes.c_uint32),
+                ('ullTotalPhys', ctypes.c_uint64), ('ullAvailPhys', ctypes.c_uint64),
+                ('ullTotalPageFile', ctypes.c_uint64), ('ullAvailPageFile', ctypes.c_uint64),
+                ('ullTotalVirtual', ctypes.c_uint64), ('ullAvailVirtual', ctypes.c_uint64),
+                ('ullAvailExtendedVirtual', ctypes.c_uint64)]
+
+
+def physical_memory_bytes():
+    """Installed RAM (Windows included), or None if the platform does not say."""
+    if sys.platform == 'win32':
+        try:
+            status = _MemoryStatusEx()
+            status.dwLength = ctypes.sizeof(status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return int(status.ullTotalPhys)
+        except (AttributeError, OSError):
+            pass
+        return None
+    try:
+        return int(os.sysconf('SC_PHYS_PAGES'))*int(os.sysconf('SC_PAGE_SIZE'))
+    except (AttributeError, ValueError, OSError):
+        return None
 
 
 def layer_workers(source, count):

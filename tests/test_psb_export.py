@@ -111,7 +111,8 @@ class PSBExportTests(unittest.TestCase):
         # Explicit PSB request still produces the regular final TIFF/JPEG separately.
         from core.export import export_images
         source=np.linspace(1,9,9*13).reshape(self.shape).astype(np.float32)
-        with patch('core.export.export_layer_package',return_value=self.package):
+        from core.psb_export import _folder_package
+        with patch('core.layer_package.build_layer_package',return_value=_folder_package(self.package)):
             export_images(source,{},dict(mode='asinh',strength=10),str(self.root/'final.v1.tif'),
                           'source.fits',export_layers=True,layers_format='psb',processed=source)
         self.assertTrue((self.root/'final.v1.tif').exists())

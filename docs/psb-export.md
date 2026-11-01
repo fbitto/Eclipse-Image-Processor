@@ -54,7 +54,7 @@ The working linear reference includes enabled background correction and RGB cali
 
 The TIFF package includes `01_LINEAR_REFERENCE_Normal.tif`, numbered base/filter files, `REFERENCE_COMBINED.tif` (the PSB presentation), `SOURCE_float32.tif` (working mono), `VALID.tif`, `STATISTICS_SUPPORT.tif`, `recipe.json`, `Load_layers_Photoshop.jsx` and `Layers.md`. Missing float samples store zero; VALID distinguishes missing observations from measured black. GUI export always adds the matching `_sources` folder with float32 mono/RGB, a validity mask and preprocessing receipt. The original source remains unchanged; numerical source files do not carry a display profile.
 
-The PSB temporary package is removed on success or failure; a selected TIFF directory persists. Hide the black background to inspect transparency; original layer alpha remains separate.
+The PSB route keeps the layers in memory and writes no temporary TIFF package; a selected TIFF directory persists. The PSB pixels, layer order, names, modes and opacities are the same on both routes. Without layer files, each recipe row in the PSB metadata records the sha256 of its uint16 pixels (`layer_sha256` in the recipe says how), not of a TIFF file. When the preview JPEG also uses the PSB presentation, the export computes the 16-bit presentation base once for both. Hide the black background to inspect transparency; original layer alpha remains separate.
 
 ## Optional Color Correction and profile
 
@@ -66,7 +66,7 @@ All display TIFF/JPEG/PSB products embed **sRGB** for assumed-sRGB application d
 
 ## Verification and publication
 
-The writer creates PSB version 2, RGB16, full-canvas layers, separate 16-bit alpha and Lr16 records; its current opaque merged RGB needs no Mt16 merged-transparency block. Recipe metadata is embedded in XMP. Reopening verifies dimensions, names, modes, visibility, byte opacity, original channel bytes, hashes when supplied, background and cached reference. Optional adjustment/profile structures are verified separately. This is structural/pixel verification, not proof of Photoshop colour-managed recomposition.
+The writer creates PSB version 2, RGB16, full-canvas layers, separate 16-bit alpha and Lr16 records; its current opaque merged RGB needs no Mt16 merged-transparency block. Recipe metadata is embedded in XMP. Reopening verifies dimensions, names, modes, visibility, byte opacity, original channel bytes, hashes when supplied, background and cached reference. Every distinct channel plane is compressed once, on helper threads (zlib releases the GIL), with the same row prediction and zlib call as psd-tools, so the file is byte-identical to adding the layers one at a time. Verification decompresses each distinct stored channel once, on threads, by blocks of rows; thread counts are bounded by an eighth of physical memory. Optional adjustment/profile structures are verified separately. This is structural/pixel verification, not proof of Photoshop colour-managed recomposition.
 
 Layers are generated/verified before final TIFF/JPEG. A layer failure prevents new final images; a later image/JSON failure can leave earlier completed outputs. PSB publication prefers an atomic same-directory hard link. Filesystems without hard links use exclusive creation and a copy of the verified temporary PSB, followed by fsync; failed copies are removed and existing destinations are never overwritten. This fallback is not atomic to external readers.
 

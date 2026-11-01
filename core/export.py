@@ -82,23 +82,38 @@ def export_images(source, parameters, display, file_path, original_path,
     layers_path = None
     package_display = psb_presentation_settings(source, parameters.get('valid_mask'),
         rgb=colour_rgb, params=parameters, exposure_ev=psb_exposure_ev)
+    presentation = None
+    if layers_requested:
+        # The layer package and the final image share one 16-bit presentation base (same inputs).
+        from .presentation import psb_base_u16
+        presentation = psb_base_u16(source, parameters, package_display, colour_rgb)
+    def presentation_base():
+        from .presentation import psb_base, u16_to_unit
+        if presentation is None:
+            return psb_base(source, parameters, package_display, colour_rgb)
+        return tuple(u16_to_unit(a) for a in presentation)
     if layers_requested:
         stage('Writing layer package')
         stem = Path(file_path).with_suffix("").with_name(Path(file_path).stem + "_PS_layers")
         candidate = stem.with_name(stem.name + '.psb') if layers_format == 'psb' else stem
+        base_colour = presentation_base() if presentation is not None else None
         if layers_format == 'psb':
-            from .psb_export import export_psb_package
-            with tempfile.TemporaryDirectory(prefix='eip-psb-layers-') as temporary:
-                package = export_layer_package(worker, source, parameters, package_display,
-                    original_path, Path(temporary)/'layers', rgb=colour_rgb, colour_report=colour_report,
-                    prominences=prominences)
-                stage('Writing and verifying PSB')
-                export_psb_package(package,candidate,color_correction=color_correction)
+            # Layers stay in memory: no TIFF is written, read back and hashed per layer.
+            from .layer_package import build_layer_package
+            from .psb_export import export_psb_layers
+            package = build_layer_package(worker, source, parameters, package_display,
+                original_path, rgb=colour_rgb, colour_report=colour_report,
+                prominences=prominences, base_colour=base_colour)
+            del base_colour
+            stage('Writing and verifying PSB')
+            export_psb_layers(package,candidate,color_correction=color_correction)
+            del package
             layers_path = candidate
         else:
             layers_path = export_layer_package(worker, source, parameters, package_display,
                 original_path, candidate, rgb=colour_rgb, colour_report=colour_report,
-                prominences=prominences)
+                prominences=prominences, base_colour=base_colour)
+            del base_colour
 
     linear_path = None
     if export_linear:
@@ -109,9 +124,9 @@ def export_images(source, parameters, display, file_path, original_path,
 
     stage('Composing final image')
     print(f"[EXPORT] Full-resolution layer composition; {CPU_CORES} CPUs available")
-    from .presentation import psb_base
     from .presentation_edges import finish_presentation
-    base,colour=psb_base(source,parameters,package_display,colour_rgb)
+    base,colour=presentation_base()
+    presentation = None
     img_norm=engine.render(worker,source,parameters,package_display,base=base)
     if colour is not None:img_norm=set_luminosity(colour,img_norm)
     edge=engine.edge_alpha(source,parameters)
