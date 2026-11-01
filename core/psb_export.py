@@ -377,8 +377,13 @@ def _layer_mask(package,row,shape):
     return mask
 
 
-def _folder_package(package, *, check_hashes=True):
-    """A TIFF layer folder as an in-memory package, checking each file against its recipe hash."""
+def _folder_package(package, *, check_hashes=True, validity=False):
+    """A TIFF layer folder as an in-memory package, checking each file against its recipe hash.
+
+    The validity mask is read only for Color Correction (``validity``), as before.
+    The layers are all held at once: this route is for packages written to disk
+    (tests, scripts); the export keeps its layers in memory instead.
+    """
     from .layer_package import LayerPackage, PackageLayer
     package,recipe,shape = _package(package)
     layers = []
@@ -397,9 +402,8 @@ def _folder_package(package, *, check_hashes=True):
     if recipe.get('corona_combined'):
         corona = _black_composite(_pixels(_package_path(package,recipe['corona_combined']),shape))
     valid = None
-    mask_file = recipe.get('validity_file','VALID.tif')
-    if (package/mask_file).is_file():
-        valid = tifffile.imread(_package_path(package,mask_file))
+    if validity:
+        valid = tifffile.imread(_package_path(package,recipe.get('validity_file','VALID.tif')))
         if valid.shape != shape:
             raise ValueError('Color Correction validity must match PSB canvas')
         valid = valid > 0
@@ -541,7 +545,7 @@ def verify_psb_package(path,package,*,color_correction=False):
     ``package`` is a TIFF layer folder or an in-memory core.layer_package.LayerPackage.
     """
     if not hasattr(package,'layers'):
-        package=_folder_package(package,check_hashes=False)
+        package=_folder_package(package,check_hashes=False,validity=color_correction)
     return verify_psb_document(path,package,color_correction=color_correction)
 
 
@@ -574,6 +578,7 @@ def _write_psb(package, destination, *, color_correction=False):
         if package_layer is not None and package_layer.mask is not None:
             from .color_correction import _mask
             _mask(layer,package_layer.mask)
+    del encoded,specs                       # the document holds the channels from here on
     composite_start = time.perf_counter()
     from psd_tools.constants import Compression,Resource
     from psd_tools.psd.image_resources import ImageResource
@@ -659,10 +664,18 @@ def export_psb_layers(package, destination, *, color_correction=False):
 
 
 def export_psb_package(package,destination,*,color_correction=False):
-    """Convert a TIFF layer folder; publish only after verified writing, never overwrite."""
+    """Convert a TIFF layer folder; publish only after verified writing, never overwrite.
+
+    The checks run in the order they always did: package, Color Correction
+    limit, destination, suffix; then the layers are read.
+    """
+    _,recipe,_ = _package(package)
+    if color_correction and len(recipe['layers'])>32760:
+        raise ValueError('Color Correction exceeds the PSB layer-record limit')
     destination = Path(destination)
     if destination.exists():
         raise FileExistsError(destination)
     if destination.suffix.lower() != '.psb':
         raise ValueError('The layered Photoshop destination must end in .psb')
-    return _write_psb(_folder_package(package),destination,color_correction=color_correction)
+    return _write_psb(_folder_package(package,validity=color_correction),destination,
+                      color_correction=color_correction)

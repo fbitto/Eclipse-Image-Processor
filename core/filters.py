@@ -93,6 +93,8 @@ def strip_gaussian(values, sigma, truncate=4.0, mode='nearest', workers=None):
     0 runs over blocks of columns and axis 1 over blocks of rows, with the same
     SciPy call per line, so the result is the same bit for bit for any thread
     count. SciPy releases the GIL. Small images and one thread call SciPy directly.
+    This relies on how SciPy runs gaussian_filter; tests/test_strip_gaussian.py
+    compares the two and must pass after a SciPy update.
     """
     a = np.asarray(values)
     workers = filter_cpu_budget() if workers is None else int(workers)

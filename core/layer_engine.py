@@ -403,6 +403,12 @@ class LayerEngine:
         # Every blend works per pixel: fixed row strips on helper threads, each strip
         # blending the layers in order, give the same values bit for bit.
         base=np.asarray(base)
+        if any(np.shape(image)!=base.shape or np.shape(alpha)!=base.shape for image,alpha,_,_ in layers):
+            # Mismatched canvases: whole-frame blending, with the same result or error as before.
+            result=base.copy()
+            for image,alpha,mode,amount in layers:
+                result=blend(result,image.astype(float)/65535,alpha.astype(float)/65535,mode,amount)
+            return result.astype(np.float32)
         result=np.empty(base.shape,np.float32)
         def strip(bounds):
             check_cancelled()

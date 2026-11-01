@@ -5,7 +5,7 @@ keeps memory independent of the size of the complete polar canvas. Only detail
 is resampled; missing or off-frame samples carry zero statistical weight.
 """
 from .cancellation import check_cancelled
-from .parallelism import map_in_threads
+from .parallelism import map_in_threads, memory_bounded_workers
 import numpy as np
 from scipy.ndimage import map_coordinates, gaussian_filter1d
 from scipy.fft import rfft, irfft
@@ -105,7 +105,9 @@ def tangential_detail(image, cx, cy, radius, arc_sigma_deg=3., gain=1.,
             mass=map_coordinates(np.concatenate([sw,sw[:1]],axis=0),coords,order=1,mode='nearest',prefilter=False)
             evaluate=target[excluded]
             detail.ravel()[evaluate]=np.where(mass[excluded]>.05,a.ravel()[evaluate]-background[excluded],np.nan)
-    map_in_threads(tile_detail, list(zip(cuts[:-1], cuts[1:])))
+    # About seventeen float64 temporaries of the polar tile (na angles x 130 radii) per tile in flight,
+    # counting the two padded copies used for excluded statistics samples.
+    map_in_threads(tile_detail, list(zip(cuts[:-1], cuts[1:])), memory_bounded_workers(17*8*na*130))
     if denoise:
         # Robust high-pass estimate on observed adjacent pairs; not detector SNR.
         differences = np.diff(signal, axis=1)

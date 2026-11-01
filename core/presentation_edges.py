@@ -67,8 +67,8 @@ def finish_presentation(image, alpha):
     from .parallelism import map_in_threads
     from .presentation import row_strips
     image=np.asarray(image)
-    if image.ndim<2 or not image.size:
-        return _finish(image,alpha)
+    if image.ndim<2 or not image.size or (alpha is not None and np.shape(alpha)!=image.shape[:2]):
+        return _finish(image,alpha)         # whole frame: the same result or the same error as before
     probe=_finish(image[:1],None if alpha is None else alpha[:1])
     result=np.empty(image.shape,probe.dtype)
     def strip(bounds):

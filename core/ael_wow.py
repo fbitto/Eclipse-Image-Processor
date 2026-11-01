@@ -13,10 +13,12 @@ stay on one thread: OpenCV spreads one call over the cores itself.
 import numpy as np
 from .ael_achf import display_detail
 from .cancellation import check_cancelled
-from .parallelism import map_in_threads
+from .parallelism import map_in_threads, memory_bounded_workers
 from .progress import report
 
 _B3K = np.array([1, 4, 6, 4, 1], np.float32) / 16
+# Scratch memory of one block of a paired step, per pixel of the block (measured: about 330 bytes).
+PAIRED_BYTES_PER_PIXEL = 330
 _TAPS = [(dy, dx) for dy in range(-2, 3) for dx in range(-2, 3)]
 
 
@@ -127,6 +129,8 @@ def _paired_b3_step(c, m, step, bilateral=False, guide=None, rows=128, workers=N
                 num += kg * (v - ctr); den += kg
             ks += kg
         out[y0:y1] = ctr + num / np.maximum(den, 1e-20); compl[y0:y1] = ks; pair[y0:y1] = kn > 0
+    if workers is None:
+        workers = memory_bounded_workers(PAIRED_BYTES_PER_PIXEL * rows * w)
     _run_blocks(block, c.shape[0], rows, workers)
     return out, compl, pair
 

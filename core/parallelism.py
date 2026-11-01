@@ -55,6 +55,17 @@ def physical_memory_bytes():
         return None
 
 
+def memory_bounded_workers(item_bytes):
+    """This filter's CPU budget, bounded so that items in flight fit in a quarter of physical RAM.
+
+    ``item_bytes`` is the scratch memory one item (a block, a tile) needs while it
+    runs; 1 GiB is assumed when the platform does not report its memory.
+    """
+    installed=physical_memory_bytes()
+    memory=1024**3 if installed is None else installed//4
+    return max(1,min(filter_cpu_budget(),memory//max(1,int(item_bytes))))
+
+
 def layer_workers(source, count):
     """Bound scratch memory as well as CPU; conservative unknown-memory fallback.
 
@@ -86,4 +97,10 @@ def map_in_threads(function, items, workers=None):
         return [function(item) for item in items]
     with ThreadPoolExecutor(max_workers=workers,thread_name_prefix='corona-strip') as executor:
         futures=[executor.submit(copy_context().run,function,item) for item in items]
-        return [future.result() for future in futures]
+        try:
+            return [future.result() for future in futures]
+        except BaseException:
+            # Stop as the serial loop would: items not yet started never run.
+            for future in futures:
+                future.cancel()
+            raise

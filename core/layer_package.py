@@ -205,6 +205,11 @@ def export_layered_package(worker, source, params, display, original_path, desti
     from .color_correction import srgb_profile
     profile=srgb_profile()
     source,valid,rgb=_inputs(source,params,rgb)
+    if display.get('mode') != 'ael_presentation':
+        # Before the destination checks, as always: a failure here creates no folder.
+        from .presentation import psb_presentation_settings
+        display = psb_presentation_settings(source, params.get('valid_mask'), rgb=rgb, params=params)
+        base_colour = None
     destination=Path(destination)
     if destination.exists():
         raise FileExistsError(destination)

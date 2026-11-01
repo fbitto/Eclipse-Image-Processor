@@ -2,9 +2,10 @@
 
 Operators call ``report(done, total, detail)`` between their own steps (scales,
 tiles, rings). The call costs one context-variable lookup and does nothing
-unless a listener was installed with ``progress_scope``; the task registry does
-that for each layer. Thread pools that run work through ``copy_context`` inherit
-the listener, exactly like the cancellation token in ``core.cancellation``.
+unless a listener was installed with ``progress_scope``; the application does
+not install one yet (a progress bar per layer could). Thread pools that run work
+through ``copy_context`` inherit the listener, exactly like the cancellation
+token in ``core.cancellation``.
 """
 from contextlib import contextmanager
 from contextvars import ContextVar

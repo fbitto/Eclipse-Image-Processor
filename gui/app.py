@@ -620,7 +620,7 @@ class EclipseProcessorApp(QMainWindow):
     def _build_presentation_section(self, layout: QVBoxLayout):
         """Build the shared PSB/JPEG presentation controls above export options."""
         psb_group = create_filter_group('PHOTOSHOP PRESENTATION', layout)
-        # 16-bit PSB bases shared by the fast view, the native view and the export.
+        # 16-bit PSB bases shared by the fast view and the native view.
         self._presentation_cache = PresentationCache()
         self.sl_psb_exposure, self.lbl_psb_exposure = create_slider(
             'PSB Exposure (EV)', -600, 600, 0, psb_group,

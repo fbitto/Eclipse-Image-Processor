@@ -141,10 +141,13 @@ class MemoryRouteTests(unittest.TestCase):
             self.assertEqual([int(i.id) for i in x._record.channel_info], [int(i.id) for i in y._record.channel_info])
             self.assertEqual([c.data for c in x._channels], [c.data for c in y._channels], x.name)
         ra, rb = _recipe(a), _recipe(b)
-        for recipe in (ra['recipe'], rb['recipe']):
-            recipe.pop('layer_sha256', None)
-            for row in recipe['layers']:
+        for provenance in (ra, rb):
+            provenance['recipe'].pop('layer_sha256', None)
+            for row in provenance['recipe']['layers']:
                 row.pop('sha256')
+            # The generated sRGB profile carries its creation time (to the second), on both routes.
+            if provenance.get('color_correction'):
+                provenance['color_correction'].pop('profile_sha256')
         self.assertEqual(ra, rb)
 
     def test_memory_route_writes_the_folder_route_psb_without_layer_files(self):

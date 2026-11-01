@@ -153,7 +153,10 @@ def psb_base(source, params, settings, rgb=None):
 
 
 class PresentationCache:
-    """16-bit PSB bases of the last sources, shared by the views and the export.
+    """16-bit PSB bases of the last two sources, shared by the fast and the native view.
+
+    An entry holds 8 bytes per pixel for RGB (about 0.6 GB at 10551 x 7506) until
+    another image is loaded; the export computes its own base.
 
     The key holds the source and RGB objects (weakly) and the curve settings:
     another image, a new colour calibration (a new RGB array) or another
