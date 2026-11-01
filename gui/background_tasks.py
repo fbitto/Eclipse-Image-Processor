@@ -55,14 +55,24 @@ def load_source(file_path, geometry, detect_limb):
     if img is None:
         try:
             with tifffile.TiffFile(file_path) as tif:
+                if len(tif.pages) != 1:
+                    raise UnsupportedTiffError('Multi-page TIFF is not supported; open a single mono or RGB(A) image')
                 page = tif.pages[0]
-                if page.photometric in (tifffile.PHOTOMETRIC.MINISWHITE, tifffile.PHOTOMETRIC.PALETTE):
+                if page.photometric not in (tifffile.PHOTOMETRIC.MINISBLACK, tifffile.PHOTOMETRIC.RGB):
                     raise UnsupportedTiffError(f'Unsupported TIFF photometric interpretation: {page.photometric.name}')
-                img = page.asarray()
+                if page.axes not in ('YX','YXS','SYX'):
+                    raise UnsupportedTiffError(f'Unsupported TIFF image layout: {page.axes}')
+                try:
+                    img = page.asarray()
+                    if page.axes == 'SYX':
+                        img = np.moveaxis(img,0,-1)
+                except Exception as error:
+                    raise UnsupportedTiffError(f'Cannot decode TIFF pixels: {error}') from error
         except UnsupportedTiffError:
             raise
-        except Exception:
-            pass
+        except Exception as error:
+            if lower_path.endswith(('.tif','.tiff')):
+                raise UnsupportedTiffError(f'Cannot read TIFF: {error}') from error
 
     if img is None:
         img = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
@@ -81,8 +91,10 @@ def load_source(file_path, geometry, detect_limb):
     mono, source_rgb = split_source_channels(img)
     full = np.ascontiguousarray(mono, dtype=np.float32)
     h, w = full.shape
+    if min(h,w) < 4:
+        raise ValueError('Image must be at least 4 × 4 pixels')
     scale = min(1., 1500 / max(h, w))
-    preview = resize_observed(full, (int(w*scale), int(h*scale))) if scale < 1 else full.copy()
+    preview = resize_observed(full, (max(1,int(w*scale)), max(1,int(h*scale)))) if scale < 1 else full.copy()
     circle = detect_limb(full) if geometry is None else geometry
     return dict(full=full, rgb=source_rgb, white=white, preview=preview,
                 scale=scale, circle=circle, display_bounds=observed_bounds(full), missing=np.count_nonzero(~np.isfinite(full)))

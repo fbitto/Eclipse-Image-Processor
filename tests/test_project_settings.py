@@ -132,6 +132,7 @@ class ProjectSettingsTests(unittest.TestCase):
                     controls['enabled'].setChecked(index!=1)
                 w.combo_achf_variant.setCurrentIndex(3)
                 w.chk_export_layers.setChecked(False)
+                w.btn_psb_preview.setChecked(False)
                 expected=capture_settings(w)
                 with patch('gui.app.QFileDialog.getSaveFileName',return_value=(str(output),'')):
                     w.export_image_action()

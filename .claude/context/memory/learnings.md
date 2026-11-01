@@ -13,7 +13,7 @@
 
 - Keep GUI tone curves out of numerical/composition cache signatures. Cache the normalized uncurved mono composition; render the selected presentation in the background worker and for the JPEG export. Editable Photoshop presentation uses its own explicit receipt and hidden scaled linear reference.
 
-- Photoshop exposure preview is a transient checkable button, excluded from saved controls. Save only the EV slider; the current JSON format stores it explicitly. Native sampling chooses one scale for fast/native preview and export, after colour calibration, and tone mapping uses row tiles. The GUI now exposes only PSB presentation: old Display Stretch widgets and the GHS picker are removed, old JSON formats are rejected without migration, and PSB preview defaults on. Exposure affects JPEG as well as the screen and layers, but never the main TIFF.
+- Photoshop exposure preview is a checkable button saved explicitly as btn_psb_preview alongside EV; v4 recipes omitting it default on. Native sampling chooses one scale for fast/native preview and export, after colour calibration, and tone mapping uses row tiles. The GUI now exposes only PSB presentation: old Display Stretch widgets and the GHS picker are removed, old JSON formats are rejected without migration, and PSB preview defaults on. Exposure affects JPEG as well as the screen and layers, but never the main TIFF.
 
 - On source load, call dispatch_pipeline_request_if_auto before render_matrix_to_screen: dispatch invalidates the filter revision even in manual mode. Rendering first caused the initial presentation result to be rejected as stale, leaving manual loads blank. Cover source load with an actual installed preview assertion.
 
@@ -32,3 +32,7 @@
 - Export overwrite confirmation covers TIFF, preview JPEG and settings JSON together; disable the native TIFF-only confirmation. Resume pending auto-preview when the dialog is cancelled or source protection rejects the destination, before creating an export worker.
 
 - Warmth belongs to the colour revision/cache, not the numerical filter signature. Apply gains after neutralization in the presentation worker and export. Prominence saturation uses original RGB after mask selection; keep it independent of corona warmth.
+
+- Do not infer numerical settings from isEnabled(): a disabled sidebar makes every descendant report disabled. Snapshot WOW thresholds using the selected scale count. Background tasks must copy their sample list and compare source identity plus fit settings before accepting a result; resume pending preview requests when exports finish.
+
+- For cold native FITS GUI smoke checks, run the normal QApplication event loop with timer-based assertions. Tight QTest.qWait polling delayed the load worker beyond 60 s; the same native RGB source and saved recipe completed in 0.81 s with app.exec().

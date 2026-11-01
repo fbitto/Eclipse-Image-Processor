@@ -22,6 +22,8 @@ Image validity is separate from filter support. A logarithmic operator such as A
 
 The source arrays are unchanged and used again when correction is disabled. Recipes record coefficients, anchor, counts, inliers, RMS, patch size and exclusion radius. Reopening a JSON loads the original source and applies its correction once. Do not use an already corrected exported TIFF as the original source for that recipe.
 
+Each background task snapshots its source, geometry, samples and fit settings. A result from an older snapshot is discarded; the current settings remain dirty and pending calculations or exports resume against a fresh fit.
+
 No robust estimator can reliably distinguish smooth faint corona from background when all sky samples are contaminated. Reject problematic samples and inspect native results. This correction is not a flat-field calibration or photometric sky measurement.
 
 The design was informed by [Siril background extraction](https://siril.readthedocs.io/en/stable/processing/background.html) and [Seti Astro ABE](https://github.com/setiastro/setiastrosuitepro/blob/main/src/setiastro/saspro/abe.py); the application uses its own restricted plane model and slope-only subtraction.

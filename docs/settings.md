@@ -13,7 +13,7 @@ Save Settings Only writes controls and a source reference without running filter
 | `format` | `eclipse-image-processor-settings` |
 | `version` | Integer 4 |
 | `source` | Absolute source path |
-| `source_relative` | Relative source path, preferred on reopen when resolvable |
+| `source_relative` | Relative source path, preferred on reopen when resolvable; null across Windows drives |
 | `settings` | Validated GUI snapshot |
 | `parameters` | Numerical parameter receipt |
 | `display` | Display receipt; not a second set of GUI controls |
@@ -26,12 +26,12 @@ The source must exist and cannot itself be JSON. The reader limits files to 2 Mi
 
 - Controls identify widget kind and value; combo boxes also carry validated text/index information. Slider values use raw integer ticks, not formatted physical-unit labels.
 - Non-filter/global controls are required. Filter controls and sections can be omitted: filters reset to prepared defaults first, absent filter sections remain disabled, and absent ACHF Include flags remain unchecked. Previous-image edits are never inherited for omitted filters.
-- Geometry contains integer-string x, y and radius, with positive radius. Section states and auto-calculation are booleans. Geometry section state is required.
+- Geometry contains finite numeric strings for x, y and radius, including decimals, with positive radius. Their original text is preserved on reopening. Section states and auto-calculation are booleans. Geometry section state is required.
 - Background samples are null or a list of native integer coordinate pairs, at most 5000 points.
 
-Explicit values must match supported controls and types. Slider restoration respects current bounds, with the supported dynamic upper bounds for FNRGF maximum radius/MGN sigma. Restoration uses two passes for linked slider bounds and rolls widgets/ranges back if restoration fails. Use a generated current JSON as a template rather than inventing control identifiers.
+Explicit values must match supported controls and types. Slider restoration respects current bounds, with the supported dynamic upper bounds for FNRGF maximum radius/MGN sigma. Image-dependent WOW limits use the referenced source's dimensions, even when a different image is currently open. Restoration uses two passes for linked slider bounds and rolls widgets/ranges back if restoration fails. Use a generated current JSON as a template rather than inventing control identifiers.
 
-Disk-overlay visibility, zoom, View Original and the PSB-preview toggle are transient and not saved. Exposure and export options are saved. Source load resets the red circle/cross to visible.
+The PSB-preview toggle, exposure and export options are saved. Existing v4 recipes without the toggle restore it enabled. Disk-overlay visibility, zoom and View Original remain transient. Source load resets the red circle/cross to visible.
 
 Directly loading another image is a separate action from restoring JSON: it retains current filter settings and active/include flags, detects new geometry and regenerates background samples. First-load defaults are listed in [layer composition](layer-composition.md).
 

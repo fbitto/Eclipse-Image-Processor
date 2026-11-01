@@ -37,7 +37,7 @@ from gui.image_view import ImageView
 from gui.background_controls import BackgroundExtraction
 from core.colour import neutralize_tse, set_luminosity
 from core.result_cache import parameter_signature
-from core.export_paths import export_paths, protect_source
+from core.export_paths import export_paths, protect_source, available_export_path
 from core.project_settings import read_settings, write_settings
 from gui.project_settings import capture_settings, restore_settings, validate_settings, initialize_filter_defaults, reset_filter_defaults
 from gui.filter_controls import add_controls, collect_controls, add_advanced_mode, add_achf_variants, collect_achf_variants, add_layer_opacities
@@ -803,9 +803,11 @@ class EclipseProcessorApp(QMainWindow):
         if self.raw_image is None or self.full_raw_image is None:
             return
         try:
-            cx_full = int(self.txt_x.text())
-            cy_full = int(self.txt_y.text())
-            r_full = int(self.txt_r.text())
+            cx_full = float(self.txt_x.text())
+            cy_full = float(self.txt_y.text())
+            r_full = float(self.txt_r.text())
+            if not np.isfinite([cx_full,cy_full,r_full]).all() or r_full <= 0:
+                return
             h_full, w_full = self.full_raw_image.shape[:2]
             self.image_label.set_circle_parameters(cx_full, cy_full, r_full, native_w=w_full, native_h=h_full)
         except ValueError:
@@ -881,7 +883,11 @@ class EclipseProcessorApp(QMainWindow):
         self.recalculation_timer.stop()
         if self.raw_image is None or self.full_raw_image is None:
             return
-        if self._closing or self._load_thread is not None or self._export_thread is not None:
+        if self._closing:
+            return
+        if self._load_thread is not None or self._export_thread is not None or self.background.thread is not None:
+            self.has_pending_request = True
+            self._pending_manual = self._pending_manual or not self.auto_calculate
             return
         if self.is_processing:
             self.filter_worker.cancel()
@@ -924,6 +930,7 @@ class EclipseProcessorApp(QMainWindow):
 
     def collect_filter_parameters(self, target_shape, *, include_mask=True):
         """Snapshot UI once; prepare the same recipe for preview or export."""
+        wow_scales = self.sl_wow_scales.value() or (8 if self.combo_wow_bilateral.currentIndex() == 2 else self.sl_wow_scales.maximum())
         params = {
             "nrgf_enabled": self.sec_nrgf.is_filter_active(),
             "nrgf_str": 100,
@@ -955,9 +962,9 @@ class EclipseProcessorApp(QMainWindow):
             "rhef_bin_px": self.sl_rhef_bin.value()/10.0,
             "wow_enabled": self.sec_wow.is_filter_active(),
             "wow_str": 100,
-            "wow_scales": self.sl_wow_scales.value() or (8 if self.combo_wow_bilateral.currentIndex() == 2 else self.sl_wow_scales.maximum()),
+            "wow_scales": wow_scales,
             "wow_native_scales": True,
-            "wow_denoise": [slider.value()/10 for slider in self.sl_wow_denoise if slider.isEnabled()],
+            "wow_denoise": [slider.value()/10 for slider in self.sl_wow_denoise[:wow_scales]],
             "wow_bilateral": 1 if self.combo_wow_bilateral.currentIndex() else None,
             "tangential_enabled": self.sec_tangential.is_filter_active(),
             "tangential_str": 100,
@@ -1076,7 +1083,8 @@ class EclipseProcessorApp(QMainWindow):
         self._log_processing_end("PIPELINE", "Complete")
 
     def update_wow_controls(self, *, preserve_settings=False):
-        shape = self.full_raw_image.shape if self.full_raw_image is not None else (5120, 5120)
+        shape = getattr(self, '_restoring_source_shape',
+                        self.full_raw_image.shape if self.full_raw_image is not None else (5120, 5120))
         maximum = max(1, min(10, int(np.round(np.log2(min(shape)/5.)))))
         ael = self.combo_wow_bilateral.currentIndex() == 2
         if ael:
@@ -1241,7 +1249,7 @@ class EclipseProcessorApp(QMainWindow):
             filtered,
             cv2.HOUGH_GRADIENT,
             dp=1.2,
-            minDist=min(sw, sh) // 4,
+            minDist=max(1, min(sw, sh) // 4),
             param1=100,
             param2=30,
             minRadius=int(min(sw, sh) * 0.04),
@@ -1335,7 +1343,7 @@ class EclipseProcessorApp(QMainWindow):
                 image_path, project = read_settings(file_path)
                 validate_settings(self, project)
                 file_path = str(image_path)
-            geometry = None if project is None else tuple(int(project['geometry'][k]) for k in ('x','y','r'))
+            geometry = None if project is None else tuple(float(project['geometry'][k]) for k in ('x','y','r'))
             self._load_thread = TaskThread(load_source, file_path, geometry, self.detect_lunar_limb, parent=self)
             self._load_thread.file_path = file_path
             self._load_thread.project = project
@@ -1371,7 +1379,7 @@ class EclipseProcessorApp(QMainWindow):
             lower_path = file_path.lower()
             # Reject incompatible recipes before replacing the current source.
             if project is not None:
-                restore_settings(self, project)
+                restore_settings(self, project, source_shape=loaded['full'].shape)
             self.background.reset_source(loaded,project)
             self._has_layer_result = False
             engine_for(self.filter_worker).clear()
@@ -1423,15 +1431,14 @@ class EclipseProcessorApp(QMainWindow):
 
             cx_full, cy_full, r_full = loaded['circle']
 
-            self.txt_x.setText(str(cx_full))
-            self.txt_y.setText(str(cy_full))
-            self.txt_r.setText(str(r_full))
+            for key,value in zip(('x','y','r'),(cx_full,cy_full,r_full)):
+                getattr(self,'txt_'+key).setText(project['geometry'][key] if project is not None else str(value))
 
             if project is None and first_image:
                 reset_filter_defaults(self, ael=True)
                 self.apply_recommended_parameters_to_gui(r_full, w_full, h_full)
             if project is not None:
-                cx_full,cy_full,r_full=(int(getattr(self,"txt_"+key).text()) for key in ("x","y","r"))
+                cx_full,cy_full,r_full=(float(getattr(self,"txt_"+key).text()) for key in ("x","y","r"))
             if project is not None:
                 self.background.points=([tuple(p) for p in project.get('background_samples',[])] if project.get('background_samples') is not None else None)
             self.background.overlay()
@@ -1493,7 +1500,12 @@ class EclipseProcessorApp(QMainWindow):
         if not file_path.lower().endswith((".tiff", ".tif")):
             file_path += ".tiff"
         try:
-            destinations = export_paths(file_path)
+            products=dict(layers_format=self.combo_layers_format.currentData() if self.chk_export_layers.isChecked() else None,
+                          prominences=self.chk_prominences.isChecked())
+            protect_source(export_paths(file_path,**products), self.source_path)
+            if self.chk_export_layers.isChecked() or self.chk_prominences.isChecked():
+                file_path=str(available_export_path(file_path,**products))
+            destinations = export_paths(file_path,**products)
             protect_source(destinations, self.source_path)
             collisions = [str(path) for path in destinations if path.exists() or path.is_symlink()]
             if collisions and QMessageBox.question(self, "Replace export files?",
@@ -1570,6 +1582,8 @@ class EclipseProcessorApp(QMainWindow):
         thread.deleteLater()
         self._log_processing_end("EXPORT", "Complete" if thread.error is None else "Failed")
         self._finish_close()
+        if not self._closing:
+            self._dispatch_pending_preview()
 
     def render_matrix_to_screen(self):
         """Snapshot widgets now; compose pixels without blocking Qt's event loop."""

@@ -2,7 +2,7 @@
 
 Low-level new_document/add_layer/_to_lr16 and imports adapted from AEL 1.3.3,
 Copyright (c) 2026 Pere Guerra Serra, MIT (docs/third-party/AEL-MIT.txt).
-Local additions: required blend modes, merged RGBA, recipe metadata, atomic
+Local additions: required blend modes, merged RGBA, recipe metadata, no-replace
 publication and exact channel verification. No upstream AEL install is needed.
 """
 from pathlib import Path
@@ -11,6 +11,8 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import errno
+import shutil
 import tempfile
 import time
 from xml.sax.saxutils import escape
@@ -316,8 +318,25 @@ def export_psb_package(package,destination,*,color_correction=False):
         report=verify_psb_package(temporary,package,color_correction=color_correction)
         print(f"[PSB: VERIFY] Done in {time.perf_counter()-verify_start:.3f}s")
         check_cancelled()
-        # Same-directory hard link publishes atomically and refuses a name collision.
-        os.link(temporary,destination)
+        try:
+            # Prefer atomic no-replace publication on filesystems with hard links.
+            os.link(temporary,destination)
+        except (OSError,NotImplementedError) as error:
+            if (isinstance(error,OSError) and error.errno not in (errno.EPERM,errno.ENOTSUP,errno.ENOSYS,errno.EXDEV)
+                    and getattr(error,'winerror',None) not in (1,50)):
+                raise
+            created=False
+            try:
+                with destination.open('xb') as stream:
+                    created=True
+                    with temporary.open('rb') as source:
+                        shutil.copyfileobj(source,stream,1024*1024)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except BaseException:
+                if created:
+                    destination.unlink(missing_ok=True)
+                raise
         print(f"[PSB: TOTAL] Done in {time.perf_counter()-total_start:.3f}s")
         return report
     finally:

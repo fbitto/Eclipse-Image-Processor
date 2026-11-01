@@ -14,8 +14,12 @@ def write_settings(output_path, source_path, settings, parameters, display):
     from .export_paths import protect_source
     protect_source([destination], source_path)
     source=Path(source_path).resolve()
+    try:
+        relative=os.path.relpath(source,destination.parent.resolve())
+    except ValueError:
+        relative=None
     document=dict(format=FORMAT,version=VERSION,source=str(source),
-        source_relative=os.path.relpath(source,destination.parent.resolve()),
+        source_relative=relative,
         settings=settings,parameters=recipe_parameters(parameters),display=display)
     temporary=None
     try:

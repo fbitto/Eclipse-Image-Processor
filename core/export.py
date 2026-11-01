@@ -12,7 +12,7 @@ from .presentation import composition_settings, psb_presentation_settings
 from .colour import neutralize_tse, set_luminosity, warm_colour
 from .image_data import recipe_parameters
 from .layer_export import export_layer_package
-from .export_paths import export_paths, protect_source
+from .export_paths import export_paths, protect_source, available_export_path
 from .linear_export import export_linear_sources
 
 
@@ -24,7 +24,14 @@ def export_images(source, parameters, display, file_path, original_path,
                   original_rgb=None, export_prominences=False, prominence_exposure_ev=-2.,
                   prominence_saturation=1., warmth=0.):
     """Compute/write in the caller's worker; source and cached output stay untouched."""
-    destinations = export_paths(file_path, project_settings is not None)
+    products = dict(include_settings=project_settings is not None,
+                    layers_format=layers_format if export_layers else None,
+                    linear=export_linear, prominences=export_prominences)
+    destinations = export_paths(file_path, **products)
+    protect_source(destinations, original_path)
+    if export_layers or export_linear or export_prominences:
+        file_path = str(available_export_path(file_path, **products))
+    destinations = export_paths(file_path, **products)
     protect_source(destinations, original_path)
     if processed is not None and np.shape(processed) != np.shape(source):
         raise ValueError('Cached composition must match the source canvas')
@@ -76,10 +83,6 @@ def export_images(source, parameters, display, file_path, original_path,
         stage('Writing layer package')
         stem = Path(file_path).with_suffix("").with_name(Path(file_path).stem + "_PS_layers")
         candidate = stem.with_name(stem.name + '.psb') if layers_format == 'psb' else stem
-        suffix = 2
-        while candidate.exists():
-            candidate = stem.with_name(stem.name + f"_{suffix}" + ('.psb' if layers_format == 'psb' else ''))
-            suffix += 1
         if layers_format == 'psb':
             from .psb_export import export_psb_package
             with tempfile.TemporaryDirectory(prefix='eip-psb-layers-') as temporary:
@@ -98,10 +101,6 @@ def export_images(source, parameters, display, file_path, original_path,
     if export_linear:
         stage('Writing source images')
         candidate = Path(file_path).with_suffix("").with_name(Path(file_path).stem + "_sources")
-        suffix = 2
-        while candidate.exists():
-            candidate = Path(file_path).with_suffix("").with_name(Path(file_path).stem + f"_sources_{suffix}")
-            suffix += 1
         linear_path = export_linear_sources(source, source_rgb, original_path, candidate, input_state,
                                             preprocessing=parameters.get('background_extraction'))
 
@@ -157,10 +156,6 @@ def export_images(source, parameters, display, file_path, original_path,
             image,mask,settings=prominences
             # Publish both products together without replacing an earlier prominence export.
             folder=Path(file_path).with_suffix('').with_name(Path(file_path).stem+'_prominences')
-            base_folder=folder
-            suffix=2
-            while folder.exists():
-                folder=base_folder.with_name(base_folder.name+f'_{suffix}');suffix+=1
             with tempfile.TemporaryDirectory(prefix='.prominences-',dir=folder.parent) as temporary:
                 target=Path(temporary)/'products';target.mkdir()
                 tifffile.imwrite(target/'PROMINENCES.tif',to_u16(composite_prominences(np.zeros(source.shape),image,mask)),

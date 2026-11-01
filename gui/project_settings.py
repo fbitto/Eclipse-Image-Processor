@@ -1,19 +1,20 @@
 """Capture raw UI ticks, including hidden/advanced controls and ACHF panels."""
-from PySide6.QtWidgets import QCheckBox,QComboBox,QSlider
+import math
+from PySide6.QtWidgets import QAbstractButton,QComboBox,QSlider
 from .components import CollapsibleSection
 
 
 def controls(window):
     result={}
     def visit(key,value):
-        if isinstance(value,(QSlider,QCheckBox,QComboBox)):
+        if isinstance(value,(QSlider,QAbstractButton,QComboBox)):
             result[key]=value
         elif isinstance(value,(list,tuple)):
             for index,item in enumerate(value):visit(f'{key}.{index}',item)
         elif isinstance(value,dict):
             for name,item in value.items():visit(f'{key}.{name}',item)
     for name,value in vars(window).items():
-        if name.startswith(('sl_','chk_','combo_','achf_ael_controls')):
+        if name.startswith(('sl_','chk_','combo_','achf_ael_controls')) or name == 'btn_psb_preview':
             visit(name,value)
     return result
 
@@ -22,7 +23,7 @@ def capture_settings(window):
     values={}
     for name,widget in controls(window).items():
         if isinstance(widget,QSlider):values[name]=dict(kind='slider',value=widget.value())
-        elif isinstance(widget,QCheckBox):values[name]=dict(kind='check',value=widget.isChecked())
+        elif isinstance(widget,QAbstractButton):values[name]=dict(kind='check',value=widget.isChecked())
         else:values[name]=dict(kind='combo',value=widget.currentIndex(),text=widget.currentText())
     sections={name:dict(active=widget.is_filter_active(),expanded=widget.is_expanded)
         for name,widget in vars(window).items() if isinstance(widget,CollapsibleSection)}
@@ -100,14 +101,14 @@ def validate_settings(window,settings):
         raise ValueError('Settings do not match the current format')
     widgets=controls(window)
     values=settings.get('controls')
-    optional=set(filter_widgets(window)) | {'chk_prominences','sl_prominence_exposure','combo_background_degree','sl_warmth','sl_prominence_saturation'}
+    optional=set(filter_widgets(window)) | {'btn_psb_preview','chk_prominences','sl_prominence_exposure','combo_background_degree','sl_warmth','sl_prominence_saturation'}
     if (not isinstance(values,dict) or set(values)-set(widgets) or
             set(widgets)-set(values)-optional):
         raise ValueError('Settings controls do not match this application version')
     for name,record in values.items():
         if not isinstance(record,dict):raise ValueError(f'Invalid control: {name}')
         widget=widgets[name];value=record.get('value')
-        kind='slider' if isinstance(widget,QSlider) else 'check' if isinstance(widget,QCheckBox) else 'combo'
+        kind='slider' if isinstance(widget,QSlider) else 'check' if isinstance(widget,QAbstractButton) else 'combo'
         expected=bool if kind=='check' else int
         if record.get('kind')!=kind or type(value) is not expected:
             raise ValueError(f'Invalid control value: {name}')
@@ -118,9 +119,9 @@ def validate_settings(window,settings):
             raise ValueError(f'Invalid slider value: {name}')
     geometry=settings.get('geometry',{})
     try:
-        coords=[int(geometry[key]) for key in ('x','y','r')]
+        coords=[float(geometry[key]) for key in ('x','y','r')]
     except (KeyError,ValueError,TypeError):raise ValueError('Invalid saved disk geometry')
-    if coords[2]<=0:raise ValueError('Saved disk radius must be positive')
+    if not all(math.isfinite(v) for v in coords) or coords[2]<=0:raise ValueError('Saved disk radius must be positive')
     if type(settings.get('auto_calculate')) is not bool:raise ValueError('Invalid automatic calculation mode')
     points=settings.get('background_samples')
     if points is not None:
@@ -138,21 +139,25 @@ def validate_settings(window,settings):
             raise ValueError('Invalid saved filter activation')
 
 
-def restore_settings(window,settings):
+def restore_settings(window,settings, *, source_shape=None):
     """Apply a recipe atomically, including ranges changed by selector callbacks."""
     validate_settings(window,settings)
     previous=capture_settings(window)
     ranges={name:(widget.minimum(),widget.maximum()) for name,widget in controls(window).items()
             if isinstance(widget,QSlider)}
     window._restoring_settings=True
+    previous_shape=window.full_raw_image.shape if window.full_raw_image is not None else (5120,5120)
+    window._restoring_source_shape=source_shape if source_shape is not None else previous_shape
     try:
         _apply_settings(window,settings)
     except Exception:
+        window._restoring_source_shape=previous_shape
         _apply_settings(window,previous)
         for name,(minimum,maximum) in ranges.items():
             controls(window)[name].setRange(minimum,maximum)
         raise
     finally:
+        del window._restoring_source_shape
         window._restoring_settings=False
         window.recalculation_timer.stop()
         window.presentation_timer.stop()

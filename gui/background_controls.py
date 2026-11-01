@@ -125,8 +125,7 @@ class BackgroundExtraction(QObject):
         try:
             if w.chk_background.isChecked() and w.combo_input_state.currentData()!='linear':
                 raise ValueError('Background equalization requires linear input')
-            self.thread=TaskThread(equalize_background,self.base,self.geometry(),w.sl_background_radius.value()/10,
-                                   w.sl_background_grid.value(),self.points,w.chk_background.isChecked(),w.combo_background_degree.currentData(),parent=w)
+            self.thread=TaskThread(equalize_background,self.base,*self.fit_parameters(),parent=w)
             self.thread.finished.connect(self.finished)
             w.control_sidebar.setEnabled(False);w.zoom_toolbar.setEnabled(False)
             w.status_label.setText('Status: Fitting background model…')
@@ -134,11 +133,25 @@ class BackgroundExtraction(QObject):
         except Exception as error:
             self.thread=None;self.export_pending=False;w.lbl_background_fit.setText(str(error));w.status_label.setText(f'Status: Background failed — {error}');w.status_label.setToolTip(str(error))
 
+    def fit_parameters(self):
+        w=self.w
+        geometry=self.geometry()
+        if not np.isfinite(geometry).all() or geometry[2] <= 0:
+            raise ValueError('Background geometry must be finite with a positive radius')
+        return (geometry,w.sl_background_radius.value()/10,w.sl_background_grid.value(),
+                None if self.points is None else list(self.points),w.chk_background.isChecked(),
+                w.combo_background_degree.currentData())
+
     def finished(self):
         w=self.w;thread=self.thread;self.thread=None
         w.control_sidebar.setEnabled(True);w.zoom_toolbar.setEnabled(True)
         try:
             if w._closing:return
+            if thread.args[0] is not self.base or thread.args[1:] != self.fit_parameters():
+                self.dirty=True
+                if w.auto_calculate or w.has_pending_request or self.export_pending:
+                    w.dispatch_pipeline_request()
+                return
             if thread.error is not None:raise ValueError(thread.error)
             result=thread.result
             self.points=result['points'];self.report=result['report'];self.dirty=False

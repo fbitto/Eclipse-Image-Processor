@@ -209,10 +209,13 @@ def create_stepper_input(
 
     def step_val(delta: int):
         try:
-            curr = int(txt.text())
+            curr = float(txt.text())
         except ValueError:
-            curr = 0
-        txt.setText(str(max(0, curr + delta)))
+            curr = 0.
+        if not math.isfinite(curr):
+            return
+        value=max(0.,curr+delta)
+        txt.setText(str(int(value)) if value.is_integer() else str(value))
         if on_change_callback:
             on_change_callback()
 

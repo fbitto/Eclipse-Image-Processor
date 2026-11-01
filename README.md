@@ -50,7 +50,7 @@ The menu-bar/notification-area icon appears when the desktop supports a system t
 
 ## Process an image
 
-1. **Open Image / Settings:** open TIFF, FITS, XISF, PNG, JPEG or BMP, or reopen a settings JSON. Prefer an original linear image. **Input: linear** is an assumption you must check; choosing another input state does not undo a previous stretch.
+1. **Open Image / Settings:** open TIFF, FITS, XISF, PNG, JPEG or BMP, or reopen a settings JSON. TIFF input must be a single-page mono or RGB(A) image; multi-page/volume layouts are rejected. Images must be at least 4 × 4 pixels. Prefer an original linear image. **Input: linear** is an assumption you must check; choosing another input state does not undo a previous stretch.
 2. **Check disk geometry:** inspect the red circle and adjust Center X, Center Y and Radius in original-image pixels. Use **Auto-detect Lunar Disk** or Ctrl-click / Command-click to move the center. A missing-data boundary can be larger than the physical Moon. The adjacent **Disk overlay** button shows or hides the red circle and cross without recalculating the image; both are visible when opening an image.
 3. **Adjust the presentation:** the PSB preview starts enabled. Use PSB Exposure (EV) to adjust the automatic presentation, or double-click the slider to restore 0 EV.
 4. **Activate and adjust layers:** expand a filter section to edit its controls, and check **Active** to include it. Expanding the section alone does not activate it. Use **Opacity** to mix its layer with the composition; changes recompose cached layers after a short pause. Larson–Sekanina additionally exposes **Gain**, which scales its signed detail before Linear Light clipping.
@@ -135,7 +135,7 @@ For image export, choose a TIFF destination. The application writes:
 - `<name>_preview.jpg`: the selected PSB presentation at 8-bit JPEG precision (or the un-stretched composition when PSB preview is off).
 - `<name>.json`: reloadable processing settings.
 - Optionally, `<name>_PS_layers.psb`, or a TIFF layer directory with `Load_layers_Photoshop.jsx`, reference composite and recipe.
-- With prominences enabled, `<name>_prominences/PROMINENCES.tif` (RGB16 on black) and `PROMINENCES_MASK.tif` (16-bit). Photoshop export also includes an unmasked original-colour layer with an editable mask, above the corona and optional Color Correction group. Existing prominence directories receive a numbered suffix.
+- With prominences enabled, `<name>_prominences/PROMINENCES.tif` (RGB16 on black) and `PROMINENCES_MASK.tif` (16-bit). Photoshop export also includes an unmasked original-colour layer with an editable mask, above the corona and optional Color Correction group. If a requested product already exists, the whole bundle uses a new numbered stem.
 
 The default Photoshop format is **PSB, 16-bit layers**. Open it directly in Photoshop; layer names, modes, opacities and transparency are retained. The bottom **00_BACKGROUND_Black** layer fills missing regions visually; hide it to reveal transparency. Original layer masks remain intact. The TIFF alternative includes a Photoshop import script.
 
@@ -143,7 +143,7 @@ The default Photoshop format is **PSB, 16-bit layers**. Open it directly in Phot
 
 *Editable PSB layers in Photoshop, with separate blend modes and a black background.*
 
-The progress bar advances by export stages, not estimated time. Long filters or PSB verification may remain at one stage for a while. The console reports calculation times and, after completion, whether processing is idle or another update is pending. Existing layer-package destinations receive a numbered suffix. The selected image and settings destinations can be replaced after the save dialog's overwrite confirmation.
+The progress bar advances by export stages, not estimated time. Long filters or PSB verification may remain at one stage for a while. The console reports calculation times and, after completion, whether processing is idle or another update is pending. Layered exports use one available numbered stem for every companion, preserving previous bundles. TIFF/JPEG/JSON-only exports can replace selected destinations after confirmation.
 
 The PSB is verified before publication. Its cached composition matches the PSB-presentation reference, which differs from the main TIFF; Photoshop can round 16-bit blending slightly when recomputing edited layers. The optional **Add Color Correction to PSB (sRGB)** group is rendered only in Photoshop and starts off. Only that option assigns sRGB; the basic writer does not add an ICC profile. The current presentation/reference output has not been rechecked in native Photoshop. See [PSB validation and limits](docs/psb-export.md).
 

@@ -63,6 +63,7 @@ class ExportWorkerTests(unittest.TestCase):
         from PySide6.QtWidgets import QMessageBox
         w = EclipseProcessorApp()
         w.auto_calculate = False
+        w.chk_export_layers.setChecked(False)
         image = np.ones((8, 10), np.float32)
         w.full_raw_image = image
         w.raw_image = image.copy()
@@ -89,6 +90,24 @@ class ExportWorkerTests(unittest.TestCase):
                 self.assertEqual(jpeg.read_bytes(), b'old preview')
                 self.assertEqual(settings.read_bytes(), b'old settings')
         finally:
+            close_window(w)
+
+    def test_layered_collision_selects_one_new_bundle_stem_before_worker(self):
+        w=EclipseProcessorApp();w.auto_calculate=False
+        image=np.ones((8,10),np.float32)
+        w.full_raw_image=w.raw_image=w.preview_image=image
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);target=root/'new.tif';jpeg=root/'new_preview.jpg'
+                jpeg.write_bytes(b'old preview')
+                with patch('gui.app.QFileDialog.getSaveFileName',return_value=(str(target),'')),patch('gui.app.QMessageBox.question') as question,patch('gui.app.ExportThread') as worker:
+                    w.export_image_action()
+                    question.assert_not_called()
+                    self.assertEqual(worker.call_args.args[0]['file_path'],str(root/'new_2.tif'))
+                    worker.return_value.start.assert_called_once()
+                self.assertEqual(jpeg.read_bytes(),b'old preview')
+        finally:
+            w._export_thread=None
             close_window(w)
 
     def test_snapshot_worker_keeps_event_loop_running_and_handles_failure(self):

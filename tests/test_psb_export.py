@@ -1,5 +1,6 @@
 """Exact PSB16 package roundtrip, native-compatible block order and atomic failure."""
 import json
+import errno
 from pathlib import Path
 import tempfile
 from threading import Event
@@ -45,6 +46,29 @@ class PSBExportTests(unittest.TestCase):
 
     def _save_recipe(self):
         (self.package/'recipe.json').write_text(json.dumps(self.recipe))
+
+    def test_verified_psb_publishes_without_hard_link_support(self):
+        windows_error=OSError(errno.EINVAL,'Incorrect function');windows_error.winerror=1
+        errors=(OSError(errno.ENOTSUP,'hard links unavailable'),windows_error,NotImplementedError())
+        for index,error in enumerate(errors):
+            destination=self.root/f'external_{index}.psb'
+            with self.subTest(error=error),patch('core.psb_export.os.link',side_effect=error):
+                export_psb_package(self.package,destination)
+                verify_psb_package(destination,self.package)
+        self.assertFalse(list(self.root.glob('.*.psb.tmp')))
+
+    def test_copy_fallback_cleans_failed_copy_and_preserves_racing_destination(self):
+        destination=self.root/'external.psb'
+        with patch('core.psb_export.os.link',side_effect=OSError(errno.ENOTSUP,'hard links unavailable')),patch('core.psb_export.shutil.copyfileobj',side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):export_psb_package(self.package,destination)
+        self.assertFalse(destination.exists())
+        def race(*args):
+            destination.write_bytes(b'other export')
+            raise OSError(errno.ENOTSUP,'hard links unavailable')
+        with patch('core.psb_export.os.link',side_effect=race):
+            with self.assertRaises(FileExistsError):export_psb_package(self.package,destination)
+        self.assertEqual(destination.read_bytes(),b'other export')
+        self.assertFalse(list(self.root.glob('.*.psb.tmp')))
 
     def test_exact_channels_and_metadata_with_independent_reader(self):
         destination=self.root/'test.psb'

@@ -172,7 +172,9 @@ class ProminenceTests(unittest.TestCase):
                 export_images(source,p,{},str(target),'original.tif',original_rgb=rgb,
                               export_prominences=True,processed=source)
             self.assertTrue((root/'out_prominences/PROMINENCES.tif').is_file())
-            self.assertTrue((root/'out_prominences_2/PROMINENCES.tif').is_file())
+            self.assertTrue((root/'out_2_prominences/PROMINENCES.tif').is_file())
+            self.assertTrue((root/'out_2.tif').is_file())
+            self.assertTrue((root/'out_2_preview.jpg').is_file())
             self.assertFalse(list(root.glob('*.psb')))
             with self.assertRaisesRegex(ValueError,'original loaded RGB'):
                 export_images(source,p,{},str(root/'bad.tif'),'mono.tif',export_prominences=True)
