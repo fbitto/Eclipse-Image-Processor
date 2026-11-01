@@ -348,6 +348,10 @@ class EclipseProcessorApp(QMainWindow):
         self.chk_statistics_lunar = QCheckBox('Exclude lunar disk from filter statistics')
         self.chk_statistics_lunar.setChecked(True)
         self.chk_statistics_lunar.setToolTip('Keep finite lunar pixels unchanged while excluding them from enhancement statistics. This is separate from missing-data validity. Masked WOW uses the observed-support starlet variant.')
+        self.chk_statistics_separate_ael=QCheckBox('Experimental AEL support separation')
+        self.chk_statistics_separate_ael.setToolTip('Keep observed positive samples in AEL operators. Exclusions apply to ACHF radial fitting and layer display statistics; missing/nonpositive data stay excluded. Experimental: compatibility behavior remains the default.')
+        self.chk_statistics_separate_ael.toggled.connect(self.on_ael_support_changed)
+        self.sec_geo.content_layout.addWidget(self.chk_statistics_separate_ael)
         self.chk_statistics_bright = QCheckBox('Exclude bright limb samples from statistics')
         self.chk_statistics_bright.setToolTip('Exclude the brightest samples in a selected limb annulus from statistics and leave those input pixels unchanged. This brightness heuristic does not identify prominences scientifically.')
         for checkbox in (self.chk_statistics_lunar, self.chk_statistics_bright):
@@ -856,6 +860,11 @@ class EclipseProcessorApp(QMainWindow):
         """Wait for a short pause in opacity edits, then recompose cached layers."""
         self.presentation_timer.start(250)
 
+    def on_ael_support_changed(self,*_):
+        active_achf=self.sec_achf.is_filter_active() and any(c['enabled'].isChecked() for c in self.achf_ael_controls.values())
+        active_wow=self.sec_wow.is_filter_active() and self.combo_wow_bilateral.currentIndex()==2
+        if active_achf or active_wow:self.dispatch_pipeline_request_if_auto()
+
     def on_filter_toggled(self, is_active: bool):
         """Enable or bypass a layer without changing its opacity."""
         self.dispatch_pipeline_request_if_auto()
@@ -1010,6 +1019,7 @@ class EclipseProcessorApp(QMainWindow):
             params['achf_ael_parameters'] = variants[selected]
         params.update(collect_controls(self))
         params.update(statistics_exclude_lunar=self.chk_statistics_lunar.isChecked(),
+                      statistics_separate_ael=self.chk_statistics_separate_ael.isChecked(),
                       statistics_exclude_bright=self.chk_statistics_bright.isChecked(),
                       statistics_guard_px=self.sl_statistics_guard.value()/10,
                       statistics_bright_percentile=self.sl_statistics_percentile.value()/10,

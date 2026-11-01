@@ -42,3 +42,5 @@
 - Route numerical control releases and value changes through their filter-section activation gate, including combo boxes and advanced scales. ACHF additionally gates excluded variant panels. Use toggled for compare-button state so programmatic unchecking updates its label/mode. Preserve geometry as one blocked-signals snapshot on source replacement.
 
 - Keep Cancel export outside the disabled sidebar/zoom toolbar. Give export workers their own cooperative token; stop accepting cancellation at publication. Distinguish cancellation from exceptions and close by requesting cancellation, never terminating a QThread during a write.
+
+- Experimental AEL support separation is an optional geometry/statistics checkbox, default off in omitted-field v4 recipes. Keep observed kernel support distinct from radial-fit/display samples, and gate the checkbox’s invalidation when no AEL layer is active. Coverage cannot override undefined model/kernel support or positivity restrictions.

@@ -51,7 +51,7 @@ def normalized_gaussian(img: np.ndarray, valid: np.ndarray | None, sigma: float,
     return (out, den) if return_support else out
 
 
-def radial_log_residual(luminance, valid, geometry):
+def radial_log_residual(luminance, valid, geometry, statistics=None):
     """Subtract a smooth cubic spline in ln r BEFORE isotropic high-pass.
 
     Ring medians are observations for a smooth fit, never a stepwise image to
@@ -62,6 +62,8 @@ def radial_log_residual(luminance, valid, geometry):
     m = valid & np.isfinite(a) & (a>0)
     r = geometry.radius_map()
     m &= r>0
+    observed=m
+    if statistics is not None:m=m & np.asarray(statistics,bool)
     if m.sum()<64: raise ValueError('not enough positive observed pixels for radial profile')
     ri = np.floor(r[m]).astype(int)
     order = np.argsort(ri,kind='stable'); cnt = np.bincount(ri); cuts=np.r_[0,np.cumsum(cnt)]
@@ -84,17 +86,22 @@ def radial_log_residual(luminance, valid, geometry):
         except ValueError:
             if not knots: raise
             knots=knots[::2] if len(knots)>1 else []
-    ln=np.zeros(a.shape,np.float32); ln[m]=np.log(a[m])
+    targets=m
+    if statistics is not None:
+        rings=np.floor(r).astype(int)
+        supported=(rings<len(cnt)) & (cnt[np.minimum(rings,len(cnt)-1)]>=12)
+        targets=m | (observed & supported)
+    ln=np.zeros(a.shape,np.float32); ln[targets]=np.log(a[targets])
     profile=fit(np.log(np.clip(r,np.exp(lr[0]),np.exp(lr[-1]))))
-    out=np.where(m,ln-profile,np.nan).astype(np.float32)
+    out=np.where(targets,ln-profile,np.nan).astype(np.float32)
     return out,dict(method='cubic spline in ln r fitted to annular log-luminance medians',
                     knots_rsun=(np.exp(knots)/geometry.sun_radius_px).tolist(),
                     annuli=len(bins),fit_rms=float(np.sqrt(np.mean((med-fit(lr))**2))))
 
 
-def achf_isotropic(luminance, valid, geometry, *, sigmas=(1,2,4,8,16), outer_sigma=1.5):
+def achf_isotropic(luminance, valid, geometry, *, sigmas=(1,2,4,8,16), outer_sigma=1.5, statistics=None):
     check_cancelled()
-    residual, info=radial_log_residual(luminance,valid,geometry)
+    residual, info=radial_log_residual(luminance,valid,geometry,statistics=statistics)
     m=np.isfinite(residual)
     detail=np.zeros(residual.shape,np.float32)
     for s in sigmas:
@@ -109,16 +116,15 @@ def achf_isotropic(luminance, valid, geometry, *, sigmas=(1,2,4,8,16), outer_sig
 def display_detail(detail, valid, *, noise_floor=1e-5, scale_region=None, statistics=None):
     good=valid & np.isfinite(detail)
     if not good.any(): raise ValueError('filter produced no observed values')
-    sel=good if scale_region is None or (good & scale_region).sum()<1000 else good & scale_region
-    if statistics is not None:
-        sel=good & np.asarray(statistics,bool)
-        if not sel.any():raise ValueError("No supported display statistics")
+    samples=good if statistics is None else good & np.asarray(statistics,bool)
+    if not samples.any():raise ValueError('No supported display statistics')
+    sel=samples if scale_region is None or (samples & scale_region).sum()<1000 else samples & scale_region
     median=float(np.median(detail[sel]))
     scale=max(float(1.4826*np.median(np.abs(detail[sel]-median))),noise_floor)
     return np.where(good,.5+.5*np.tanh(detail/(2.5*scale)),np.nan).astype(np.float32),dict(scale=scale,tanh=2.5)
 
 
-def display_detail_rings(detail, valid, geometry, *, width_px=2., min_count=50, smooth=3, noise_floor=1e-5, sparse_spread=False):
+def display_detail_rings(detail, valid, geometry, *, width_px=2., min_count=50, smooth=3, noise_floor=1e-5, sparse_spread=False, statistics=None):
     """Map signed detail to a display layer with a level and a spread measured ring by ring (issue #9, Edu).
 
     Median and 1.4826·MAD in annuli of ``width_px`` around the Sun (each with at least ``min_count`` pixels),
@@ -130,19 +136,21 @@ def display_detail_rings(detail, valid, geometry, *, width_px=2., min_count=50, 
     outer field, and it equalises the contrast across radius, which is a presentation choice, as in an NRGF."""
     good=valid & np.isfinite(detail)
     if not good.any(): raise ValueError('filter produced no observed values')
+    samples=good if statistics is None else good & np.asarray(statistics,bool)
+    if not samples.any():raise ValueError("No supported ring display statistics")
     r=geometry.radius_map()
-    rv=r[good]; k=np.floor(rv/width_px).astype(np.int32)              # 32-bit keys, one sorted copy of the detail
+    rv=r[samples]; k=np.floor(rv/width_px).astype(np.int32)              # 32-bit keys, one sorted copy of the detail
     cnt=np.bincount(k); rsum=np.bincount(k,weights=rv); del rv
-    ds=detail[good].astype(np.float64)[np.argsort(k,kind='stable')]; del k
+    ds=detail[samples].astype(np.float64)[np.argsort(k,kind='stable')]; del k
     start=np.concatenate([[0],np.cumsum(cnt)[:-1]]); sel=np.flatnonzero(cnt>=min_count)
     if len(sel)<3:                                       # too few populated annuli (a narrow wedge of data): the
         if sparse_spread:
-            selected=detail[good]
+            selected=detail[samples]
             nonzero=np.abs(selected-np.median(selected))
             nonzero=nonzero[nonzero > 0]
             if nonzero.size and np.median(np.abs(selected-np.median(selected))) == 0:
                 noise_floor=max(noise_floor,float(np.median(nonzero)))
-        out,info=display_detail(detail,valid,noise_floor=noise_floor)
+        out,info=display_detail(detail,valid,noise_floor=noise_floor,statistics=statistics)
         return out,dict(info,display='one spread for the whole image (fewer than three populated annuli)')
     med=[];mad=[]
     for index,i in enumerate(sel):
@@ -173,7 +181,7 @@ AEL_PRESETS = {
 
 
 def ael_achf_layer(image, cx, cy, radius, valid=None, scale=1.,
-                   variant='ael_iso_04', parameters=None):
+                   variant='ael_iso_04', parameters=None, statistics=None):
     """AEL encoded Overlay layer; scales are native pixels times target/full scale."""
     a = np.asarray(image, dtype=np.float32)
     if a.ndim != 2 or not a.size:
@@ -186,6 +194,8 @@ def ael_achf_layer(image, cx, cy, radius, valid=None, scale=1.,
         if valid.shape != a.shape:
             raise ValueError('AEL ACHF validity must match image')
         mask &= valid
+    if statistics is not None and np.shape(statistics)!=a.shape:
+        raise ValueError("AEL statistics mask must match image")
     y = (np.arange(a.shape[0], dtype=float)-cy)[:, None]
     x = (np.arange(a.shape[1], dtype=float)-cx)[None, :]
     r = np.hypot(x, y).astype(np.float32)
@@ -213,11 +223,12 @@ def ael_achf_layer(image, cx, cy, radius, valid=None, scale=1.,
         target_sigmas=scale*sigmas
         resolved=np.ones(len(sigmas),bool) if scale >= 1 else target_sigmas >= .5
         detail, info = achf_isotropic(a, mask, geometry,
-                                     sigmas=tuple(target_sigmas[resolved]), outer_sigma=outer*scale)
+                                     sigmas=tuple(target_sigmas[resolved]), outer_sigma=outer*scale,statistics=statistics)
         info['omitted_sigmas_px']=target_sigmas[~resolved].tolist()
         info.update(native_sigmas=sigmas.tolist(), native_outer_sigma=outer)
-    layer, display = display_detail_rings(detail, mask, geometry, width_px=2.*scale)
-    return layer, dict(info, **display, variant=variant, target_scale=scale, upstream_version='1.3.5')
+    layer, display = display_detail_rings(detail, mask, geometry, width_px=2.*scale,statistics=statistics)
+    return layer, dict(info, **display, variant=variant, target_scale=scale, upstream_version='1.3.5',
+                       support_mode='experimental statistics separation' if statistics is not None else 'compatibility')
 
 
 def apply_ael_achf(image, strength, cx, cy, radius, valid=None, scale=1.,

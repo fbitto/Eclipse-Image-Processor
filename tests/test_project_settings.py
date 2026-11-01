@@ -21,6 +21,21 @@ class ProjectSettingsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
 
+    def test_experimental_ael_support_is_optional_and_defaults_off_in_old_recipes(self):
+        from copy import deepcopy
+        w=EclipseProcessorApp();w.auto_calculate=False
+        try:
+            w.full_raw_image=w.raw_image=w.preview_image=np.ones((32,48),np.float32)
+            self.assertFalse(w.chk_statistics_separate_ael.isChecked())
+            w.chk_statistics_separate_ael.setChecked(True);saved=capture_settings(w)
+            self.assertTrue(w.collect_filter_parameters((32,48))['statistics_separate_ael'])
+            w.chk_statistics_separate_ael.setChecked(False);restore_settings(w,saved)
+            self.assertTrue(w.chk_statistics_separate_ael.isChecked())
+            older=deepcopy(saved);older['controls'].pop('chk_statistics_separate_ael')
+            restore_settings(w,older)
+            self.assertFalse(w.chk_statistics_separate_ael.isChecked())
+        finally:close_window(w)
+
     def test_retired_achf_background_control_is_ignored_in_existing_recipes(self):
         w=EclipseProcessorApp();w.auto_calculate=False
         try:

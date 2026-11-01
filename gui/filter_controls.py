@@ -153,7 +153,7 @@ def add_advanced_mode(window, header_layout):
                 window.combo_rhef_mode, window.sl_rhef_rad, window.sl_rhef_bin,
                 window.chk_rhef_symmetric, window.chk_tangential_outer,
                 window.sl_achf_boost,
-                window.chk_statistics_lunar, window.chk_statistics_bright,
+                window.chk_statistics_lunar, window.chk_statistics_bright,window.chk_statistics_separate_ael,
                 window.sl_statistics_guard, window.sl_statistics_percentile,
                 window.sl_statistics_outer]
     for family, specs in CONTROLS.items():

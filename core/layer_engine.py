@@ -192,6 +192,7 @@ class LayerEngine:
             p[family+'_enabled']=family == name
         p[name+'_str']=100
         p['fnrgf_apply_mask']=0
+        p['statistics_targets']=True
         if name in ('fnrgf', 'rhef'):
             p['operator_output']=True
         if name == 'tangential':
@@ -202,21 +203,24 @@ class LayerEngine:
         filter_start=time.perf_counter()
         ael=name == 'achf' and variant != 'adaptive'
         ael_wow=name == 'wow' and p.get('wow_mode') == 'ael_bilateral'
+        separate_ael=p.get('statistics_separate_ael',False)
+        ael_support=valid if separate_ael else valid & statistics
         if name == 'nrgf':
             from .nrgf import nrgf_layer
             values, mapping = nrgf_layer(prepared, p, valid & statistics,targets=valid)
         elif ael_wow:
             from .ael_wow import ael_wow_layer
-            values, mapping = ael_wow_layer(prepared, p, valid & statistics)
+            values, mapping = ael_wow_layer(prepared,p,ael_support,statistics=statistics if separate_ael else None)
         elif ael:
             from .ael_achf import ael_achf_layer
-            values,mapping=ael_achf_layer(prepared,p['sx'],p['sy'],p['sr'],valid & statistics,
-                p.get('achf_ael_scale',1.),variant,p.get('achf_ael_parameters'))
+            values,mapping=ael_achf_layer(prepared,p['sx'],p['sy'],p['sr'],ael_support,
+                p.get('achf_ael_scale',1.),variant,p.get('achf_ael_parameters'),
+                statistics=statistics if separate_ael else None)
         elif name == 'larson_sekanina':
             from .filters import larson_sekanina_residual
             values=larson_sekanina_residual(prepared,p['sx'],p['sy'],p['sr'],
                 p.get('larson_sekanina_radial',0.),p.get('larson_sekanina_angular',3.),valid & statistics,
-                nearby_delta=p.get('larson_sekanina_nearby_delta',0.))
+                nearby_delta=p.get('larson_sekanina_nearby_delta',0.),target_valid=valid)
         else:
             filtered=apply_filter(worker,prepared,p,process_label='INDEPENDENT '+name.upper(),verbose=False)
             values=(filtered-prepared if name == 'tangential' else
@@ -224,11 +228,10 @@ class LayerEngine:
         filter_seconds=time.perf_counter()-filter_start
         encoding_start=time.perf_counter()
         domain=branch_domain(source.shape,p,name) & valid
-        model_targets = name in ('nrgf','fnrgf','rhef')
+        model_targets = not (ael or ael_wow) or separate_ael
         if not model_targets:
             domain &= statistics
-        if name in ('nrgf', 'fnrgf', 'rhef'):
-            domain &= np.isfinite(values)
+        domain &= np.isfinite(values)
         if ael or ael_wow or (name == 'rhef' and p.get('rhef_mode') == 'continuous'):
             domain &= (prepared>0) & np.isfinite(values)
         mode='Multiply' if name in ('nrgf', 'fnrgf') else 'Linear Light' if name == 'larson_sekanina' else 'Overlay'
@@ -239,17 +242,17 @@ class LayerEngine:
             if name == 'rhef':
                 mapping=dict(encoding='Upsilon-curved ranks; no display renormalization')
         elif name == 'larson_sekanina':
-            image,mapping=linear_detail_layer(values,domain,np.ptp(prepared[valid]))
+            image,mapping=linear_detail_layer(values,domain,np.ptp(prepared[domain & statistics]) if (domain & statistics).any() else 0.,statistics)
         elif name == 'tangential' or (name == 'achf' and variant == 'adaptive'):
             from types import SimpleNamespace
             from .ael_achf import display_detail_rings
             yy,xx=np.ogrid[:source.shape[0],:source.shape[1]]
             radii=np.hypot(xx-params['sx'],yy-params['sy'])
             good=domain & np.isfinite(values)
-            if good.any():
-                floor=float(max(float(np.max(np.abs(values[good])))*np.finfo(np.float32).eps, np.finfo(np.float32).tiny))
+            if (good & statistics).any():
+                floor=float(max(float(np.max(np.abs(values[good & statistics])))*np.finfo(np.float32).eps, np.finfo(np.float32).tiny))
                 image,mapping=display_detail_rings(values,good,SimpleNamespace(radius_map=lambda:radii),
-                    width_px=2*params.get('nrgf_scale',1.),noise_floor=floor,sparse_spread=True)
+                    width_px=2*params.get('nrgf_scale',1.),noise_floor=floor,sparse_spread=True,statistics=statistics)
                 gain=float(params.get('tangential_gain',1.) if name == 'tangential' else params.get('achf_boost',20)/10)
                 if not np.isfinite(gain) or not 0 <= gain <= 5:
                     raise ValueError('Detail gain must lie in [0, 5]')

@@ -31,17 +31,18 @@ def statistics_support(image, parameters, valid=None):
 
 class StatisticsWorker:
     """Exclude samples from statistics and retain each stage's input there."""
-    def __init__(self, worker, support):
+    def __init__(self, worker, support, targets=None):
         from .masked_filters import MaskedWorker
-        self.worker = MaskedWorker(worker, support)
+        self.worker = MaskedWorker(worker, support, targets=targets)
         self.support = support
+        self.targets=support if targets is None else targets
 
     def __getattr__(self, name):
         method = getattr(self.worker, name)
         def run(image, *args, **kwargs):
-            transport = np.where(self.support, image, 0)
+            transport = np.where(self.targets, image, 0)
             result = method(transport, *args, **kwargs)
-            return np.where(self.support, result, image).astype(np.float32)
+            return np.where(self.targets, result, image).astype(np.float32)
         return run
 
 

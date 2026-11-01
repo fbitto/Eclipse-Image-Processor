@@ -175,7 +175,7 @@ def linear_light(base, layer, alpha, opacity):
     return base*(1-weight) + mixed*weight
 
 
-def linear_detail_layer(values, valid, input_span):
+def linear_detail_layer(values, valid, input_span, statistics=None):
     """Zero-centred linear encoding; one shared scale, no median or tanh.
 
     L=0.5+D/(2S), so Linear Light adds D/S before gamut clipping.
@@ -184,7 +184,8 @@ def linear_detail_layer(values, valid, input_span):
     selected = np.asarray(values, dtype=float)[valid]
     if not np.isfinite(selected).all():
         raise ValueError('Observed detail must be finite')
-    peak = float(np.max(np.abs(selected))) if selected.size else 0.
+    reference=selected if statistics is None else np.asarray(values,dtype=float)[valid & statistics]
+    peak = float(np.max(np.abs(reference))) if reference.size else 0.
     scale = max(float(input_span), peak)
     layer = np.full(values.shape, .5)
     if scale > 0:

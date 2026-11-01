@@ -121,7 +121,7 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
         base_worker = worker.worker if isinstance(worker, MaskedWorker) else worker
         operator_support=support
         if not p.get("operator_output", False):
-            worker = StatisticsWorker(base_worker, support)
+            worker = StatisticsWorker(base_worker, support,targets=valid if p.get("statistics_targets",False) else None)
 
     check_cancelled()
     if name == 'nrgf':
@@ -275,7 +275,7 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
             print(f"[{process_label}: ACHF {p.get('achf_variant', 'adaptive')}] Done in {time.time() - step_start:.3f}s")
 
     check_cancelled()
-    if not p.get("operator_output", False):
+    if not p.get("operator_output", False) and not p.get("statistics_targets",False):
         finite_image(img)
     if verbose:
         print(f"[{process_label}] Complete. Total time: {time.time() - pipeline_start:.3f}s\n{'='*80}\n")

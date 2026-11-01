@@ -103,7 +103,7 @@ def validate_settings(window,settings):
     values=settings.get('controls')
     if isinstance(values,dict):
         values={k:v for k,v in values.items() if k != 'sl_achf_background'}
-    optional=set(filter_widgets(window)) | {'btn_psb_preview','chk_prominences','sl_prominence_exposure','combo_background_degree','sl_warmth','sl_prominence_saturation'}
+    optional=set(filter_widgets(window)) | {'chk_statistics_separate_ael','btn_psb_preview','chk_prominences','sl_prominence_exposure','combo_background_degree','sl_warmth','sl_prominence_saturation'}
     if (not isinstance(values,dict) or set(values)-set(widgets) or
             set(widgets)-set(values)-optional):
         raise ValueError('Settings controls do not match this application version')
@@ -174,6 +174,7 @@ def _apply_settings(window,settings):
         reset_filter_defaults(window,ael=False)
         window.combo_background_degree.setCurrentIndex(0)
         window.btn_psb_preview.setChecked(True)
+        window.chk_statistics_separate_ael.setChecked(False)
         window.prominence_view.setCurrentIndex(0)
         window.chk_prominences.setChecked(False)
         window.sl_prominence_exposure.setValue(-200)

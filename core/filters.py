@@ -30,7 +30,7 @@ def finite_image(image):
     return a
 
 
-def blend_filter_result(image, filtered, strength):
+def blend_filter_result(image, filtered, strength, statistics=None):
     """Presentation blend in common input units; scientific cores stay untouched.
 
     Affinely map the full filtered range to the input range before mixing.
@@ -44,13 +44,16 @@ def blend_filter_result(image, filtered, strength):
     output = original.copy()
     if not np.any(mask):
         return output.astype(np.float32)
-    source = original[mask]
+    samples=mask if statistics is None else mask & np.asarray(statistics,bool)
+    if not samples.any():return output.astype(np.float32)
+    source = original[samples]
     values = result[mask]
-    span = np.ptp(values)
-    mapped = (source.min() + (values-values.min())/span*np.ptp(source)
+    reference=result[samples]
+    span = np.ptp(reference)
+    mapped = (source.min() + (values-reference.min())/span*np.ptp(source)
               if span > 0 else np.full(values.shape, source.mean()))
     alpha = float(strength)/100.0
-    output[mask] = (1-alpha)*source + alpha*mapped
+    output[mask] = (1-alpha)*original[mask] + alpha*mapped
     return output.astype(np.float32)
 
 
@@ -78,7 +81,7 @@ def ordered_scale_results(function, items, image):
 
 
 def larson_sekanina_residual(image, cx, cy, radius, radial_increment=0.,
-                             angular_increment=3., valid=None, nearby_delta=0.):
+                             angular_increment=3., valid=None, nearby_delta=0., target_valid=None):
     """Classic 2I-I(r-dr, theta-da)-I(r-dr, theta+da), in input units.
 
     2D samples use bilinear interpolation, dr in image pixels, da in degrees.
@@ -107,6 +110,10 @@ def larson_sekanina_residual(image, cx, cy, radius, radial_increment=0.,
         return result
     y, x = np.ogrid[:a.shape[0], :a.shape[1]]
     support = observed & (np.hypot(x-cx, y-cy) > radius)
+    targets=support
+    if target_valid is not None:
+        if np.shape(target_valid) != a.shape:raise ValueError('Larson-Sekanina target validity must match image')
+        targets=np.asarray(target_valid,bool) & np.isfinite(a) & (np.hypot(x-cx,y-cy)>radius)
     signal = np.where(support, a, 0)
     weights = support.astype(float)
     half_width = min(nearby_delta, angular_increment, 180-angular_increment)
@@ -118,7 +125,7 @@ def larson_sekanina_residual(image, cx, cy, radius, radial_increment=0.,
         r = np.hypot(xx-cx, yy-cy)
         dx, dy = xx-cx, yy-cy
         shifted_r = r-radial_increment
-        usable = support[first:stop].copy() & (shifted_r > radius)
+        usable = targets[first:stop].copy() & (shifted_r > radius)
         detail = 2*np.where(usable, a[first:stop], 0)
         factor = np.divide(shifted_r, r, out=np.zeros_like(r), where=r > 0)
         for angle in angles:
@@ -387,7 +394,7 @@ def fnrgf_normalize(image, radii, angles, bin_edges, order=3, segments=130,
 
 
 def adaptive_circular_highpass(image, radius, intensity_threshold, gain=2.0,
-                               background=0.1, regions=None, spatial_scale=1.0, threshold_mode="absolute"):
+                               background=0.1, regions=None, spatial_scale=1.0, threshold_mode="absolute", sample_valid=None):
     """Own variable-kernel implementation of Druckmuller et al. (2006), §4.2.
 
     Absolute thresholds use input units; relative thresholds compare |p-q|
@@ -413,7 +420,9 @@ def adaptive_circular_highpass(image, radius, intensity_threshold, gain=2.0,
     # The minimum width is defined in preview pixels, just like the support.
     sigma = max(radius / 3.0, 0.25 * spatial_scale)
     numerator = np.zeros_like(a)
-    denominator = np.ones_like(a)  # central Gaussian weight
+    samples=np.ones(a.shape,bool) if sample_valid is None else np.asarray(sample_valid,bool)
+    if samples.shape != a.shape:raise ValueError("ACHF statistics mask must match image")
+    denominator = samples.astype(float)  # central Gaussian weight only when sampled
     # Enumerate one half of the circular support; never wrap image borders.
     for dy in range(0, min(int(np.ceil(radius)), (h - 1) // 2) + 1):
         check_cancelled()
@@ -433,13 +442,16 @@ def adaptive_circular_highpass(image, radius, intensity_threshold, gain=2.0,
                 minus_limit=intensity_threshold*.5*(np.abs(minus)+np.abs(center))
             accepted = ((np.abs(plus-center) <= plus_limit)
                         & (np.abs(minus-center) <= minus_limit)
+                        & samples[y0+dy:y1+dy,x0+dx:x1+dx]
+                        & samples[y0-dy:y1-dy,x0-dx:x1-dx]
                         & (labels[y0+dy:y1+dy, x0+dx:x1+dx] == region)
                         & (labels[y0-dy:y1-dy, x0-dx:x1-dx] == region))
             weight = accepted * np.exp(-(dx*dx+dy*dy)/(2*sigma*sigma))
             numerator[y0:y1, x0:x1] += weight * ((center-plus)+(center-minus))
             denominator[y0:y1, x0:x1] += 2*weight
     # Signed output is intentional. No clipping or min/max normalization here.
-    return (background*a + gain*numerator/denominator).astype(np.float32)
+    detail=np.divide(numerator,denominator,out=np.full_like(a,np.nan),where=denominator>0)
+    return (background*a + gain*detail).astype(np.float32)
 
 
 class FilterWorker(QObject):
@@ -725,7 +737,7 @@ class FilterWorker(QObject):
 
     def run_tangential(self, img, strength, sun_x, sun_y, sun_r,
                        arc_sigma=3., gain=1., denoise=0., inner_radius=1.,
-                       outer_radius=0., fade_px=8., valid=None):
+                       outer_radius=0., fade_px=8., valid=None, target_valid=None):
         if strength == 0:
             return img.copy()
         from .tangential import tangential_detail
@@ -733,13 +745,14 @@ class FilterWorker(QObject):
             original = finite_image(img)
         else:
             from .image_data import observed_image
-            original, valid = observed_image(img, valid)
+            original, observed = observed_image(img, valid if target_valid is None else target_valid)
         filtered = tangential_detail(original, sun_x, sun_y, sun_r, arc_sigma, gain,
-                                     denoise, inner_radius, outer_radius, fade_px, valid)
+                                     denoise, inner_radius, outer_radius, fade_px, valid,target_valid=target_valid)
         selected = np.isfinite(original) & np.isfinite(filtered)
         result = original.copy()
         alpha = float(strength)/100
         result[selected] = (1-alpha)*original[selected]+alpha*filtered[selected]
+        if target_valid is not None:result[np.isfinite(original)&~np.isfinite(filtered)]=np.nan
         return result.astype(np.float32)
 
     def run_larson_sekanina(self, img, strength, sun_x, sun_y, sun_r,

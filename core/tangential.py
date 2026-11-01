@@ -14,7 +14,7 @@ import os
 FFT_MIN_RADIUS = 32
 
 def tangential_detail(image, cx, cy, radius, arc_sigma_deg=3., gain=1.,
-                      denoise=0., inner_radius=1., outer_radius=0., fade_px=8., valid=None):
+                      denoise=0., inner_radius=1., outer_radius=0., fade_px=8., valid=None, target_valid=None):
     a = np.asarray(image, dtype=float)
     if a.ndim != 2 or not a.size:
         raise ValueError('Tangential detail needs a nonempty 2D image')
@@ -33,7 +33,11 @@ def tangential_detail(image, cx, cy, radius, arc_sigma_deg=3., gain=1.,
     yy, xx = np.indices(a.shape, dtype=float)
     r = np.hypot(xx-cx, yy-cy)
     angle = np.arctan2(yy-cy, xx-cx) % (2*np.pi)
-    domain = mask & (r >= inner_radius*radius)
+    targets=mask
+    if target_valid is not None:
+        if np.shape(target_valid)!=a.shape:raise ValueError('Tangential target validity must match image')
+        targets=np.asarray(target_valid,bool)&np.isfinite(a)
+    domain = targets & (r >= inner_radius*radius)
     if outer_radius:
         domain &= r < outer_radius*radius
     detail = np.zeros(a.shape, dtype=float)
@@ -91,6 +95,12 @@ def tangential_detail(image, cx, cy, radius, arc_sigma_deg=3., gain=1.,
         coords = [angle.ravel()[target]*na/(2*np.pi), r.ravel()[target]-first]
         periodic = np.concatenate([d, d[:1]], axis=0)
         detail.ravel()[target] = map_coordinates(periodic, coords, order=1, mode='nearest', prefilter=False)
+        excluded=~mask.ravel()[target]
+        if excluded.any():
+            background=map_coordinates(np.concatenate([mean,mean[:1]],axis=0),coords,order=1,mode='nearest',prefilter=False)
+            mass=map_coordinates(np.concatenate([sw,sw[:1]],axis=0),coords,order=1,mode='nearest',prefilter=False)
+            evaluate=target[excluded]
+            detail.ravel()[evaluate]=np.where(mass[excluded]>.05,a.ravel()[evaluate]-background[excluded],np.nan)
     if denoise:
         # Robust high-pass estimate on observed adjacent pairs; not detector SNR.
         differences = np.diff(signal, axis=1)

@@ -128,7 +128,7 @@ wow_bilateral = wow_edge_aware                           # the name up to 1.3.4
 
 
 
-def ael_wow_layer(image, params, valid=None):
+def ael_wow_layer(image, params, valid=None, statistics=None):
     """Encoded Overlay layer. wow_scales is adapted to target resolution upstream."""
     a = np.asarray(image,dtype=np.float32)
     if a.ndim != 2 or not a.size:
@@ -144,13 +144,17 @@ def ael_wow_layer(image, params, valid=None):
         if np.shape(valid) != a.shape:
             raise ValueError('AEL WOW validity must match image')
         mask &= np.asarray(valid,bool)
+    if statistics is not None and np.shape(statistics)!=a.shape:
+        raise ValueError("AEL WOW statistics mask must match image")
     y,x=np.ogrid[:a.shape[0],:a.shape[1]]
     r=np.hypot(x-cx,y-cy).astype(np.float32)
     check_cancelled()
     detail=wow_edge_aware(a,mask,n_scales=count)
-    region=mask & (r>=1.1*radius) & (r<2*radius)
-    encoded,mapping=display_detail(detail,mask,scale_region=region)
+    samples=mask if statistics is None else mask & np.asarray(statistics,bool)
+    region=samples & (r>=1.1*radius) & (r<2*radius)
+    encoded,mapping=display_detail(detail,mask,scale_region=region,statistics=statistics)
     mapping['scale_region']='1.1–2 reference-disk radii' if region.sum()>=1000 else 'all observed pixels'
     return encoded,dict(mapping,operator='AEL edge-aware WOW',input='linear luminance',
+                        support_mode='experimental statistics separation' if statistics is not None else 'compatibility',
                         n_scales=count,range_weights='guided (issue #4)',completeness=[.6,.995],
                         level_sigma_px='min(150, max(32, 4*2^j))',upstream_version='1.3.5')

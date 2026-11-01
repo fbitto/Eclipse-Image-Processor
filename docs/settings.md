@@ -42,3 +42,5 @@ Settings-only publication is atomic. Image export writes layers first, TIFF/JPEG
 The retired adaptive ACHF `sl_achf_background` control is ignored when opening existing v4 recipes and omitted when saving. Background retention remains available to direct numerical API callers, outside GUI detail-layer construction.
 
 RHEF/FNRGF ring-width ticks now denote native pixels. Reopening an older v4 recipe retains its raw ticks but recalculates under the corrected units; earlier preview-pixel RHEF and target-pixel FNRGF previews are not reproduced. MGN and AEL isotropic fast previews omit unresolved subpixel bands; their native recipes are unchanged.
+
+`chk_statistics_separate_ael` records the opt-in experimental AEL statistics/output policy. Missing fields default off. The mode retains observed positive operator samples while restricting ACHF radial fits and display statistics, rather than reconstructing missing pixels.
