@@ -8,9 +8,9 @@ not an assertion of byte equivalence to watroo's unmasked implementation.
 """
 from .cancellation import check_cancelled
 import numpy as np
-from scipy.ndimage import gaussian_filter, convolve1d
+from scipy.ndimage import convolve1d
 from scipy.special import erf
-from .filters import adaptive_circular_highpass, blend_filter_result, ordered_scale_results
+from .filters import adaptive_circular_highpass, blend_filter_result, ordered_scale_results, strip_gaussian
 
 
 class MaskedWorker:
@@ -52,11 +52,11 @@ class MaskedWorker:
             sigma, weight = item
             check_cancelled()
             if weight == 0:return np.zeros_like(data)
-            support = gaussian_filter(self.valid.astype(float), sigma, truncate=truncate, mode='constant',cval=0)
+            support = strip_gaussian(self.valid.astype(float), sigma, truncate=truncate, mode='constant')
             def blur(values):
                 check_cancelled()
-                signal = gaussian_filter(np.where(self.valid, values, 0), sigma,
-                                         truncate=truncate, mode='constant',cval=0)
+                signal = strip_gaussian(np.where(self.valid, values, 0), sigma,
+                                        truncate=truncate, mode='constant')
                 return np.divide(signal, support, out=np.full_like(signal,np.nan), where=support > 0)
             residual = data-blur(data)
             deviation = np.sqrt(np.maximum(blur(residual**2), 0))

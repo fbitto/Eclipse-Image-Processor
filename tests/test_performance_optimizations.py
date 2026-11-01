@@ -50,12 +50,13 @@ class OptimizationTests(unittest.TestCase):
     def test_mgn_helper_threads_inherit_cancellation(self):
         entered, release, cancel = Event(), Event(), Event()
         a = np.ones((512, 512), np.float32)
-        from core.filters import gaussian_filter
+        # At this size each blur runs as 1-D strips on helper threads (strip_gaussian).
+        from core.filters import gaussian_filter1d
         def slow(*args, **kwargs):
             entered.set()
             if not release.wait(3):
                 raise AssertionError('Convolution not released')
-            return gaussian_filter(*args, **kwargs)
+            return gaussian_filter1d(*args, **kwargs)
         outcomes = []
         def run():
             try:
@@ -63,7 +64,7 @@ class OptimizationTests(unittest.TestCase):
                     mgn_normalize(a)
             except ProcessingCancelled:
                 outcomes.append('cancelled')
-        with patch('core.filters.filter_cpu_budget', return_value=4), patch('core.filters.gaussian_filter', side_effect=slow):
+        with patch('core.filters.filter_cpu_budget', return_value=4), patch('core.filters.gaussian_filter1d', side_effect=slow):
             thread = Thread(target=run)
             thread.start()
             try:
@@ -81,12 +82,12 @@ class OptimizationTests(unittest.TestCase):
         a[100, 100] = 2
         valid = np.ones(a.shape, bool)
         valid[:2] = False
-        from core.masked_filters import gaussian_filter
+        from core.filters import gaussian_filter1d
         def slow(*args, **kwargs):
             entered.set()
             if not release.wait(3):
                 raise AssertionError('Support blur not released')
-            return gaussian_filter(*args, **kwargs)
+            return gaussian_filter1d(*args, **kwargs)
         outcomes = []
         def run():
             try:
@@ -94,7 +95,7 @@ class OptimizationTests(unittest.TestCase):
                     MaskedWorker(FilterWorker(), valid).run_mgn_native(a, 100, 32, 70, 70, 3, (1., 2., 4.))
             except ProcessingCancelled:
                 outcomes.append('cancelled')
-        with patch('core.filters.filter_cpu_budget', return_value=4), patch('core.masked_filters.gaussian_filter', side_effect=slow):
+        with patch('core.filters.filter_cpu_budget', return_value=4), patch('core.filters.gaussian_filter1d', side_effect=slow):
             thread = Thread(target=run)
             thread.start()
             try:
