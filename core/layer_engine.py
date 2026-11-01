@@ -260,6 +260,9 @@ class LayerEngine:
                 mapping=dict(constant=True)
         else:
             image,mapping=neutral_layer(values,domain,statistics)
+        if name == 'mgn' or (name == 'wow' and not ael_wow):
+            mapping=dict(mapping,edges='observed support; no mirrored/replicated samples',
+                         backend='normalized Gaussian' if name=='mgn' else 'normalized B3; local bilateral variance; erf significance')
         if name == "mgn" and p.get("mgn_omitted_sigmas_px"):
             mapping=dict(mapping,omitted_sigmas_px=p["mgn_omitted_sigmas_px"],resolution="approximate preview; unresolved bands omitted")
         if mode == 'Multiply' and mapping.get('constant',False):

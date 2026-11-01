@@ -627,7 +627,7 @@ class FilterWorker(QObject):
 
     def run_mgn_native(
         self, img, strength, gamma_val, k_val, h_val, trunc_val,
-        sigmas=(1.25, 2.5, 5.0, 10.0, 20.0, 40.0), weights=None,
+        sigmas=(1.25, 2.5, 5.0, 10.0, 20.0, 40.0), weights=None, observed_edges=False,
     ) -> np.ndarray:
         """Official MGN core, with UI units and an external Strength blend.
 
@@ -637,6 +637,10 @@ class FilterWorker(QObject):
         if strength == 0:
             return img.copy()
         finite_image(img)
+        if observed_edges:
+            from .masked_filters import MaskedWorker
+            return MaskedWorker(self,np.isfinite(img)).run_mgn_native(
+                img,strength,gamma_val,k_val,h_val,trunc_val,sigmas,weights)
         filtered = mgn_normalize(
             img, sigma=sigmas, gamma=float(gamma_val)/10,
             k=float(k_val)/100, h=float(h_val)/100,
@@ -645,7 +649,7 @@ class FilterWorker(QObject):
         return blend_filter_result(img, filtered, strength)
 
     def run_wow_native(self, image, strength=100, n_scales=None,
-                       denoise_coefficients=None, noise=None, bilateral=None):
+                       denoise_coefficients=None, noise=None, bilateral=None, observed_edges=False):
         """WOW via watroo, the backend used by sunkit-image.
 
         No fixed detector calibration or output z-scaling. Optional noise map
@@ -655,6 +659,11 @@ class FilterWorker(QObject):
         """
         if strength == 0:
             return image.copy()
+        if observed_edges:
+            finite_image(image)
+            from .masked_filters import MaskedWorker
+            return MaskedWorker(self,np.isfinite(image)).run_wow_native(
+                image,strength,n_scales,denoise_coefficients,bilateral,noise=noise)
         from watroo import B3spline, utils
         a = np.array(image, dtype=np.float64, copy=True)
         if a.ndim != 2 or not np.isfinite(a).all():

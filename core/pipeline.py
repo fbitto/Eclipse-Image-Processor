@@ -189,6 +189,7 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
             p.get("mgn_trunc", 3),
             sigmas=p.get("mgn_sigmas", (1.25, 2.5, 5, 10, 20, 40)),
             weights=p.get('mgn_weights'),
+            observed_edges=True,
         )
         if verbose:
             print(f"[{process_label}: MGN NATIVE] Done in {time.time() - step_start:.3f}s")
@@ -218,6 +219,7 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
                 img, p["wow_str"], p.get("wow_scales"),
                 denoise_coefficients=p.get("wow_denoise", []),
                 bilateral=p.get("wow_bilateral"),
+                observed_edges=True,
             )
         if verbose:
             print(f"[{process_label}: WOW NATIVE] Done in {time.time() - step_start:.3f}s")

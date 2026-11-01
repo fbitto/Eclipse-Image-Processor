@@ -108,9 +108,16 @@ class MaskedImageTests(unittest.TestCase):
         coefficients = np.array([1, 4, 6, 4, 1])/16
         for step in (1, 2, 4):
             for bilateral in (.2, 1., 3.):
-                sigma = np.std(image[valid])*bilateral
                 expected = np.zeros_like(image)
                 for y, x in zip(*np.nonzero(valid)):
+                    samples=[];weights=[]
+                    for j,cy in enumerate(coefficients):
+                        for i,cx in enumerate(coefficients):
+                            yy,xx=y+(j-2)*step,x+(i-2)*step
+                            if 0<=yy<image.shape[0] and 0<=xx<image.shape[1] and valid[yy,xx]:
+                                samples.append(image[yy,xx]);weights.append(cy*cx)
+                    mean=np.average(samples,weights=weights)
+                    sigma=max(np.sqrt(np.average((np.asarray(samples)-mean)**2,weights=weights))*bilateral,np.finfo(float).tiny)
                     total, mass = 0., 0.
                     for j, cy in enumerate(coefficients):
                         for i, cx in enumerate(coefficients):

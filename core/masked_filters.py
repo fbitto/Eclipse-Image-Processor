@@ -1,6 +1,7 @@
 """Observed-only filtering adapter for images with an explicit validity mask.
 
-Finite images keep the original backend. Spatial averages divide weighted signal
+Application MGN/non-AEL WOW use this adapter even on complete data; direct
+numerical APIs retain their reference backend unless requested. Spatial averages divide weighted signal
 by observed support; invalid numerical buffers are never used as observations.
 WOW on masked inputs uses an explicitly recorded normalized-starlet variant,
 not an assertion of byte equivalence to watroo's unmasked implementation.
@@ -8,6 +9,7 @@ not an assertion of byte equivalence to watroo's unmasked implementation.
 from .cancellation import check_cancelled
 import numpy as np
 from scipy.ndimage import gaussian_filter, convolve1d
+from scipy.special import erf
 from .filters import adaptive_circular_highpass, blend_filter_result, ordered_scale_results
 
 
@@ -35,7 +37,7 @@ class MaskedWorker:
     def run_rhef_native(self, a, *args, **kwargs):
         return np.where(self.valid, self.worker.run_rhef_native(a, *args, valid=self.valid, **kwargs), 0)
 
-    def run_mgn_native(self, a, strength, gamma, k, h, truncate, sigmas, weights=None):
+    def run_mgn_native(self, a, strength, gamma, k, h, truncate, sigmas, weights=None, observed_edges=False):
         if strength == 0 or self.span(a) == 0:
             return a.copy()
         data = np.where(self.valid, a, 0).astype(float)
@@ -49,11 +51,11 @@ class MaskedWorker:
             sigma, weight = item
             check_cancelled()
             if weight == 0:return np.zeros_like(data)
-            support = gaussian_filter(self.valid.astype(float), sigma, truncate=truncate, mode='nearest')
+            support = gaussian_filter(self.valid.astype(float), sigma, truncate=truncate, mode='constant',cval=0)
             def blur(values):
                 check_cancelled()
                 signal = gaussian_filter(np.where(self.valid, values, 0), sigma,
-                                         truncate=truncate, mode='nearest')
+                                         truncate=truncate, mode='constant',cval=0)
                 return np.divide(signal, support, out=np.zeros_like(signal), where=support > 0)
             residual = data-blur(data)
             deviation = np.sqrt(np.maximum(blur(residual**2), 0))
@@ -98,10 +100,10 @@ class MaskedWorker:
                 check_cancelled()
                 def convolve(values):
                     if step < 8:
-                        return convolve1d(values, kernel, axis=axis, mode='reflect')
+                        return convolve1d(values, kernel, axis=axis, mode='constant',cval=0)
                     padding = [(0, 0)]*2
                     padding[axis] = (2*step, 2*step)
-                    extended = np.pad(values, padding, mode='symmetric')
+                    extended = np.pad(values, padding, mode='constant')
                     # Match SciPy: double accumulation, round once per axis.
                     result = np.zeros(values.shape, dtype=float)
                     for j, coefficient in enumerate(coefficients):
@@ -117,7 +119,12 @@ class MaskedWorker:
         height, width = a.shape
         numerator = np.zeros_like(a, dtype=float)
         denominator = np.zeros_like(a, dtype=float)
-        sigma = max(float(np.std(a[self.valid]))*float(bilateral), np.finfo(float).tiny)
+        if not np.isfinite(bilateral) or bilateral <= 0:
+            raise ValueError('Bilateral scale must be positive and finite')
+        mean=self.starlet_blur(a,step,None)
+        data=np.where(self.valid,a,0)
+        variance=np.maximum(self.starlet_blur(data*data,step,None)-mean*mean,0)
+        sigma=np.maximum(np.sqrt(variance)*float(bilateral),np.finfo(float).tiny)
         for iy, cy in enumerate(coefficients):
             check_cancelled()
             for ix, cx in enumerate(coefficients):
@@ -136,14 +143,15 @@ class MaskedWorker:
                 pair = self.valid[tap] & self.valid[target]
                 difference = np.subtract(a[tap], a[target],
                                          out=np.zeros(pair.shape, dtype=float), where=pair)
-                distance = np.clip(difference, -40*sigma, 40*sigma)/sigma
+                local_sigma=sigma[target]
+                distance = np.clip(difference, -40*local_sigma, 40*local_sigma)/local_sigma
                 weight = cy*cx * pair * np.exp(-.5*distance**2)
                 numerator[target] += np.multiply(weight, a[tap],
                                                  out=np.zeros(pair.shape, dtype=float), where=pair)
                 denominator[target] += weight
         return np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator > 0)
 
-    def run_wow_native(self, a, strength=100, n_scales=None, denoise_coefficients=None, bilateral=None):
+    def run_wow_native(self, a, strength=100, n_scales=None, denoise_coefficients=None, bilateral=None, observed_edges=False, noise=None):
         if strength == 0 or self.span(a) == 0:
             return a.copy()
         maximum = int(np.round(np.log2(min(a.shape))-np.log2(5)))
@@ -151,12 +159,17 @@ class MaskedWorker:
         if scales < 1:
             raise ValueError('Image too small or invalid WOW scale count')
         levels = list(denoise_coefficients or [])
+        if not np.isfinite(levels).all() or any(level < 0 for level in levels):
+            raise ValueError("Noise significance levels must be nonnegative and finite")
+        if noise is not None:
+            noise=np.asarray(noise,dtype=float)
+            if noise.shape != a.shape or not np.isfinite(noise).all() or (noise<0).any():
+                raise ValueError("Noise map must match image and be finite and nonnegative")
         from watroo import B3spline
         # Reference noise factors are approximate for masked or resampled HDR
         # data; they are not a measured per-pixel detector-noise calibration.
         factors = B3spline(2).sigma_e(bilateral=bilateral)
-        result, coarse = np.zeros_like(a, dtype=float), a.copy()
-        noise = None
+        result, coarse = np.zeros_like(a, dtype=float), np.where(self.valid,a,0).astype(float)
         for j in range(scales):
             check_cancelled()
             smooth = self.starlet_blur(coarse, 2**j, bilateral)
@@ -166,7 +179,8 @@ class MaskedWorker:
                 noise = 1.4826*np.median(np.abs(observed-np.median(observed)))/factors[0]
             power = np.sqrt(np.maximum(self.starlet_blur(detail**2, 2**j, None), 0))
             threshold = (levels[j] if j < len(levels) else 0)*noise*factors[j]
-            denoised = np.sign(detail)*np.maximum(np.abs(detail)-threshold, 0)
+            ratio=np.divide(np.abs(detail),threshold,out=np.full_like(detail,np.inf),where=np.asarray(threshold)>0)
+            denoised=detail*erf(ratio)
             result += np.divide(denoised, power, out=np.zeros_like(detail), where=power > 0)
             coarse = np.where(self.valid, smooth, 0)
         spread = np.std(coarse[self.valid])
