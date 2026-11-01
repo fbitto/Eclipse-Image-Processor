@@ -15,6 +15,7 @@ Current implementation: Eclipse Image Processor 0.6.0. Updated 26 October 2026 f
 | [AEL ACHF](achf-ael.md) | ISO 01, ISO 04 and Angular implementation |
 | [Larson–Sekanina](larson-sekanina.md) | Rotational residual, Gain and Linear Light encoding |
 | [Continuous RHEF](rhef-continuous.md) | Quantile interpolation and support rules |
+| [P0/P1 acceptance, 2 November](p0-p1-acceptance-20261102.md) | Native Photoshop/exFAT, current AEL parity and native-image support checks |
 | [Validation](validation.md) | Reproducible checks and the limits of existing evidence |
 | [macOS build](build-macos.md) / [Windows build](build-windows.md) | Platform packaging |
 | [Third-party attribution](../ATTRIBUTIONS.md) | Copied/adapted code and retained licence notices |

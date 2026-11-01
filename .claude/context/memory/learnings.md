@@ -46,3 +46,5 @@
 - Experimental AEL support separation is an optional geometry/statistics checkbox, default off in omitted-field v4 recipes. Keep observed kernel support distinct from radial-fit/display samples, and gate the checkbox’s invalidation when no AEL layer is active. Coverage cannot override undefined model/kernel support or positivity restrictions.
 
 - Audit explicit sliderReleased callbacks as well as generic valueChanged wiring: built-in NRGF geometry, FNRGF protection and Larson gain need the same inactive-family gate. When clarifying selector labels, whitelist old text at its original index so v4 recipes stay readable.
+
+- Current-AEL RHEF parity includes float32 log/quantile/accumulation and even redundant angular interpolation terms. Keep the independent float64 numerical default explicit; application reference precision must be tested against frozen upstream values. Reuse immutable ICC bytes within a process: profile creation timestamps otherwise make identical JPEG exports differ across a second boundary.

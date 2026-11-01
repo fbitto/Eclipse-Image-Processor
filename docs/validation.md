@@ -1,6 +1,6 @@
 # Validation and evidence boundaries
 
-Updated 1 November 2026. Test counts describe a particular checkout, not a permanent feature guarantee.
+Updated 2 November 2026. Test counts describe a particular checkout, not a permanent feature guarantee.
 
 ## Automated checks
 
@@ -10,7 +10,7 @@ From the project root with runtime dependencies installed:
 QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -v
 ```
 
-On Windows set the environment variable using PowerShell syntax, or run with a desktop session. The final complete suite passed **390 tests** in 185.853 seconds on the local macOS development environment. Two additional checks added during that run also passed in targeted suites: legacy WOW label/index compatibility and gain-versus-opacity clipping. The affected AEL/default and layer-engine suites passed 12 and 11 tests respectively.
+On Windows set the environment variable using PowerShell syntax, or run with a desktop session. The 2 November final complete suite passed **394 tests** in 174.660 seconds on the local macOS development environment after current-AEL RHEF precision and immutable ICC-profile fixes. The AEL runtime self-test passed 124/124, zero skipped. See the [P0/P1 acceptance report](p0-p1-acceptance-20261102.md) for native and platform evidence.
 
 Coverage includes numerical independent references and AEL fixtures, missing/statistical support, native/preview scaling, independent layer inputs/order/blends, bounded caches, cancellation, colour preparation, export separation, PSB structure/bytes, optional Color Correction, JSON v4 validation, GUI interaction/responsiveness, zoom and overlay painting. It does not establish astrophysical truth or pixel identity after native Photoshop recomposition.
 
@@ -36,7 +36,7 @@ After the latest UI changes, 56 focused tests passed for interactions, image pai
 
 ## Historical and unperformed checks
 
-Earlier native Photoshop 2026 tests are preserved in [PSB validation history](psb-validation-history.md) and the [colour-correction report](propuesta-color-atardecer-psb.md). Their measured layer/pixel results belong to those older exports. Current automatic exposure/hidden-reference output has structural automated coverage but has not been opened and recomposed in Photoshop for this revision.
+Earlier native Photoshop 2026 tests are preserved in [PSB validation history](psb-validation-history.md) and the [colour-correction report](propuesta-color-atardecer-psb.md). Their measured layer/pixel results belong to those older exports. The 2 November current-output Photoshop recomposition and physical exFAT checks are recorded in the [P0/P1 acceptance report](p0-p1-acceptance-20261102.md); older native results remain historical. Windows execution is still untested.
 
 The [19 October filter report](filter-validation-20261019.md) and [21 October performance report](performance-optimization-20261021.md) retain historical datasets/timings. They are not benchmarks of the current full pipeline. No new performance benchmark, Windows/macOS package build, signing/notarization, external scientific-link check or native Photoshop run was performed for the documentation update.
 
@@ -48,7 +48,7 @@ The supplied `nikon-lunar-margin-negative-trials/margin--2px/master.tiff` was ch
 
 Encoded preview/native RMSE on common near-opaque support was 2.36% NRGF, 7.84% FNRGF, 2.72% RHEF, 8.49% MGN, 6.98% WOW, 9.27% tangential, 21.60% adaptive ACHF, 3.75% ISO 01, 4.73% ISO 04 and 3.54% angular ACHF. These are fractions of the 0–1 layer range, not scientific acceptance thresholds. Larson–Sekanina's 0.01% accompanies a nearly neutral layer and does not establish useful HDR contrast. Native verification remains necessary, especially for adaptive ACHF. WOW/ISO 04 show strong grain at the saved settings. No full-size Photoshop recomposition/export or astrophysical ground-truth validation was performed for this case.
 
-Item 33 is addressed for continuous FNRGF/RHEF statistical models only; local operators, NRGF and compatible modes retain coupled sampling/output support. See [layer conventions](layer-composition.md#layer-values-and-support-issue-3-p1).
+At that P1 checkpoint, item 33 was addressed only for continuous FNRGF/RHEF. The subsequent follow-up separated statistics/output targets for NRGF, compatible radial modes and local operators, and added optional AEL separation with compatibility defaults preserved. Broader native-image acceptance of the optional mode remains pending. See [layer conventions](layer-composition.md#layer-values-and-support-issue-3-p1).
 
 ## Presented export follow-up
 
@@ -63,3 +63,7 @@ The supplied 3744×5608 RGB float32 margin--2px TIFF passed all eight filter-fam
 The installed current AEL 1.4.1 runtime passed 124/124 self-tests, with no skips. Compatibility and opt-in support paths have same-mask parity tests; experimental support separation remains off by default. Real-image filter composition is an operational check, not proof of astrophysical detail recovery or fast-preview equivalence.
 
 Local artifacts: `/tmp/eclipse-follow-up-real-20261101/`; full-suite log: `/tmp/eclipse-final-suite.log`. These private/generated products are outside Git.
+
+## P0/P1 follow-up, 2 November 2026
+
+See the [acceptance report](p0-p1-acceptance-20261102.md) for current AEL parity, native Photoshop differences, physical exFAT exports, two native-image support/log-mode comparisons and remaining limits.

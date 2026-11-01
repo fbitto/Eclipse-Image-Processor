@@ -7,6 +7,7 @@ Adobe format: https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/
 """
 import hashlib
 import io
+from functools import lru_cache
 import numpy as np
 from PIL import ImageCms
 from .cancellation import check_cancelled
@@ -15,7 +16,9 @@ PALETTE = ((0,'3A2638'),(35,'B96343'),(65,'EDAA64'),(85,'F7D7A4'),(100,'FFF4DE')
 ADJUSTMENT_NAMES = ('Corona Gradient Map','Corona Color Balance','Sky Hue Saturation')
 
 
+@lru_cache(maxsize=1)
 def srgb_profile():
+    """Reuse immutable profile bytes so creation timestamps do not vary between products."""
     return ImageCms.ImageCmsProfile(ImageCms.createProfile('sRGB')).tobytes()
 
 

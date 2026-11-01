@@ -38,3 +38,7 @@ All 50 checklist items have a local disposition; the GitHub issue has not been c
 - Verified or resolved by explicit control documentation/design: **13–14, 19, 22, 27, 29–31**. These are not claims of new numerical implementations.
 
 Optional AEL support mode needs broader native-image quality assessment before any default change. Native Photoshop recomposition and physical Windows/exFAT tests remain outside this validation.
+
+## Remaining acceptance work
+
+The prioritized [2 November acceptance plan](issue-3-remaining-plan.md) separates implemented fixes from Photoshop/platform acceptance, optional-mode quality validation, performance measurements and upstream closeout.
