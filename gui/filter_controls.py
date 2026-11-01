@@ -9,7 +9,7 @@ CONTROLS = {
         ('nrgf_min_count', 'nrgf_min_count', 'Minimum samples per ring', 2, 128, 12, 1., 'Annuli with fewer observed samples remain undefined; at least four consecutive usable annuli are needed.'),
         ('nrgf_smooth_bins', 'nrgf_smooth_bins', 'Profile smoothing (rings)', 0, 100, 0, 10., 'Optional local quadratic smoothing of radial model nodes, never image pixels. AEL default is zero; smoothing may bias curved profiles.')],
     'fnrgf': [
-        ('fnrgf_smooth', 'fnrgf_smooth', 'Model smoothing (preview px)', 0, 640, 80, 10., 'Radial Gaussian sigma of the continuous background model, not the final image. Zero disables smoothing.'),
+        ('fnrgf_smooth', 'fnrgf_smooth', 'Model smoothing (preview px)', 0, 640, 80, 10., 'Gaussian-weighted local quadratic smoothing width of the continuous background model, not the final image. Zero disables smoothing.'),
         ('fnrgf_fade', 'fnrgf_fade', 'Boundary fade (preview px)', 0, 1280, 80, 10., 'Continuous mode: smooth application at the inner and outer radii without changing observed-data validity.'),
         ('fnrgf_ridge', 'fnrgf_ridge', 'Harmonic regularization', 0, 1000, 10, 1000., 'Dimensionless penalty on higher angular harmonics. Increased automatically for partial coverage; zero disables it.'),
         ('fnrgf_floor', 'fnrgf_floor', 'Minimum width fraction', 0, 100, 5, 100., 'Floor relative to typical annular spread. Continuous mode also keeps its divisor positive.'),
@@ -27,7 +27,7 @@ CONTROLS = {
         ('larson_sekanina_nearby_delta', 'larson_sekanina_nearby_delta', 'Nearby angle delta (degrees)', 0, 100, 0, 100., 'Average the selected rotation and its two neighbors at plus/minus this delta. Zero keeps the classic operator. Reduces interpolation noise variation but changes fine-detail response and costs about three times the sampling. Spacing shrinks near 0 and 180 degrees.')],
     'tangential': [
         ('tangential_arc', 'tangential_arc', 'Angular Gaussian sigma (degrees)', 1, 300, 30, 10., 'Angular blur sigma, 0.1 to 30 degrees. The corresponding arc length increases with radius.'),
-        ('tangential_gain', 'tangential_gain', 'Detail gain', 0, 50, 10, 10., 'Multiplier of the signed angular residual before layer encoding and opacity blending.'),
+        ('tangential_gain', 'tangential_gain', 'Detail gain', 0, 50, 10, 10., 'Multiplier of ring-encoded detail contrast, before opacity blending.'),
         ('tangential_denoise', 'tangential_denoise', 'Noise threshold (sigma)', 0, 100, 0, 10., 'Soft threshold on signed detail, using a robust adjacent-pixel noise estimate. Zero bypasses it; not calibrated detector noise.'),
         ('tangential_inner', 'tangential_inner', 'Inner radius (disk radii)', 0, 40, 10, 10., 'Start of tangential processing in reference disk radii.'),
         ('tangential_outer', 'tangential_outer', 'Outer radius (disk radii)', 11, 200, 40, 10., 'Outer processing radius in reference disk radii, used only when Limit outer radius is checked.'),
@@ -88,7 +88,7 @@ def add_controls(window):
     window.sl_mgn_sigmas, window.sl_mgn_weights = [], []
     for index, sigma in enumerate((1.25, 2.5, 5, 10, 20, 40)):
         for collection, title, maximum, default, help_text in (
-            (window.sl_mgn_sigmas, 'sigma (native px)', 12800, round(sigma*100), 'Gaussian scale in original-image pixels. Reduced proportionally for fast preview; used directly at full resolution.'),
+            (window.sl_mgn_sigmas, 'sigma (native px)', 12800, round(sigma*100), 'Gaussian scale in original-image pixels. Fast preview omits contributions below 0.5 target pixels without increasing the other weights. Native processing uses the specified scales.'),
             (window.sl_mgn_weights, 'weight', 200, 100, 'Nonnegative weight of this local MGN scale. Zero disables its contribution; normalization still divides by six scales.')):
             slider, _ = create_slider_float(f'Scale {index+1} {title}', 25 if collection is window.sl_mgn_sigmas else 0,
                                             maximum, default, 100., window.sec_mgn.content_layout,
@@ -221,7 +221,7 @@ def add_achf_variants(window):
             controls['sigmas'] = []
             for i, value in enumerate(preset['sigmas']):
                 slider, _ = create_slider_float(f'Scale {i+1} sigma (native px)',1,1280,round(10*value),10.,layout,
-                    tooltip='Gaussian sigma at full source resolution. Fast preview adapts the footprint.',
+                    tooltip='Gaussian sigma at full source resolution. Fast preview omits bands below 0.5 target pixels.',
                     on_release_callback=lambda variant=variant: window.on_filter_slider_released(window.sec_achf,variant))
                 slider.setProperty('achf_variant',variant)
                 controls['sigmas'].append(slider)

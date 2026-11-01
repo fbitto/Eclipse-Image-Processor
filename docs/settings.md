@@ -40,3 +40,5 @@ Directly loading another image is a separate action from restoring JSON: it reta
 Settings-only publication is atomic. Image export writes layers first, TIFF/JPEG next, JSON last. Failure at a later stage can leave previously completed outputs; the complete multi-file export is not a single atomic transaction. The JSON is a recipe for the original source, not an instruction to reprocess its rendered output.
 
 The retired adaptive ACHF `sl_achf_background` control is ignored when opening existing v4 recipes and omitted when saving. Background retention remains available to direct numerical API callers, outside GUI detail-layer construction.
+
+RHEF/FNRGF ring-width ticks now denote native pixels. Reopening an older v4 recipe retains its raw ticks but recalculates under the corrected units; earlier preview-pixel RHEF and target-pixel FNRGF previews are not reproduced. MGN and AEL isotropic fast previews omit unresolved subpixel bands; their native recipes are unchanged.

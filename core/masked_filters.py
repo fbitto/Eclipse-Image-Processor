@@ -48,6 +48,7 @@ class MaskedWorker:
         def scale_detail(item):
             sigma, weight = item
             check_cancelled()
+            if weight == 0:return np.zeros_like(data)
             support = gaussian_filter(self.valid.astype(float), sigma, truncate=truncate, mode='nearest')
             def blur(values):
                 check_cancelled()

@@ -207,8 +207,11 @@ def ael_achf_layer(image, cx, cy, radius, valid=None, scale=1.,
         sigmas = np.asarray(settings['sigmas'],dtype=float)
         if sigmas.shape != (5,) or not np.isfinite(sigmas).all() or np.any(sigmas<=0) or np.any(sigmas>128):
             raise ValueError('AEL isotropic needs five positive sigmas, at most 128 native pixels')
+        target_sigmas=scale*sigmas
+        resolved=np.ones(len(sigmas),bool) if scale >= 1 else target_sigmas >= .5
         detail, info = achf_isotropic(a, mask, geometry,
-                                     sigmas=tuple(scale*sigmas), outer_sigma=outer*scale)
+                                     sigmas=tuple(target_sigmas[resolved]), outer_sigma=outer*scale)
+        info['omitted_sigmas_px']=target_sigmas[~resolved].tolist()
         info.update(native_sigmas=sigmas.tolist(), native_outer_sigma=outer)
     layer, display = display_detail_rings(detail, mask, geometry, width_px=2.*scale)
     return layer, dict(info, **display, variant=variant, target_scale=scale, upstream_version='1.3.5')

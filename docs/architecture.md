@@ -54,3 +54,5 @@ Auto Calculate waits 650 ms after numerical edits. Layer-mix edits wait 250 ms a
 Independent filter cache misses run concurrently within CPU and memory budgets; composition and file numbering remain ordered. Main initializes BLAS/OpenMP pools to one thread and OpenCV to at most two. Direct numerical callers must configure native pools themselves. See [layer cache and concurrency](layer-composition.md).
 
 There is no sequential filter pipeline, Display Stretch/GHS route, Reveal slider or old settings migration. `apply_filter` accepts at most one active numerical operator; `execute_pipeline` always invokes the independent layer engine. Development tools and scientific fixtures are retained separately from runtime paths.
+
+RHEF and FNRGF ring-width controls are in original-image pixels. FNRGF derives one native ring count and uses it at every resolution; RHEF scales the width into target pixels. Legacy callers supplying only FNRGF `nbins` retain their earlier count-adaptation convention. Unresolved fast-preview MGN/AEL isotropic bands are omitted and recorded in layer mapping metadata; native calculations retain their configured bands.

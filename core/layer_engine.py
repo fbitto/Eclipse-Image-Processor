@@ -260,6 +260,8 @@ class LayerEngine:
                 mapping=dict(constant=True)
         else:
             image,mapping=neutral_layer(values,domain,statistics)
+        if name == "mgn" and p.get("mgn_omitted_sigmas_px"):
+            mapping=dict(mapping,omitted_sigmas_px=p["mgn_omitted_sigmas_px"],resolution="approximate preview; unresolved bands omitted")
         if mode == 'Multiply' and mapping.get('constant',False):
             image=np.ones_like(image)
         strength=float(params.get(name+'_str',100))/100

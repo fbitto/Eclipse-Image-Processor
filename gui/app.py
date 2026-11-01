@@ -429,9 +429,9 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_rad.valueChanged.connect(
             lambda value: self.sl_fnrgf_rmax.setMinimum(value + 1))
         self.sl_fnrgf_bin_px, _ = create_slider(
-            "Ring width (px)", 1, 32, 4, self.sec_fnrgf.content_layout,
+            "Ring width (native px)", 1, 32, 4, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf),
-            tooltip="Ring width in pixels at each processing resolution (default 4). Export increases the ring count to retain this width. For logarithmic spacing this is the inner-ring width; outer rings are wider."
+            tooltip="Ring width in original-image pixels (default 4). Preview scales the width and retains the native radial-bin count. For logarithmic spacing this is the inner-ring width; outer rings are wider."
         )
 
         w_row = QHBoxLayout()
@@ -492,10 +492,10 @@ class EclipseProcessorApp(QMainWindow):
             tooltip="Exponent from 0.01 to 5, applied to both rank-distribution tails. Values below 1 compress the tail toward mid-grey; 1 leaves the curve unchanged; values above 1 expand it. Upper-tail linking is controlled below."
         )
         self.sl_rhef_bin, _ = create_slider(
-            "Ring Width (preview px)", 5, 100, 10, self.sec_rhef.content_layout,
+            "Ring Width (native px)", 5, 100, 10, self.sec_rhef.content_layout,
             divisor=10,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_rhef),
-            tooltip="Annular width in preview pixels; scaled to full resolution on export"
+            tooltip="Annular width in original-image pixels; scaled down for preview. Sparse preview rings may remain undefined."
         )
         self.sec_rhef.toggled_active.connect(self.on_filter_toggled)
         histogram_group.addWidget(self.sec_rhef)

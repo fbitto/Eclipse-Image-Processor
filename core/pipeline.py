@@ -10,7 +10,7 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
 
     Scale X/Y independently using OpenCV's pixel-centre convention. Circular
     radii and kernels use the geometric mean scale for rounded aspect ratios.
-    FNRGF ring widths are target-image pixels, independent of preview resizing.
+    RHEF/FNRGF ring widths and MGN sigmas are specified in native pixels.
     """
     shapes = (full_shape, preview_shape, target_shape)
     if any(len(shape) != 2 or not np.isfinite(shape).all() or min(shape) <= 0 for shape in shapes):
@@ -25,15 +25,17 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
     p["spatial_scale"] = scale
     p["achf_ael_scale"] = float(np.sqrt(sx * sy))
     p["nrgf_scale"] = float(np.sqrt(sx * sy))
-    for key in ("achf_kernel", "rhef_bin_px",
+    for key in ("achf_kernel",
                 "fnrgf_smooth", "fnrgf_fade", "tangential_fade", "larson_sekanina_radial", "statistics_guard_px"):
         if key in p:
             p[key] *= scale
+    if "rhef_bin_px" in p:
+        p["rhef_bin_px"] *= p["achf_ael_scale"]
     if "fnrgf_bin_px" in p:
         from utils.helpers import recommended_radial_bins
         p["fnrgf_nbins"] = recommended_radial_bins(
-            p.get("fnrgf_rad", 10) / 10.0 * p["sr"],
-            p.get("fnrgf_rmax", 30) / 10.0 * p["sr"],
+            p.get("fnrgf_rad", 10) / 10.0 * parameters["sr"],
+            p.get("fnrgf_rmax", 30) / 10.0 * parameters["sr"],
             logarithmic=p.get("fnrgf_radial_binning", "linear") == "log",
             width_px=p["fnrgf_bin_px"],
         )
@@ -59,6 +61,13 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
             levels = [levels[0]] * offset + levels if offset >= 0 else levels[-offset:]
             p["wow_denoise"] = levels[:p["wow_scales"]]
     p["mgn_sigmas"] = tuple(s * p["achf_ael_scale"] for s in p.get("mgn_sigmas", (1.25, 2.5, 5, 10, 20, 40)))
+    if p['achf_ael_scale'] < 1:
+        unresolved=np.asarray(p['mgn_sigmas']) < .5
+        if unresolved.any():
+            weights=tuple(p.get('mgn_weights',(1.,)*len(unresolved)))
+            if len(weights) != len(unresolved):raise ValueError('MGN weights must match scales')
+            p['mgn_weights']=tuple(0. if skip else weight for skip,weight in zip(unresolved,weights))
+            p['mgn_omitted_sigmas_px']=[float(s) for s,skip in zip(p['mgn_sigmas'],unresolved) if skip]
     return p
 
 

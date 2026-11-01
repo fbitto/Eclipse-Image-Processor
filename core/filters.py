@@ -168,6 +168,7 @@ def mgn_normalize(image, sigma=None, k=0.7, gamma=3.2, h=0.7,
     def scale_detail(item):
         scale, weight = item
         check_cancelled()
+        if weight == 0:return np.zeros_like(data)
         with np.errstate(all="ignore"):
             residual = data-gaussian_filter(data, scale, truncate=truncate, mode="nearest")
             check_cancelled()

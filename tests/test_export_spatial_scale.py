@@ -20,7 +20,7 @@ class ExportSpatialScaleTests(unittest.TestCase):
         p = self.parameters(3000)
         self.assertNotIn("bilateral_d", p)
         self.assertEqual(p["achf_kernel"], 10)
-        self.assertEqual(p["rhef_bin_px"], 2)
+        self.assertEqual(p["rhef_bin_px"], 1)
         self.assertEqual(p["fnrgf_nbins"], 160)
         self.assertEqual(p["wow_scales"], 9)
         self.assertEqual(p["wow_denoise"], [1, 1, 2, 3])
@@ -34,7 +34,7 @@ class ExportSpatialScaleTests(unittest.TestCase):
             self.assertEqual(native['mgn_sigmas'],sigmas)
             small=prepare_parameters(p,(3000,3000),preview,preview)
             np.testing.assert_allclose(small['mgn_sigmas'],np.array(sigmas)*preview[0]/3000)
-            self.assertEqual(small['mgn_weights'],(1,)*6)
+            self.assertEqual(small['mgn_weights'],tuple(0 if s < .5 else 1 for s in small['mgn_sigmas']))
         self.assertEqual(p['mgn_sigmas'],sigmas)
 
     def test_noninteger_resize_and_preview_auto(self):
@@ -52,11 +52,11 @@ class ExportSpatialScaleTests(unittest.TestCase):
         self.assertEqual(self.parameters(3000, wow_scales=10)["wow_scales"], 9)
         self.assertEqual(self.parameters(3000, wow_denoise=[])["wow_denoise"], [])
 
-    def test_fnrgf_pixel_width_recomputes_count_at_each_resolution(self):
-        for target, expected in ((1500, 50), (2560, 86), (3000, 100)):
+    def test_fnrgf_native_width_preserves_count_across_resolutions(self):
+        for target, expected in ((1500, 100), (2560, 100), (3000, 100)):
             p = self.parameters(target, fnrgf_bin_px=4, fnrgf_rad=10, fnrgf_rmax=30)
             self.assertEqual(p["fnrgf_nbins"], expected)
-            width = 2 * p["sr"] / p["fnrgf_nbins"]
+            width = 2 * p["sr"] / p["fnrgf_nbins"] * 3000/target
             self.assertLessEqual(width, 4)
             self.assertGreater(width, 3.9)
 
@@ -64,9 +64,33 @@ class ExportSpatialScaleTests(unittest.TestCase):
         for target in (1500, 2560, 3000):
             p = self.parameters(target, fnrgf_bin_px=4, fnrgf_rad=10,
                                 fnrgf_rmax=30, fnrgf_radial_binning="log")
-            width = p["sr"] * (3 ** (1 / p["fnrgf_nbins"]) - 1)
+            width = p["sr"] * (3 ** (1 / p["fnrgf_nbins"]) - 1) * 3000/target
             self.assertLessEqual(width, 4)
             self.assertGreater(width, 3.8)
+
+    def test_unresolved_mgn_bands_do_not_run_gaussians_or_increase_other_weights(self):
+        from core.filters import mgn_normalize
+        p=self.parameters(300)
+        self.assertEqual(p['mgn_weights'],(0.,0.,1.,1.,1.,1.))
+        image=np.random.default_rng(12).uniform(1,2,(32,40)).astype('f4')
+        from scipy.ndimage import gaussian_filter
+        with patch('core.filters.gaussian_filter',wraps=gaussian_filter) as gaussian:
+            result=mgn_normalize(image,sigma=p['mgn_sigmas'],weights=p['mgn_weights'])
+        self.assertTrue(all(call.args[1]>=.5 for call in gaussian.call_args_list))
+        self.assertEqual(len(gaussian.call_args_list),8)
+        self.assertTrue(np.isfinite(result).all())
+        with patch('core.filters.gaussian_filter',side_effect=AssertionError('Unresolved band ran')):
+            only_global=mgn_normalize(image,sigma=(.1,.2),weights=(0.,0.))
+        np.testing.assert_allclose(only_global,.7*((image-image.min())/np.ptp(image))**(1/3.2),atol=1e-6)
+
+    def test_achf_preview_omits_subpixel_bands_but_native_keeps_presets(self):
+        from core.ael_achf import ael_achf_layer
+        y,x=np.indices((192,192));r=np.hypot(x-96,y-96)
+        image=(np.maximum(r,1)/20)**-3
+        for scale,omitted in ((1.,[]),(.25,[.25])):
+            _,info=ael_achf_layer(image,96,96,20,scale=scale,variant='ael_iso_04')
+            self.assertEqual(info['omitted_sigmas_px'],omitted)
+            self.assertTrue(all(s>=.5 for s in info['sigmas_px']))
 
     def test_achf_receives_scaled_minimum_width(self):
         image = np.arange(81, dtype=np.float32).reshape(9, 9) / 80
