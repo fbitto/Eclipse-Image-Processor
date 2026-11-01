@@ -56,7 +56,7 @@ The menu-bar/notification-area icon appears when the desktop supports a system t
 4. **Activate and adjust layers:** expand a filter section to edit its controls, and check **Active** to include it. Expanding the section alone does not activate it. Use **Opacity** to mix its layer with the composition; changes recompose cached layers after a short pause. Larson–Sekanina additionally exposes **Gain**, which scales its signed detail before Linear Light clipping.
 5. **Choose ACHF variants:** enable the ACHF section's **Active** checkbox, select a variant to edit, then check **Include in composition** (or **Include Adaptive in composition**). The selector only changes the editing panel; several variants can be included together, each with its own opacity.
 6. **Inspect detail:** use **Fit**, **50%**, **100%** or **200%** above the image. See the viewing instructions below.
-7. **Save:** choose **Save Settings Only** for a JSON, or **Export Final Image** for the full-resolution TIFF, JPEG preview and settings JSON. Enable **Also export editable Photoshop layers** to add a layered PSB or TIFF package.
+7. **Save:** choose **Save Settings Only** for a JSON, or **Export Final Image** for the full-resolution presented RGB16 TIFF, JPEG, settings JSON and float32 working-source package. Enable **Also export editable Photoshop layers** to add a layered PSB or TIFF package.
 
 ### Inspecting the image
 
@@ -66,7 +66,7 @@ At 50%, 100% or 200%, drag, scroll or use arrow keys to pan. While editing sky s
 
 Fast preview, native verification and export share normalization levels measured on the native working image, including background correction. Fast filters remain approximate, but resizing does not independently choose a different brightness window. RGB color and optional calibration appear in both preview modes.
 
-**View Original** bypasses detail filters while retaining enabled background equalization, color calibration and the selected presentation. Uncheck **Calibrate color** to inspect uncalibrated color; disable background equalization too to inspect the source without that correction. Turn **Preview PSB presentation** off to inspect the un-stretched view. PSB Exposure always controls layer-export presentation, but affects the screen and preview JPEG only while this preview toggle is on; the main TIFF is unchanged.
+**View Original** bypasses detail filters while retaining enabled background equalization, color calibration and the selected presentation. Uncheck **Calibrate color** to inspect uncalibrated color; disable background equalization too to inspect the source without that correction. Turn **Preview PSB presentation** off to inspect the un-stretched view. PSB Exposure controls presented TIFF/JPEG and layer-export presentation; this toggle changes only the viewport.
 
 **Background Gradient** is optional and off by default. On linear inputs, enable **Equalize background gradient**, choose a coronal exclusion radius and review **Show / edit sky samples**. The initial six-disk-radius exclusion is a starting point, not a guarantee of empty sky. Green squares are sky samples; the dashed yellow circle excludes the corona and lunar disk. Left-click adds a sample, right-click removes a nearby one, and middle-drag pans while editing. Changing radius or grid density regenerates samples. In manual mode, press Calculate to apply changes.
 
@@ -105,7 +105,7 @@ Every filter starts from the **shared working mono input**, including optional b
 | Larson–Sekanina | Linear Light | Signed rotational detail; radial increment fixed at zero. |
 | ACHF | Overlay | Adaptive, ISO 01, ISO 04 and Angular detail layers. |
 
-MGN defaults to sigmas **1.25, 2.5, 5, 10, 20 and 40 original-image pixels**, weights 1, gamma 3.2, k 0.7, h 0.7 and truncation 3. The sliders always show original-image units; only the internal preview sigmas are reduced. Other controls labelled **preview px** scale up for native processing; angular values remain in degrees.
+MGN defaults to sigmas **1.25, 2.5, 5, 10, 20 and 40 original-image pixels**, weights 1, gamma 3.2, k 0.7, h 0.7 and truncation 3. The sliders always show original-image units; only the internal preview sigmas are reduced; unresolved bands below 0.5 target pixels are omitted. Other controls labelled **preview px** scale up for native processing; angular values remain in degrees.
 
 The ACHF selector chooses which variant to **edit**. Its Include checkboxes enable any combination; the ACHF section's Active checkbox gates the whole family. Each variant retains its own settings. All active ACHF variants are automatically included in layer export; inactive ones are omitted. Angular's default angular sigma is a parameter, not part of its name.
 
@@ -117,11 +117,11 @@ Current guides: [technical documentation index](docs/README.md), [layer composit
 
 **Preview PSB presentation** starts enabled. Its controls sit above the export options and remain usable when layer export is off. The presentation uses per-channel Asinh strength 10 and a shared 0.9 highlight shoulder, following AEL 1.3.3. Automatic scale selection uses P99.5 of positive native luminance outside 1.2 lunar radii; this estimate is an application heuristic, not an AEL default.
 
-**PSB Exposure (EV)** adjusts the presentation from −6 to +6 stops. Double-click the slider to restore 0 EV. The value is saved in JSON and affects presentation preview, the preview JPEG when presentation is selected, and layer export. **It does not stretch or change the main TIFF.** Switch presentation off to inspect the un-stretched TIFF composition. Native verification is authoritative; reduced preview is approximate.
+**PSB Exposure (EV)** adjusts the presentation from −6 to +6 stops. Double-click the slider to restore 0 EV. The value is saved in JSON and affects presented TIFF/JPEG and layer export. Switch presentation off to inspect the un-stretched working composition in the viewport; exports remain presented. Native verification is authoritative; reduced preview is approximate.
 
-The PSB contains a hidden **Linear reference / receipt scale**, storing the working RGB (including enabled calibration/background correction) or mono input divided by its recorded storage scale. Negative values clip in this 16-bit reference; floating working-source and validity files preserve numerical mono input information. The reference is not an untouched original. See [presentation and export details](docs/psb-export.md).
+The PSB contains a hidden **Scaled input preview (16-bit)**, storing the working RGB (including enabled calibration/background correction) or mono input divided by its recorded storage scale. Negative values clip in this 16-bit reference; floating working-source and validity files preserve numerical mono input information. This quantized preview is not a recoverable linear master. Use the companion float32 working sources and validity for numerical data. See [presentation and export details](docs/psb-export.md).
 
-**Export original prominences and chromosphere** optionally creates a dark image from the originally loaded RGB, before background extraction, filters or colour calibration. Its independent **Prominences (EV)** exposure runs from −3 to +3 EV (default −2), relative to the original red limb highlights. Preview the image on black or its mask with the selector below it. In composition view it appears with PSB presentation; the main TIFF remains the corona composition.
+**Export original prominences and chromosphere** optionally creates a dark image from the originally loaded RGB, before background extraction, filters or colour calibration. Its independent **Prominences (EV)** exposure runs from −3 to +3 EV (default −2), relative to the original red limb highlights. Preview the image on black or its mask with the selector below it. In composition view it appears with PSB presentation; presented TIFF/JPEG include the selected prominence layer.
 
 The automatic mask selects red excess with soft transitions and an outer fade from 1.3 to 1.5 lunar radii. Its colour score discounts yellow/orange continuum so a warm corona does not become a dark ring when the low-exposure layer is blended. It does not exclude the lunar disk geometrically: observed pixels inside the fitted circle remain available, and original dark lunar signal stays faint. Review it for noise, colour casts and correct geometry; this is an editable presentation selection, not a physical separation of emissions. Monochrome input cannot supply original red prominences. Saturated colour or pixels already removed from the loaded HDR cannot be recovered by lowering exposure.
 
@@ -131,9 +131,10 @@ The automatic mask selects red excess with soft transitions and an outer fade fr
 
 For image export, choose a TIFF destination. The application writes:
 
-- `<name>.tif` (or `.tiff`): full-resolution 16-bit filter composition, without presentation stretching. This is an enhanced composition, not a photometric linear master.
-- `<name>_preview.jpg`: the selected PSB presentation at 8-bit JPEG precision (or the un-stretched composition when PSB preview is off).
+- `<name>.tif` (or `.tiff`): full-resolution RGB16 composition using the PSB presentation and exposure. This is an enhanced composition, not a photometric linear master.
+- `<name>_preview.jpg`: the same presented composition at 8-bit JPEG precision.
 - `<name>.json`: reloadable processing settings.
+- `<name>_sources/`: float32 working mono/RGB in source units, validity mask and preprocessing receipt. No presentation curve, normalization or display ICC is applied.
 - Optionally, `<name>_PS_layers.psb`, or a TIFF layer directory with `Load_layers_Photoshop.jsx`, reference composite and recipe.
 - With prominences enabled, `<name>_prominences/PROMINENCES.tif` (RGB16 on black) and `PROMINENCES_MASK.tif` (16-bit). Photoshop export also includes an unmasked original-colour layer with an editable mask, above the corona and optional Color Correction group. If a requested product already exists, the whole bundle uses a new numbered stem.
 
@@ -143,7 +144,7 @@ The default Photoshop format is **PSB, 16-bit layers**. Open it directly in Phot
 
 *Editable PSB layers in Photoshop, with separate blend modes and a black background.*
 
-The progress bar advances by export stages, not estimated time. Long filters or PSB verification may remain at one stage for a while. The console reports calculation times and, after completion, whether processing is idle or another update is pending. Layered exports use one available numbered stem for every companion, preserving previous bundles. TIFF/JPEG/JSON-only exports can replace selected destinations after confirmation.
+The progress bar advances by export stages, not estimated time. Long filters or PSB verification may remain at one stage for a while. The console reports calculation times and, after completion, whether processing is idle or another update is pending. Layered exports use one available numbered stem for every companion, preserving previous bundles. GUI exports always include working sources and choose one unused stem for the full bundle.
 
 The PSB is verified before publication. Its cached composition matches the PSB-presentation reference, which differs from the main TIFF; Photoshop can round 16-bit blending slightly when recomputing edited layers. The optional **Add Color Correction to PSB (sRGB)** group is rendered only in Photoshop and starts off. Only that option assigns sRGB; the basic writer does not add an ICC profile. The current presentation/reference output has not been rechecked in native Photoshop. See [PSB validation and limits](docs/psb-export.md).
 

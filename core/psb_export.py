@@ -166,6 +166,9 @@ def verify_psb_package(path,package,*,color_correction=False):
         raise ValueError('PSB header does not match the package')
     if len(doc) != len(recipe['layers']) + 1 + bool(color_correction):
         raise ValueError('PSB layer count does not match the package')
+    profile=doc.image_resources.get_data(Resource.ICC_PROFILE)
+    if not profile or profile[16:20]!=b"RGB " or profile[36:40]!=b"acsp":
+        raise ValueError("PSB RGB colour profile is missing or invalid")
     background=doc[0]
     if (background.name,background.blend_mode,background.opacity,bool(background.visible)) != (
             '00_BACKGROUND_Black',BlendMode.NORMAL,255,True):
@@ -280,6 +283,9 @@ def export_psb_package(package,destination,*,color_correction=False):
     from psd_tools.constants import Compression,Resource
     from psd_tools.psd.image_resources import ImageResource
     rec=doc._record
+    from .color_correction import srgb_profile
+    if Resource.ICC_PROFILE not in rec.image_resources:
+        rec.image_resources[Resource.ICC_PROFILE]=ImageResource(key=Resource.ICC_PROFILE,data=srgb_profile())
     composite = _pixels(_package_path(package,recipe['combined']),shape)
     composite = _black_composite(composite)
     if color_correction and correction is None:

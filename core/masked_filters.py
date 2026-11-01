@@ -116,7 +116,7 @@ class MaskedWorker:
                     return result.astype(values.dtype, copy=False)
                 signal = convolve(signal)
                 support = convolve(support)
-            return np.divide(signal, support, out=np.zeros_like(signal), where=support > 0)
+            return np.divide(signal, support, out=np.full_like(signal,np.nan), where=support > 0)
         # Observed-only bilateral taps; no reflected values across missing data.
         height, width = a.shape
         numerator = np.zeros_like(a, dtype=float)

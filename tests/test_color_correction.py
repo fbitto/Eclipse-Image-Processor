@@ -83,7 +83,7 @@ class ColorCorrectionTests(unittest.TestCase):
         plain=self.root/'plain.psb';export_psb_package(self.package,plain)
         doc=PSDImage.open(plain)
         self.assertEqual(len(doc),2)
-        self.assertNotIn(Resource.ICC_PROFILE,doc._record.image_resources)
+        self.assertIn(Resource.ICC_PROFILE,doc._record.image_resources)
         out=self.root/'bad.psb'
         with patch('core.color_correction.verify_color_correction',side_effect=ValueError('invalid correction')):
             with self.assertRaisesRegex(ValueError,'invalid correction'):

@@ -151,7 +151,7 @@ class IndependentLayerTests(unittest.TestCase):
             self.engine.render(self.worker,self.source,p,self.display)
             self.assertEqual(operator.call_count,4)
 
-    def test_tiff_uses_neutral_composition_psb_uses_its_presentation_and_cached_layers(self):
+    def test_tiff_matches_psb_presentation_and_reuses_cached_layers(self):
         source=self.source.copy();source[0,:3]=np.nan
         p=dict(self.p,wow_enabled=False)
         worker=FilterWorker()
@@ -174,9 +174,9 @@ class IndependentLayerTests(unittest.TestCase):
             with patch.object(LayerEngine,'_calculate',side_effect=AssertionError('cache missed')):
                 export_images(copied,p,display,str(root/'final.tif'),'source.fits',
                               export_layers=True,layers_format='psb',layer_cache=snapshot)
-            np.testing.assert_array_equal(tifffile.imread(root/'final.tif'),to_u16(actual))
+            np.testing.assert_array_equal(tifffile.imread(root/'final.tif'),combined)
             doc=PSDImage.open(root/'final_PS_layers.psb')
-            self.assertEqual(doc[1].name,'Linear reference / receipt scale')
+            self.assertEqual(doc[1].name,'Scaled input preview (16-bit)')
             self.assertFalse(doc[1].visible)
             self.assertEqual(doc[2].name,'Display base')
             planes=doc._record.image_data.get_data(doc._record.header)

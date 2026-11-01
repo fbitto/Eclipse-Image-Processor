@@ -198,6 +198,6 @@ class MaskedImageTests(unittest.TestCase):
                 psb = PSDImage.open(Path(tmp)/'final_PS_layers.psb')
                 self.assertEqual(psb.depth,16)
                 self.assertEqual(psb._record.header.channels,3)
-                self.assertFalse((Path(tmp)/'final_sources').exists())
+                self.assertTrue((Path(tmp)/'final_sources').is_dir())
         finally:
             close_window(window)

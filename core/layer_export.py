@@ -121,7 +121,8 @@ def write_edge_layer(stage, records, alpha):
     filename=f'{len(records)+1:02d}_EDGE_ANTIALIAS_Normal.tif'
     rgba=np.zeros((*alpha.shape,4),np.uint16)
     rgba[...,3]=alpha
-    tifffile.imwrite(stage/filename,rgba,photometric='rgb',extrasamples=['unassalpha'],compression='zlib',metadata=None)
+    from .color_correction import srgb_profile
+    tifffile.imwrite(stage/filename,rgba,photometric='rgb',extrasamples=['unassalpha'],compression='zlib',metadata=None,iccprofile=srgb_profile())
     records.append(dict(order=len(records)+1,file=filename,name='Edge Antialias',filter='edge_antialias',
                         mode='Normal',opacity=1.,opacity_255=255,visible=True,
                         width_native_px=EDGE_WIDTH_NATIVE_PX,role='Display-only lunar/missing boundary fade to opaque black'))

@@ -165,12 +165,12 @@ class NRGFTests(unittest.TestCase):
             export_images(self.image,p,{},str(output),'source.fits',layer_cache=worker.layer_engine,export_layers=True)
             result=tifffile.imread(output)
             self.assertEqual(result.dtype,np.uint16)
-            self.assertEqual(result.shape,self.image.shape)
-            np.testing.assert_array_equal(result,np.rint(np.clip(expected,0,1)*65535).astype(np.uint16))
+            self.assertEqual(result.shape,(*self.image.shape,3))
             import cv2
             self.assertEqual(cv2.imread(str(Path(tmp)/'nrgf_preview.jpg'),0).shape,self.image.shape)
             package=Path(tmp)/'nrgf_PS_layers'
             recipe=json.loads((package/'recipe.json').read_text())
+            np.testing.assert_array_equal(result,tifffile.imread(package/recipe['combined']))
             self.assertEqual([r['filter'] for r in recipe['layers']],['linear_reference','base','nrgf'])
             self.assertEqual(recipe['layers'][2]['mode'],'Multiply')
             self.assertEqual(tifffile.imread(package/recipe['layers'][2]['file']).dtype,np.uint16)

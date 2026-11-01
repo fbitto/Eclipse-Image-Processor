@@ -53,7 +53,7 @@ class FilterExportTests(unittest.TestCase):
                 export_images(image,{}, {},str(destination),'source.fits',
                               export_layers=True,processed=image,progress=lambda value,label:updates.append((value,label)))
             self.assertEqual([label for _,label in updates],[
-                'Preparing export','Calculating filters','Writing layer package',
+                'Preparing export','Calculating filters','Writing layer package','Writing source images',
                 'Composing final image','Writing TIFF','Writing JPEG','Publishing export','Export complete'])
             self.assertEqual(updates[0][0],0)
             self.assertEqual(updates[-1][0],100)
@@ -93,13 +93,11 @@ class FilterExportTests(unittest.TestCase):
             self.assertEqual(fnrgf.call_args.args[8],40)
             exported=tifffile.imread(path)
             self.assertEqual(exported.dtype,np.uint16)
-            self.assertEqual(exported.shape,image.shape)
+            self.assertEqual(exported.shape,(*image.shape,3))
             self.assertEqual(cv2.imread(str(path.with_name('export_preview.jpg')),0).shape,image.shape)
-            worker=FilterWorker()
-            expected=engine_for(worker).render(worker,image,parameters,display)
-            np.testing.assert_array_equal(exported,to_u16(expected))
             package=path.with_name('export_PS_layers')
             manifest=json.loads((package/'recipe.json').read_text())
+            np.testing.assert_array_equal(exported,tifffile.imread(package/manifest['combined']))
             self.assertEqual([r['filter'] for r in manifest['layers']],['linear_reference','base','fnrgf','rhef','mgn'])
             self.assertTrue((package/'Load_layers_Photoshop.jsx').is_file())
             np.testing.assert_array_equal(image,original)

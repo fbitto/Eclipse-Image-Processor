@@ -4,11 +4,11 @@ import time
 import tempfile
 from contextlib import ExitStack
 from pathlib import Path
-import cv2
 import numpy as np
 import tifffile
+from PIL import Image
 from .filters import FilterWorker, CPU_CORES
-from .presentation import composition_settings, psb_presentation_settings
+from .presentation import psb_presentation_settings
 from .colour import neutralize_tse, set_luminosity, warm_colour
 from .image_data import recipe_parameters
 from .layer_export import export_layer_package
@@ -25,6 +25,7 @@ def export_images(source, parameters, display, file_path, original_path,
                   original_rgb=None, export_prominences=False, prominence_exposure_ev=-2.,
                   prominence_saturation=1., warmth=0.):
     """Compute/write in the caller's worker; source and cached output stay untouched."""
+    export_linear=bool(export_linear or export_layers)
     products = dict(include_settings=project_settings is not None,
                     layers_format=layers_format if export_layers else None,
                     linear=export_linear, prominences=export_prominences)
@@ -79,9 +80,8 @@ def export_images(source, parameters, display, file_path, original_path,
     engine = engine_for(worker)
     engine.prepare(worker,source,parameters)
     layers_path = None
-    if layers_requested or psb_preview_jpeg:
-        package_display = psb_presentation_settings(source, parameters.get('valid_mask'),
-            rgb=colour_rgb, params=parameters, exposure_ev=psb_exposure_ev)
+    package_display = psb_presentation_settings(source, parameters.get('valid_mask'),
+        rgb=colour_rgb, params=parameters, exposure_ev=psb_exposure_ev)
     if layers_requested:
         stage('Writing layer package')
         stem = Path(file_path).with_suffix("").with_name(Path(file_path).stem + "_PS_layers")
@@ -109,30 +109,20 @@ def export_images(source, parameters, display, file_path, original_path,
 
     stage('Composing final image')
     print(f"[EXPORT] Full-resolution layer composition; {CPU_CORES} CPUs available")
-    img = engine.render(worker,source,parameters,display) if processed is None else processed
-    if processed is not None:
-        print("[EXPORT FINAL] Reusing cached native filters; no recalculation")
-    neutral_display = composition_settings(display)
-    img_norm = img
-    if colour_rgb is not None:
-        from .layer_engine import colour_display
-        colour=colour_display(colour_rgb,source,neutral_display)
-        img_norm = set_luminosity(colour,img_norm)
+    from .presentation import psb_base
     from .presentation_edges import finish_presentation
-    edge = engine.edge_alpha(source,parameters)
-    if psb_preview_jpeg:
-        from .presentation import psb_base
-        base, colour = psb_base(source, parameters, package_display, colour_rgb)
-        jpeg_image = engine.render(worker,source,parameters,package_display,base=base)
-        if colour is not None:
-            jpeg_image = set_luminosity(colour,jpeg_image)
-        jpeg_image = finish_presentation(jpeg_image,edge)
-        if prominences is not None:
-            from .prominences import composite_prominences
-            jpeg_image=composite_prominences(jpeg_image,*prominences[:2])
-    else:
-        jpeg_image = finish_presentation(img_norm, edge)
+    base,colour=psb_base(source,parameters,package_display,colour_rgb)
+    img_norm=engine.render(worker,source,parameters,package_display,base=base)
+    if colour is not None:img_norm=set_luminosity(colour,img_norm)
+    edge=engine.edge_alpha(source,parameters)
     img_norm=finish_presentation(img_norm,edge)
+    if prominences is not None:
+        from .prominences import composite_prominences
+        img_norm=composite_prominences(img_norm,*prominences[:2])
+    if img_norm.ndim==2:img_norm=np.repeat(img_norm[...,None],3,axis=-1)
+    jpeg_image=img_norm
+    from .color_correction import srgb_profile
+    profile=srgb_profile()
     from .layer_export import to_u16
     img_16bit=to_u16(img_norm)
     settings_path=None
@@ -148,13 +138,14 @@ def export_images(source, parameters, display, file_path, original_path,
         tiff_temporary, jpeg_temporary = temporary_paths
         t0 = time.time()
         stage('Writing TIFF')
-        tifffile.imwrite(tiff_temporary, img_16bit, photometric="rgb" if colour_rgb is not None else "minisblack",
+        tifffile.imwrite(tiff_temporary, img_16bit, photometric="rgb",iccprofile=profile,
                          compression="zlib", maxworkers=CPU_CORES,
                          metadata={"scale_factor": scale_factor, "source": original_path,
                                    "parameters": recipe_parameters({k:v for k,v in parameters.items() if k != "layer_display"}),
-                                   "composition_normalization": neutral_display, "visual_stretch_applied": False,
+                                   "presentation": package_display, "visual_stretch_applied": True,
+                                   "colour_profile": "sRGB display",
                                    "colour_calibration": colour_report, "missing_samples": "opaque zero; 2-native-pixel observed-side edge antialias",
-                                   "role": "Independent layer composition; not a linear master"})
+                                   "role": "Presented RGB16 composition; working float32 sources are a separate product"})
         if prominences is not None:
             from .prominences import composite_prominences
             image,mask,settings=prominences
@@ -169,14 +160,9 @@ def export_images(source, parameters, display, file_path, original_path,
         print(f"[EXPORT: DISK WRITE] Done in {time.time() - t0:.3f}s")
 
         stage('Writing JPEG')
-        # JPEG follows the selected presentation; the main TIFF remains un-stretched.
         t0 = time.time()
-
-        jpeg_pixels = np.clip(jpeg_image * 255.0, 0, 255).astype(np.uint8)
-
-        # Save as JPEG with high quality
-        if not cv2.imwrite(jpeg_temporary, cv2.cvtColor(jpeg_pixels, cv2.COLOR_RGB2BGR) if jpeg_pixels.ndim == 3 else jpeg_pixels, [cv2.IMWRITE_JPEG_QUALITY, 95]):
-            raise OSError("Could not write JPEG preview")
+        jpeg_pixels=np.clip(jpeg_image*255.,0,255).astype(np.uint8)
+        Image.fromarray(jpeg_pixels).save(jpeg_temporary,format='JPEG',quality=95,icc_profile=profile)
         print(f"[EXPORT: JPEG PREVIEW] Done in {time.time() - t0:.3f}s")
 
         if project_settings is not None:

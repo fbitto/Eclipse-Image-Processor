@@ -205,8 +205,6 @@ class BackgroundGuiTests(unittest.TestCase):
             self.assertTrue((root/'equalized_PS_layers.psb').is_file())
             document=json.loads((root/'equalized.json').read_text())
             self.assertTrue(document['parameters']['background_extraction']['preserve_sky_level'])
-            from core.linear_export import export_linear_sources
-            export_linear_sources(w.full_raw_image,w.full_source_rgb,source,root/'equalized_sources','linear',preprocessing=w.background.report)
             linear=json.loads((root/'equalized_sources/sources.json').read_text())
             self.assertEqual(linear['preprocessing'],w.background.report)
             expected=w.full_raw_image.copy()

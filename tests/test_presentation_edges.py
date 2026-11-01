@@ -82,9 +82,9 @@ class PresentationEdgeTests(unittest.TestCase):
             export_images(self.source,self.params,{},str(out),'source.fits',export_layers=True,
                           layers_format='psb',layer_cache=worker.layer_engine,export_linear=True,input_state='linear')
             final=tifffile.imread(out)
-            self.assertEqual(final.shape,self.shape)
+            self.assertEqual(final.shape,(*self.shape,3))
             neutral=worker.layer_engine.render(worker,self.source,self.params,{})
-            np.testing.assert_array_equal(final,to_u16(finish_presentation(neutral,worker.layer_engine.edge_alpha(self.source,self.params))))
+            np.testing.assert_array_equal(final,expected)
             doc=PSDImage.open(root/'final_PS_layers.psb')
             self.assertEqual(doc[-1].name,'Edge Antialias')
             for plane in doc._record.image_data.get_data(doc._record.header):
@@ -99,6 +99,6 @@ class PresentationEdgeTests(unittest.TestCase):
             out=Path(tmp)/'final.tif'
             export_images(self.source,p,{},str(out),'source.fits')
             final=tifffile.imread(out)
-            self.assertEqual(final.shape,self.shape)
+            self.assertEqual(final.shape,(*self.shape,3))
             self.assertTrue(np.all(final[~self.valid]==0))
             self.assertTrue(np.isfinite(final).all())

@@ -29,9 +29,9 @@ This guide describes the active 0.6.0 implementation. See the [documentation ind
 2. Optionally fit/subtract background slopes on native working data. Recompute mono from corrected RGB.
 3. Establish normalization bounds from the native working image. Filters use float32 mono, with RGB luminance `0.299 R + 0.587 G + 0.114 B`.
 4. Calculate each enabled filter independently from that shared mono input. Numerical branches never receive a preceding filter's output or a presentation curve.
-5. Encode and compose cached layers. Choose an un-stretched linearly normalized base for the main TIFF, or a PSB presentation base for presentation preview/layer export.
+5. Encode and compose cached layers. Use the PSB presentation base for TIFF/JPEG/layer export; retain the linearly normalized base for optional un-stretched viewport inspection.
 6. Apply RGB presentation using the native calibrated RGB when calibration is enabled, then display-only edge antialias over black.
-7. Optionally composite original prominences above the PSB presentation. `original_source_rgb` is retained on load and never replaced by background preparation; this branch bypasses working-source filters and colour gains. Export its black-backed RGB16 and mask separately and keep unmasked RGB with an editable mask in Photoshop. The main TIFF remains the corona composition.
+7. Optionally composite original prominences above the PSB presentation. `original_source_rgb` is retained on load and never replaced by background preparation; this branch bypasses working-source filters and colour gains. Export its black-backed RGB16 and mask separately and keep unmasked RGB with an editable mask in Photoshop. Presented TIFF/JPEG also include the selected prominence composition.
 
 The linear input declaration is an assumption. It does not invert a transfer curve in an already stretched file. Enhanced composites are not photometric linear masters.
 

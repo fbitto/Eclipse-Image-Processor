@@ -49,6 +49,12 @@ def add_controls(window):
                                                 on_release_callback=lambda section=section: window.on_filter_slider_released(section))
             slider.setObjectName('sl_'+attr)
             setattr(window, 'sl_'+attr, slider)
+    window.combo_larson_input=ScrollSafeComboBox()
+    window.combo_larson_input.addItem('Linear input (compatible)','linear')
+    window.combo_larson_input.addItem('Log intensity (HDR detail)','log')
+    window.combo_larson_input.setToolTip('Linear mode scales by supported input range. Log mode computes dimensionless relative detail with fixed display scale; requires positive observations. Missing and nonpositive values are not filled.')
+    window.combo_larson_input.currentIndexChanged.connect(lambda _: window.on_filter_slider_released(window.sec_larson_sekanina))
+    window.sec_larson_sekanina.content_layout.insertWidget(0,window.combo_larson_input)
     window.combo_fnrgf_mode = ScrollSafeComboBox()
     window.combo_fnrgf_mode.addItem('Continuous · observed support', 'continuous')
     window.combo_fnrgf_mode.addItem('Reference-compatible', 'legacy')
@@ -114,6 +120,7 @@ def collect_controls(window):
         params['rhef_upsilon_high'] = window.sl_rhef_upsilon.value()
     if not window.chk_tangential_outer.isChecked():
         params['tangential_outer'] = 0.
+    params['larson_sekanina_mode']=window.combo_larson_input.currentData()
     params['fnrgf_mode'] = window.combo_fnrgf_mode.currentData()
     params['mgn_sigmas'] = tuple(sl.value()/100 for sl in window.sl_mgn_sigmas)
     params['mgn_weights'] = tuple(sl.value()/100 for sl in window.sl_mgn_weights)

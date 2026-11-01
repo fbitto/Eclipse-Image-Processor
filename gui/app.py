@@ -347,13 +347,13 @@ class EclipseProcessorApp(QMainWindow):
         self.sec_geo.content_layout.addLayout(detection_row)
         self.chk_statistics_lunar = QCheckBox('Exclude lunar disk from filter statistics')
         self.chk_statistics_lunar.setChecked(True)
-        self.chk_statistics_lunar.setToolTip('Keep finite lunar pixels unchanged while excluding them from enhancement statistics. This is separate from missing-data validity. Masked WOW uses the observed-support starlet variant.')
+        self.chk_statistics_lunar.setToolTip('Exclude lunar/guard samples from estimation. Observed targets can still be evaluated where a supported model exists; missing-data validity is separate. AEL compatibility keeps its original support policy.')
         self.chk_statistics_separate_ael=QCheckBox('Experimental AEL support separation')
         self.chk_statistics_separate_ael.setToolTip('Keep observed positive samples in AEL operators. Exclusions apply to ACHF radial fitting and layer display statistics; missing/nonpositive data stay excluded. Experimental: compatibility behavior remains the default.')
         self.chk_statistics_separate_ael.toggled.connect(self.on_ael_support_changed)
         self.sec_geo.content_layout.addWidget(self.chk_statistics_separate_ael)
         self.chk_statistics_bright = QCheckBox('Exclude bright limb samples from statistics')
-        self.chk_statistics_bright.setToolTip('Exclude the brightest samples in a selected limb annulus from statistics and leave those input pixels unchanged. This brightness heuristic does not identify prominences scientifically.')
+        self.chk_statistics_bright.setToolTip('Exclude the brightest samples in a selected limb annulus from estimation. Supported observed targets can retain enhancement; AEL compatibility retains excluded output holes unless the experimental mode is selected. This brightness heuristic is not a scientific prominence classifier.')
         for checkbox in (self.chk_statistics_lunar, self.chk_statistics_bright):
             checkbox.toggled.connect(self.dispatch_pipeline_request_if_auto)
             self.sec_geo.content_layout.addWidget(checkbox)
@@ -623,12 +623,12 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_psb_exposure, self.lbl_psb_exposure = create_slider(
             'PSB Exposure (EV)', -600, 600, 0, psb_group,
             divisor=100, formatter=None,
-            tooltip='Automatic native-image scale plus exposure compensation: +1 EV doubles exposure; -1 EV halves it. Always affects Photoshop layer presentation. Affects the screen and JPEG only when Preview PSB presentation is on; never changes the main TIFF. Double-click to restore 0 EV.')
+            tooltip='Automatic native-image scale plus exposure compensation: +1 EV doubles exposure; -1 EV halves it. Affects presented TIFF, JPEG and Photoshop layer presentation. The preview toggle changes only the viewport. Float32 working sources retain their units. Double-click to restore 0 EV.')
         self.sl_psb_exposure.valueChanged.connect(self._on_psb_exposure_changed)
         self.btn_psb_preview = QPushButton('Preview PSB presentation')
         self.btn_psb_preview.setCheckable(True)
         self.btn_psb_preview.setChecked(True)
-        self.btn_psb_preview.setToolTip('Show the Photoshop presentation (default). Turn off to inspect the un-stretched TIFF composition. Native verification matches the exported presentation; fast view is approximate. The optional Color Correction group is rendered only in Photoshop.')
+        self.btn_psb_preview.setToolTip('Show the Photoshop presentation (default). Turn off to inspect the un-stretched working composition in the viewport. Exports remain presented RGB. Native verification matches the exported presentation; fast view is approximate. The optional Color Correction group is rendered only in Photoshop.')
         self.btn_psb_preview.toggled.connect(self.render_matrix_to_screen)
         psb_group.addWidget(self.btn_psb_preview)
         self.lbl_psb_presentation = QLabel('Auto scale + exposure compensation · Asinh 10')
@@ -732,7 +732,7 @@ class EclipseProcessorApp(QMainWindow):
         self.lbl_colour_hint.setWordWrap(True)
         self.lbl_colour_hint.setStyleSheet("color: #aaaaaa; font-size: 10px;")
         self.btn_export = QPushButton("Export Final Image")
-        self.btn_export.setToolTip("Save the full-resolution filter composition without visual stretch. JPEG follows the PSB presentation preview. Photoshop layers use their own exposure-controlled presentation base and hidden linear reference.")
+        self.btn_export.setToolTip("Save full-resolution RGB16 TIFF and JPEG using the PSB presentation, plus float32 working sources and validity in a companion folder. The viewport preview toggle does not change these products. Optional Color Correction remains Photoshop-only.")
         self.btn_export.clicked.connect(self.export_image_action)
         self.btn_save_settings = QPushButton("Save Settings Only")
         self.btn_save_settings.setToolTip("Save current adjustments to JSON without calculating filters or exporting images. The original image is required when reopening the JSON.")
@@ -1530,10 +1530,9 @@ class EclipseProcessorApp(QMainWindow):
             file_path += ".tiff"
         try:
             products=dict(layers_format=self.combo_layers_format.currentData() if self.chk_export_layers.isChecked() else None,
-                          prominences=self.chk_prominences.isChecked())
+                          prominences=self.chk_prominences.isChecked(),linear=True)
             protect_source(export_paths(file_path,**products), self.source_path)
-            if self.chk_export_layers.isChecked() or self.chk_prominences.isChecked():
-                file_path=str(available_export_path(file_path,**products))
+            file_path=str(available_export_path(file_path,**products))
             destinations = export_paths(file_path,**products)
             protect_source(destinations, self.source_path)
             collisions = [str(path) for path in destinations if path.exists() or path.is_symlink()]
@@ -1563,7 +1562,7 @@ class EclipseProcessorApp(QMainWindow):
                 color_correction=self.chk_color_correction.isEnabled() and self.chk_color_correction.isChecked(),
                 psb_exposure_ev=self.sl_psb_exposure.value()/100 if hasattr(self,'sl_psb_exposure') else 0.,
                 psb_preview_jpeg=self.btn_psb_preview.isChecked() if hasattr(self,'btn_psb_preview') else False,
-                input_state=self.combo_input_state.currentData(), processed=processed,
+                input_state=self.combo_input_state.currentData(), processed=processed,export_linear=True,
                 project_settings=capture_settings(self))
             request["layer_cache"] = engine_for(self.filter_worker).snapshot(self.full_raw_image,request["source"])
         except (ValueError, TypeError, OverflowError, OSError) as error:

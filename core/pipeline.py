@@ -237,6 +237,8 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
 
     check_cancelled()
     if name == 'larson_sekanina':
+        if p.get('larson_sekanina_mode','linear') != 'linear':
+            raise ValueError('Log Larson-Sekanina returns dimensionless detail; use independent layer composition')
         step_start = time.time()
         img = worker.run_larson_sekanina(
             img, p['larson_sekanina_str'], p['sx'], p['sy'], p['sr'],

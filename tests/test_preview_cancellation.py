@@ -37,7 +37,7 @@ class CancellationTests(unittest.TestCase):
             if not release.wait(3):
                 raise AssertionError('Test did not release first convolution')
             return original(*args, **kwargs)
-        with patch('core.filters.gaussian_filter', side_effect=blocking_gaussian) as gaussian:
+        with patch('core.masked_filters.gaussian_filter', side_effect=blocking_gaussian) as gaussian:
             thread = Thread(target=worker.process_pipeline, args=(image, params))
             thread.start()
             try:

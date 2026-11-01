@@ -81,7 +81,7 @@ def ordered_scale_results(function, items, image):
 
 
 def larson_sekanina_residual(image, cx, cy, radius, radial_increment=0.,
-                             angular_increment=3., valid=None, nearby_delta=0., target_valid=None):
+                             angular_increment=3., valid=None, nearby_delta=0., target_valid=None, input_mode="linear"):
     """Classic 2I-I(r-dr, theta-da)-I(r-dr, theta+da), in input units.
 
     2D samples use bilinear interpolation, dr in image pixels, da in degrees.
@@ -103,6 +103,14 @@ def larson_sekanina_residual(image, cx, cy, radius, radial_increment=0.,
         if np.shape(valid) != a.shape:
             raise ValueError('Larson-Sekanina validity must match image')
         observed = np.asarray(valid, bool) & np.isfinite(a)
+    if input_mode not in ('linear','log'):raise ValueError('Unknown Larson-Sekanina input mode')
+    available=np.isfinite(a)
+    if input_mode == 'log':
+        available &= a>0
+        observed &= available
+        logged=np.zeros_like(a)
+        np.log(a,out=logged,where=available)
+        a=logged
     if not observed.any():
         raise ValueError('Larson-Sekanina needs observed samples')
     result = np.zeros(a.shape, dtype=float)
@@ -113,7 +121,7 @@ def larson_sekanina_residual(image, cx, cy, radius, radial_increment=0.,
     targets=support
     if target_valid is not None:
         if np.shape(target_valid) != a.shape:raise ValueError('Larson-Sekanina target validity must match image')
-        targets=np.asarray(target_valid,bool) & np.isfinite(a) & (np.hypot(x-cx,y-cy)>radius)
+        targets=np.asarray(target_valid,bool) & available & (np.hypot(x-cx,y-cy)>radius)
     signal = np.where(support, a, 0)
     weights = support.astype(float)
     half_width = min(nearby_delta, angular_increment, 180-angular_increment)

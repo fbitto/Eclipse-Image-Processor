@@ -34,13 +34,18 @@ class ExportDisplaySeparationTests(unittest.TestCase):
                 tiffs.append(tifffile.imread(target))
                 jpegs.append(cv2.imread(str(target.with_name(f'out{i}_preview.jpg')),0))
                 metadata=json.loads(tifffile.TiffFile(target).pages[0].description)
-                self.assertFalse(metadata['visual_stretch_applied'])
+                self.assertTrue(metadata['visual_stretch_applied'])
             np.testing.assert_array_equal(tiffs[0],tiffs[1])
             from core.presentation_edges import finish_presentation
-            expected=finish_presentation(composition,engine_for(worker).edge_alpha(self.source,self.params))
+            from core.presentation import psb_base
+            settings=psb_presentation_settings(self.source,params=self.params)
+            base,_=psb_base(self.source,self.params,settings)
+            expected=engine_for(worker).render(worker,self.source,self.params,settings,base=base)
+            expected=finish_presentation(expected,engine_for(worker).edge_alpha(self.source,self.params))
+            expected=np.repeat(expected[...,None],3,axis=-1)
             np.testing.assert_array_equal(tiffs[0],to_u16(expected))
             np.testing.assert_array_equal(jpegs[0],jpegs[1])
-            self.assertEqual(tiffs[0][0,0],0)
+            np.testing.assert_array_equal(tiffs[0][0,0],0)
 
     def test_package_base_and_hidden_reference_are_independent_of_gui(self):
         rgb=self.source[...,None]*np.array([.7,1.,1.2])

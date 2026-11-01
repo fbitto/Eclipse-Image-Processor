@@ -104,8 +104,7 @@ class ExportSafetyTests(unittest.TestCase):
                 Path(path).write_bytes(b'partial')
                 raise OSError('disk full')
             cases = [('core.export.tifffile.imwrite', dict(side_effect=partial)),
-                     ('core.export.cv2.imwrite', dict(side_effect=partial)),
-                     ('core.export.cv2.imwrite', dict(return_value=False)),
+                     ('core.export.Image.Image.save', dict(side_effect=partial)),
                      ('core.export.os.replace', dict(side_effect=OSError('replace failed')))]
             for name, behavior in cases:
                 target.write_bytes(b'previous tiff')

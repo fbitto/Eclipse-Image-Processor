@@ -220,7 +220,8 @@ class LayerEngine:
             from .filters import larson_sekanina_residual
             values=larson_sekanina_residual(prepared,p['sx'],p['sy'],p['sr'],
                 p.get('larson_sekanina_radial',0.),p.get('larson_sekanina_angular',3.),valid & statistics,
-                nearby_delta=p.get('larson_sekanina_nearby_delta',0.),target_valid=valid)
+                nearby_delta=p.get('larson_sekanina_nearby_delta',0.),target_valid=valid,
+                input_mode=p.get('larson_sekanina_mode','linear'))
         else:
             filtered=apply_filter(worker,prepared,p,process_label='INDEPENDENT '+name.upper(),verbose=False)
             values=(filtered-prepared if name == 'tangential' else
@@ -234,6 +235,8 @@ class LayerEngine:
         domain &= np.isfinite(values)
         if ael or ael_wow or (name == 'rhef' and p.get('rhef_mode') == 'continuous'):
             domain &= (prepared>0) & np.isfinite(values)
+        if name == 'larson_sekanina' and p.get('larson_sekanina_mode') == 'log':
+            domain &= prepared>0
         mode='Multiply' if name in ('nrgf', 'fnrgf') else 'Linear Light' if name == 'larson_sekanina' else 'Overlay'
         if name == 'nrgf':
             image=np.where(domain, values, 1.)
@@ -242,7 +245,12 @@ class LayerEngine:
             if name == 'rhef':
                 mapping=dict(encoding='Upsilon-curved ranks; no display renormalization')
         elif name == 'larson_sekanina':
-            image,mapping=linear_detail_layer(values,domain,np.ptp(prepared[domain & statistics]) if (domain & statistics).any() else 0.,statistics)
+            if p.get('larson_sekanina_mode','linear') == 'log':
+                image=np.where(domain,.5+.5*values,.5)
+                mapping=dict(center=0.,scale=1.,input='log luminance',units='dimensionless',formula='0.5 + D/2')
+            else:
+                image,mapping=linear_detail_layer(values,domain,np.ptp(prepared[domain & statistics]) if (domain & statistics).any() else 0.,statistics)
+                mapping['input']='linear luminance; supported statistical input span'
         elif name == 'tangential' or (name == 'achf' and variant == 'adaptive'):
             from types import SimpleNamespace
             from .ael_achf import display_detail_rings

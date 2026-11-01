@@ -19,12 +19,18 @@ Only targets outside the reference lunar disk with both interpolation footprints
 
 ## Layer encoding
 
-The independent branch computes signed detail from the shared working input. It encodes `L = 0.5 + D/(2*S)`, where S is the larger of the observed working-input range and maximum absolute supported residual. The receipt records this scale. Gain scales the displacement from neutral grey before quantization/clipping; it is distinct from opacity.
+The independent branch computes signed detail from the shared working input. It encodes `L = 0.5 + D/(2*S)`, where S is the larger of the supported statistical input range outside the reference disk and the maximum statistical residual. Excluded targets do not set S. The receipt records this scale. Gain scales the displacement from neutral grey before quantization/clipping; it is distinct from opacity.
 
 With Linear Light and Fill 100%, the display blend is `clip(base + 2*L - 1, 0, 1)`. Layer opacity and alpha then mix that clipped result with the base. Consequently Gain above 100% is useful but can clip detail; opacity cannot undo all effects of that clipping. The layer is RGB16 with unassociated alpha, and opacity is quantized to 1/255. Neutral 0.5 quantizes to 32768/65535, leaving a small rounding offset. There is no global Reveal multiplier.
 
-Main TIFF uses an un-stretched normalized base; PSB uses its presentation base. Neither is an exact reconstruction of the direct numerical helper. See [composition](layer-composition.md), [export](psb-export.md) and [validation](validation.md).
+Main TIFF/JPEG and PSB share the presentation base. Neither is an exact reconstruction of the direct numerical helper. See [composition](layer-composition.md), [export](psb-export.md) and [validation](validation.md).
 
 Small angles, incorrect centres and bright edges can create misleading residuals. This application implements the symmetric operator for corona visualization, without claiming PixInsight-specific extensions.
 
 References: [Larson and Sekanina (1984)](https://doi.org/10.1086/113551); [Vincent, section 2.2.2.1](https://www2.mps.mpg.de/solar-system-school/alumni/vincent.pdf); [Adobe blend-mode descriptions](https://helpx.adobe.com/photoshop/desktop/repair-retouch/adjust-light-tone/blending-mode-descriptions.html).
+
+## Optional log-intensity mode
+
+Linear input remains the default and is restored when older recipes omit the selector. Log intensity computes the same rotational residual on ln I, using positive observed samples only. Its residual is dimensionless and encoded as `L = 0.5 + D/2` with fixed scale 1; exposure units and an extreme hidden lunar pixel cannot set the display scale. It uses the same interpolation/support and optional nearby-angle averaging. The direct residual helper accepts `input_mode="log"`; the input-unit numerical dispatcher rejects this dimensionless mode rather than mixing units. No pedestal or source clipping is applied.
+
+On the supplied native margin--2px TIFF at saved Gain 25%, the median absolute Linear Light increment between 2 and 5 reference radii was about 2.53 8-bit levels in log mode versus 0.0039 in linear mode (the latter is at the RGB16 neutral rounding floor). This demonstrates usable display amplitude, not astrophysical signal or improved SNR; noise and interpolation effects are enhanced too. The source checksum and missing support remained unchanged.

@@ -44,3 +44,5 @@ The retired adaptive ACHF `sl_achf_background` control is ignored when opening e
 RHEF/FNRGF ring-width ticks now denote native pixels. Reopening an older v4 recipe retains its raw ticks but recalculates under the corrected units; earlier preview-pixel RHEF and target-pixel FNRGF previews are not reproduced. MGN and AEL isotropic fast previews omit unresolved subpixel bands; their native recipes are unchanged.
 
 `chk_statistics_separate_ael` records the opt-in experimental AEL statistics/output policy. Missing fields default off. The mode retains observed positive operator samples while restricting ACHF radial fits and display statistics, rather than reconstructing missing pixels.
+
+Exports now use the PSB presentation for TIFF/JPEG regardless of the viewport toggle. Exposure affects all display products, and GUI export includes a separate float32 working-source package. Existing recipes keep their raw controls but recalculate under this corrected output contract. The optional Larson–Sekanina log input selector defaults to linear when omitted.

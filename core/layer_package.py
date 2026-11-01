@@ -17,6 +17,8 @@ from .layer_engine import engine_for, requests, opacity, LABELS
 def export_layered_package(worker, source, params, display, original_path, destination,
                            rgb=None, colour_report=None, prominences=None):
     from .layer_export import to_u16, photoshop_loader, write_edge_layer
+    from .color_correction import srgb_profile
+    profile=srgb_profile()
     source = np.asarray(source)
     if source.ndim != 2 or not source.size:
         raise ValueError('Layer export requires a nonempty monochrome canvas')
@@ -50,7 +52,7 @@ def export_layered_package(worker, source, params, display, original_path, desti
         filename=f'{order:02d}_{label}_{mode.replace(" ","")}.tif'
         rgba=np.dstack([image,image,image,alpha])
         tifffile.imwrite(stage/filename,rgba,photometric='rgb',extrasamples=['unassalpha'],
-                         compression='zlib',metadata=None)
+                         compression='zlib',metadata=None,iccprofile=profile)
         records.append(dict(order=order,file=filename,mode=mode,opacity=amount,
                             opacity_255=round(amount*255),visible=amount>0,**metadata))
         print(f'[LAYER {label}: TIFF WRITE] Done in {time.perf_counter()-timer:.3f}s')
@@ -65,9 +67,10 @@ def export_layered_package(worker, source, params, display, original_path, desti
         tifffile.imwrite(stage/reference_file,
                          np.dstack([reference_rgb, (finite if finite.ndim == 2 else finite.all(axis=-1)).astype(np.uint16)*65535]),
                          photometric='rgb', extrasamples=['unassalpha'], compression='zlib', metadata=None)
-        records.append(dict(order=1, file=reference_file, name='Linear reference / receipt scale',
+        records.append(dict(order=1, file=reference_file, name='Scaled input preview (16-bit)',
                             filter='linear_reference', mode='Normal', opacity=1., opacity_255=255,
                             visible=False, reference_scale=reference_scale,
+                            role='Quantized viewing reference only; use separate working float32 sources for linear data',
                             negative_values='clipped in 16-bit reference; float source retains signed values',
                             colour_calibration=colour_report))
         base, color = psb_base(source,params,display,rgb)
@@ -86,7 +89,7 @@ def export_layered_package(worker, source, params, display, original_path, desti
             order=len(records)+1
             filename=f'{order:02d}_RGB_Color.tif'
             tifffile.imwrite(stage/filename,np.dstack([to_u16(color),valid.astype(np.uint16)*65535]),
-                             photometric='rgb',extrasamples=['unassalpha'],compression='zlib',metadata=None)
+                             photometric='rgb',extrasamples=['unassalpha'],compression='zlib',metadata=None,iccprofile=profile)
             records.append(dict(order=order,file=filename,filter='colour',mode='Color',
                                 opacity=1.,opacity_255=255,visible=True))
             combined=set_luminosity(color,combined)
@@ -101,16 +104,16 @@ def export_layered_package(worker, source, params, display, original_path, desti
             image, mask, settings = prominences
             if image.shape != (*source.shape, 3) or mask.shape != source.shape:
                 raise ValueError('Prominences must match the original canvas')
-            tifffile.imwrite(stage/'CORONA_COMBINED.tif',to_u16(combined),photometric='rgb',compression='zlib',metadata=None)
+            tifffile.imwrite(stage/'CORONA_COMBINED.tif',to_u16(combined),photometric='rgb',compression='zlib',metadata=None,iccprofile=profile)
             filename=f'{len(records)+1:02d}_PROMINENCES_Normal.tif'
-            tifffile.imwrite(stage/filename,image,photometric='rgb',compression='zlib',metadata=None)
+            tifffile.imwrite(stage/filename,image,photometric='rgb',compression='zlib',metadata=None,iccprofile=profile)
             tifffile.imwrite(stage/'PROMINENCES_MASK.tif',mask,compression='zlib',metadata=None)
             records.append(dict(order=len(records)+1,file=filename,name='Prominences and chromosphere',
                                 filter='prominences',mode='Normal',opacity=1.,opacity_255=255,
                                 visible=True,mask_file='PROMINENCES_MASK.tif',normalization=settings))
             combined=composite_prominences(combined,image,mask)
         combined_file='REFERENCE_COMBINED.tif'
-        tifffile.imwrite(stage/combined_file,to_u16(combined),photometric='rgb',compression='zlib',metadata=None)
+        tifffile.imwrite(stage/combined_file,to_u16(combined),photometric='rgb',compression='zlib',metadata=None,iccprofile=profile)
         tifffile.imwrite(stage/'SOURCE_float32.tif',zero_missing(source,valid).astype(np.float32),compression='zlib')
         tifffile.imwrite(stage/'VALID.tif',valid.astype(np.uint8)*255,compression='zlib')
         from .statistics_support import statistics_support
@@ -129,12 +132,12 @@ def export_layered_package(worker, source, params, display, original_path, desti
         (stage/'recipe.json').write_text(json.dumps(recipe,indent=2),encoding='utf-8')
         background_file='00_BACKGROUND_Normal.tif'
         tifffile.imwrite(stage/background_file,np.zeros((*source.shape,3),np.uint16),
-                         photometric='rgb',compression='zlib',metadata=None)
+                         photometric='rgb',compression='zlib',metadata=None,iccprofile=profile)
         loader_records=[dict(file=background_file,mode='Normal',opacity_255=255,visible=True),*records]
         (stage/'Load_layers_Photoshop.jsx').write_text(photoshop_loader(loader_records),encoding='utf-8')
         (stage/'Layers.md').write_text('# Independent filter layers\n\nLoad with File > Scripts > Browse > Load_layers_Photoshop.jsx.\n'
             'All filters start from the shared linear working input (including optional background equalization; see recipe parameters). Only Larson–Sekanina exposes Gain (0–200%); other filters have no Strength control. Opacity controls blending.\n'
-            'The base uses the PSB Asinh-10 presentation with automatic scale plus manual EV exposure, regardless of the preview toggle. Main TIFF composition has no presentation stretch. A hidden linear reference carries its receipt scale.\n'
+            'The base uses the PSB Asinh-10 presentation with automatic scale plus manual EV exposure, regardless of the preview toggle. Main TIFF/JPEG share this presented composition and carry sRGB profiles. The hidden scaled input preview is quantized, not a linear master; use the companion float32 working sources for numerical data.\n'
             'Edge Antialias is an editable display-only black overlay at lunar/missing boundaries.\n'
             'Numerical source files store missing samples as zero; VALID preserves their identity.\n',encoding='utf-8')
         check_cancelled()

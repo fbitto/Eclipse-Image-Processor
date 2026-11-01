@@ -30,7 +30,7 @@ Directly opening another image preserves all filter parameters, activations and 
 
 Layer samples are mono encoded into RGB16 with separate unassociated alpha. Overlay detail is encoded around neutral grey; NRGF/FNRGF use Multiply encodings and Larson–Sekanina a signed Linear Light encoding. AEL filters retain their MAD/tanh encoding. Opacity is quantized to 1/255 and layer channels to 16 bits; composition uses float intermediates.
 
-The main TIFF composes these layers over a linearly normalized native base with **no presentation stretch**. The PSB uses the same filter layers over its own Asinh presentation base. Therefore the main TIFF and cached PSB composite are different products. The preview toggle selects the presented or un-stretched view; JPEG follows that selection. See [PSB presentation and export](psb-export.md).
+The main TIFF and JPEG compose these layers over the same exposure-controlled PSB Asinh presentation base, including selected prominence presentation. The viewport toggle can inspect an un-stretched composition without changing exports. GUI exports also preserve float32 working mono/RGB and validity in a separate source package. Display products embed sRGB; raw working sources do not. Optional native Color Correction remains Photoshop-only. See [PSB presentation and export](psb-export.md).
 
 RGB colour calibration is gain-only, calculated from native RGB, and reused for reduced colour display. It does not recalculate mono detail filters. Fast tone mapping of reduced data can differ from native tone mapping followed by reduction. Native bounds and presentation scale are shared so resolution changes do not independently choose a new brightness window.
 

@@ -179,7 +179,14 @@ class ControlAndVerificationTests(unittest.TestCase):
                 w.export_image_action()
                 self.assertTrue(w._export_thread.wait(30000))
                 self.app.processEvents()
-            np.testing.assert_array_equal(tifffile.imread(path),np.rint(np.clip(expected,0,1)*65535).astype(np.uint16))
+            from core.presentation import psb_presentation_settings,psb_base
+            from core.layer_engine import engine_for
+            from core.presentation_edges import finish_presentation
+            settings=psb_presentation_settings(full,p['valid_mask'],rgb=w.full_source_rgb,params=p)
+            base,colour=psb_base(full,p,settings,w.full_source_rgb)
+            presented=engine_for(w.filter_worker).render(w.filter_worker,full,p,settings,base=base)
+            presented=finish_presentation(set_luminosity(colour,presented),engine_for(w.filter_worker).edge_alpha(full,p))
+            np.testing.assert_array_equal(tifffile.imread(path),np.rint(np.clip(presented,0,1)*65535).astype(np.uint16))
             self.assertEqual(cv2.imread(str(path.with_name('actual_preview.jpg'))).shape,(*full.shape,3))
         # Numeric settings invalidate this cache, whereas display controls do not.
         signature=parameter_signature(w.collect_filter_parameters(full.shape))

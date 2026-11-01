@@ -140,19 +140,25 @@ def main():
             raise RuntimeError(window.status_label.text())
         params = window.collect_filter_parameters(full.shape)
         active_engine = engine_for(window.filter_worker)
-        expected = active_engine.render(window.filter_worker, full, params, display)
-        if window.full_source_rgb is not None:
-            expected = set_luminosity(colour_display(window._colour_cache[0], full, display), expected)
-        expected = finish_presentation(expected, active_engine.edge_alpha(full, params))
+        from core.presentation import psb_presentation_settings,psb_base
+        prepared_rgb=window._colour_cache[0] if window.full_source_rgb is not None else None
+        presentation=psb_presentation_settings(full,params.get('valid_mask'),rgb=prepared_rgb,
+            params=params,exposure_ev=window.sl_psb_exposure.value()/100)
+        base,colour=psb_base(full,params,presentation,prepared_rgb)
+        expected=active_engine.render(window.filter_worker,full,params,presentation,base=base)
+        if colour is not None:expected=set_luminosity(colour,expected)
+        expected=finish_presentation(expected,active_engine.edge_alpha(full,params))
+        if expected.ndim==2:expected=np.repeat(expected[...,None],3,axis=-1)
         exported = tifffile.imread(destination)
         assert exported.dtype == np.uint16
         np.testing.assert_array_equal(exported, to_u16(expected))
         jpeg = cv2.imread(str(destination.with_name('actual_gui_export_preview.jpg')), cv2.IMREAD_UNCHANGED)
         if jpeg.ndim == 3:
             jpeg = cv2.cvtColor(jpeg, cv2.COLOR_BGR2RGB)
+        if expected_jpeg.ndim==2:expected_jpeg=np.repeat(expected_jpeg[...,None],3,axis=-1)
         assert jpeg.shape == expected_jpeg.shape
         report['export'] = dict(shape=list(exported.shape), dtype=str(exported.dtype),
-            tiff_matches_unstretched_composition=True,
+            tiff_matches_psb_presentation=True,
             jpeg_mae=float(np.mean(abs(jpeg.astype(float)-expected_jpeg))))
         assert report['export']['jpeg_mae'] < 8, report['export']
         np.testing.assert_array_equal(full, full_before)

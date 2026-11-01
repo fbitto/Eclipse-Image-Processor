@@ -50,7 +50,7 @@ class PSBPresentationTests(unittest.TestCase):
         self.assertEqual(psb_presentation_settings(np.zeros((4,4)))['scale'],1.)
         np.testing.assert_array_equal(ael_tone_map(np.zeros((4,4)),np.ones((4,4),bool),baseline),0)
 
-    def test_exposure_changes_psb_and_preview_jpeg_but_never_tiff_or_hidden_reference(self):
+    def test_exposure_changes_presented_images_but_not_hidden_reference(self):
         source=np.linspace(1,1000,32*48,dtype=np.float32).reshape(32,48)
         rgb=source[...,None]*np.array([.5,1.,.8])
         params=dict(layered_model=True,sx=24,sy=16,sr=4,mgn_enabled=True,
@@ -74,7 +74,7 @@ class PSBPresentationTests(unittest.TestCase):
                 self.assertFalse(doc[1].visible)
                 references.append(doc[1]._channels[1].get_data(48,32,16,2))
                 bases.append(np.frombuffer(doc[2]._channels[1].get_data(48,32,16,2),dtype='>u2'))
-            np.testing.assert_array_equal(outputs[0],outputs[1])
+            self.assertFalse(np.array_equal(outputs[0],outputs[1]))
             self.assertNotEqual(previews[0],previews[1])
             self.assertEqual(references[0],references[1])
             self.assertGreater(float(bases[1].mean()),float(bases[0].mean()))

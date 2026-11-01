@@ -84,37 +84,23 @@ class ExportWorkerTests(unittest.TestCase):
         finally:
             close_window(w)
 
-    def test_companion_collisions_require_one_confirmation_before_worker(self):
-        from PySide6.QtWidgets import QMessageBox
-        w = EclipseProcessorApp()
-        w.auto_calculate = False
-        w.chk_export_layers.setChecked(False)
-        image = np.ones((8, 10), np.float32)
-        w.full_raw_image = image
-        w.raw_image = image.copy()
-        w.preview_image = image.copy()
+    def test_gui_companion_collisions_choose_a_common_stem_without_overwriting(self):
+        w=EclipseProcessorApp();w.auto_calculate=False;w.chk_export_layers.setChecked(False)
+        image=np.ones((8,10),np.float32)
+        w.full_raw_image=w.raw_image=w.preview_image=image
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                target = Path(tmp)/'new.tif'
-                jpeg = Path(tmp)/'new_preview.jpg'
-                settings = Path(tmp)/'new.json'
+                target=Path(tmp)/'new.tif';jpeg=Path(tmp)/'new_preview.jpg'
                 jpeg.write_bytes(b'old preview')
-                settings.write_bytes(b'old settings')
-                for answer in (QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes):
-                    with patch('gui.app.QFileDialog.getSaveFileName', return_value=(str(target), '')), \
-                         patch('gui.app.QMessageBox.question', return_value=answer) as question, \
-                         patch('gui.app.ExportThread') as worker:
-                        w.export_image_action()
-                        question.assert_called_once()
-                        self.assertIn(str(jpeg), question.call_args.args[2])
-                        self.assertIn(str(settings), question.call_args.args[2])
-                        self.assertEqual(worker.called, answer == QMessageBox.StandardButton.Yes)
-                        if worker.called:
-                            worker.return_value.start.assert_called_once()
-                            w._export_thread = None
-                self.assertEqual(jpeg.read_bytes(), b'old preview')
-                self.assertEqual(settings.read_bytes(), b'old settings')
+                with patch('gui.app.QFileDialog.getSaveFileName',return_value=(str(target),'')), \
+                     patch('gui.app.QMessageBox.question') as question,patch('gui.app.ExportThread') as worker:
+                    w.export_image_action()
+                    question.assert_not_called()
+                    self.assertEqual(worker.call_args.args[0]['file_path'],str(Path(tmp)/'new_2.tif'))
+                    self.assertTrue(worker.call_args.args[0]['export_linear'])
+                    self.assertEqual(jpeg.read_bytes(),b'old preview')
         finally:
+            w._export_thread=None
             close_window(w)
 
     def test_layered_collision_selects_one_new_bundle_stem_before_worker(self):
@@ -172,7 +158,7 @@ class ExportWorkerTests(unittest.TestCase):
                     a[:] = 9
                     np.testing.assert_array_equal(captured[0]['source'], 1)
                     self.assertEqual(captured[0]['parameters']['sx'], 20)
-                    self.assertFalse(captured[0].get('export_linear', False))
+                    self.assertTrue(captured[0].get('export_linear', False))
                     self.assertEqual(captured[0]['layers_format'],'psb')
                     self.assertFalse(hasattr(w, 'chk_export_linear'))
                     release.set()

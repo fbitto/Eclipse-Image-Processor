@@ -11,7 +11,7 @@ from core.tangential import tangential_detail
 
 
 class OptimizationTests(unittest.TestCase):
-    def test_sparse_starlet_matches_dense_with_reflection_and_dtype_rounding(self):
+    def test_sparse_starlet_matches_observed_dense_with_dtype_rounding(self):
         rng = np.random.default_rng(418)
         for shape in ((3, 5), (17, 23)):
             for dtype in (np.float32, np.float64):
@@ -25,9 +25,9 @@ class OptimizationTests(unittest.TestCase):
                     signal = np.where(valid, a, 0)
                     support = valid.astype(float)
                     for axis in (0, 1):
-                        signal = convolve1d(signal, kernel, axis=axis, mode='reflect')
-                        support = convolve1d(support, kernel, axis=axis, mode='reflect')
-                    expected = np.divide(signal, support, out=np.zeros_like(signal), where=support > 0)
+                        signal = convolve1d(signal, kernel, axis=axis, mode='constant',cval=0)
+                        support = convolve1d(support, kernel, axis=axis, mode='constant',cval=0)
+                    expected = np.divide(signal, support, out=np.full_like(signal,np.nan), where=support > 0)
                     actual = worker.starlet_blur(a, step, None)
                     np.testing.assert_allclose(actual, expected, rtol=2e-7, atol=1e-12)
                     self.assertEqual(actual.dtype, expected.dtype)

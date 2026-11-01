@@ -36,6 +36,19 @@ class ProjectSettingsTests(unittest.TestCase):
             self.assertFalse(w.chk_statistics_separate_ael.isChecked())
         finally:close_window(w)
 
+    def test_log_larson_mode_round_trips_and_old_recipes_remain_linear(self):
+        from copy import deepcopy
+        w=EclipseProcessorApp();w.auto_calculate=False
+        try:
+            self.assertEqual(w.combo_larson_input.currentData(),'linear')
+            w.combo_larson_input.setCurrentIndex(1);saved=capture_settings(w)
+            w.combo_larson_input.setCurrentIndex(0);restore_settings(w,saved)
+            self.assertEqual(w.combo_larson_input.currentData(),'log')
+            older=deepcopy(saved);older['controls'].pop('combo_larson_input')
+            restore_settings(w,older)
+            self.assertEqual(w.combo_larson_input.currentData(),'linear')
+        finally:close_window(w)
+
     def test_retired_achf_background_control_is_ignored_in_existing_recipes(self):
         w=EclipseProcessorApp();w.auto_calculate=False
         try:

@@ -111,7 +111,7 @@ class ProminenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):prominence_settings(rgb[...,0],p)
         with self.assertRaises(ValueError):prominence_settings(rgb,dict(p,sr=0))
 
-    def test_original_pixels_reach_psb_mask_and_standalone_without_affecting_main_tiff(self):
+    def test_original_pixels_reach_psb_mask_standalone_and_presented_tiff(self):
         rgb,p=scene()
         source=np.nan_to_num(rgb @ np.array([.299,.587,.114]),nan=0).astype(np.float32)
         # The corona working RGB is deliberately different from the original.
@@ -143,7 +143,9 @@ class ProminenceTests(unittest.TestCase):
                 np.testing.assert_array_equal(black,to_u16(composite_prominences(np.zeros(source.shape),expected,mask)))
                 self.assertEqual(black.shape,rgb.shape)
             export_images(source,p,{},str(root/'plain.tif'),'original.tif',source_rgb=prepared,processed=source)
-            np.testing.assert_array_equal(tifffile.imread(root/'plain.tif'),tifffile.imread(root/'finalFalse.tif'))
+            plain=tifffile.imread(root/'plain.tif');presented=tifffile.imread(root/'finalFalse.tif')
+            self.assertFalse(np.array_equal(plain,presented))
+            np.testing.assert_array_equal(plain[mask==0],presented[mask==0])
             self.assertEqual(sorted(v.name for v in root.glob('*prominences')),['finalFalse_prominences','finalTrue_prominences'])
 
     def test_tiff_package_preserves_unmasked_rgb_and_editable_mask_receipt(self):

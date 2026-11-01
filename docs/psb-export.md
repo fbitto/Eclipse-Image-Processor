@@ -1,18 +1,18 @@
 # PSB presentation and export
 
-The application uses independent encoded layers for fast/native preview and export. **The main TIFF and PSB have different bases.** No installed AEL runtime is required. The PSB writer adapts AEL 1.3.3 by Pere Guerra Serra under MIT and uses pinned psd-tools 1.26.0; see [attribution](../ATTRIBUTIONS.md).
+The application uses independent encoded layers for fast/native preview and export. **The main TIFF/JPEG and PSB share the presentation base.** No installed AEL runtime is required. The PSB writer adapts AEL 1.3.3 by Pere Guerra Serra under MIT and uses pinned psd-tools 1.26.0; see [attribution](../ATTRIBUTIONS.md).
 
 ## Output contracts
 
 | Product | Base / presentation |
 | --- | --- |
-| Main full-resolution TIFF | Linearly normalized working base plus filter layers, no presentation stretch |
-| Preview JPEG | Selected GUI view: PSB presentation when enabled, un-stretched composition otherwise; native dimensions, 8-bit, quality 95 |
+| Main full-resolution TIFF | RGB16 PSB presentation plus active filter layers, exposure and optional prominences; embedded sRGB |
+| Preview JPEG | Same presented RGB composition; native dimensions, 8-bit, quality 95, embedded sRGB |
 | PSB or TIFF layer package | PSB presentation base plus active filter layers, independent of preview toggle |
-| Hidden linear reference | Working RGB/mono scaled for 16-bit storage; scale recorded, no Asinh curve |
+| Hidden scaled input preview | Working RGB/mono scaled for 16-bit storage; quantized preview only, not a linear master |
 | Working float source and validity | Numerical working mono units, missing samples zero plus separate support |
 
-The main TIFF is an enhanced composition, not a photometric linear master. JPEG has no additional gamma transform. PSB Exposure changes presentation preview, its JPEG and layer export, never the main TIFF.
+The main TIFF is an enhanced composition, not a photometric linear master. JPEG has no additional gamma transform. PSB Exposure changes the presented TIFF/JPEG and layer export. The preview toggle affects only the viewport. GUI exports always add a float32 working-source package; layer exports through the numerical API include it too. Direct image-only API callers can omit that companion explicitly.
 
 ## Automatic presentation
 
@@ -52,7 +52,7 @@ The mask's red score is `(R - max(G,B) - max(G-B,0)) / peak(RGB)`. The extra gre
 
 The working linear reference includes enabled background correction and RGB calibration. Its positive observed maximum is divided by 0.98 to obtain the recorded storage scale. Mono is repeated into RGB when needed. Negative values clip in this 16-bit reference; it is not an untouched original or a replacement for floating input.
 
-The TIFF package includes `01_LINEAR_REFERENCE_Normal.tif`, numbered base/filter files, `REFERENCE_COMBINED.tif` (the PSB presentation), `SOURCE_float32.tif` (working mono), `VALID.tif`, `STATISTICS_SUPPORT.tif`, `recipe.json`, `Load_layers_Photoshop.jsx` and `Layers.md`. Missing float samples store zero; VALID distinguishes missing observations from measured black. Developer-only linear-source export helpers are not exposed as a GUI option.
+The TIFF package includes `01_LINEAR_REFERENCE_Normal.tif`, numbered base/filter files, `REFERENCE_COMBINED.tif` (the PSB presentation), `SOURCE_float32.tif` (working mono), `VALID.tif`, `STATISTICS_SUPPORT.tif`, `recipe.json`, `Load_layers_Photoshop.jsx` and `Layers.md`. Missing float samples store zero; VALID distinguishes missing observations from measured black. GUI export always adds the matching `_sources` folder with float32 mono/RGB, a validity mask and preprocessing receipt. The original source remains unchanged; numerical source files do not carry a display profile.
 
 The PSB temporary package is removed on success or failure; a selected TIFF directory persists. Hide the black background to inspect transparency; original layer alpha remains separate.
 
@@ -62,7 +62,7 @@ Add Color Correction to PSB (sRGB) starts off, appears directly below Also expor
 
 Color Balance uses midtones `(8, -2, -8)` and highlights `(4, 0, -6)` with luminosity preserved. Sky saturation reduces cyan by 10 and blue by 20. The group uses the palette in `core/color_correction.py`; the [historical design](propuesta-color-atardecer-psb.md) explains its origin.
 
-This option embeds **sRGB** for assumed-sRGB application display RGB. Without this option, the PSB writer does not assign a new ICC profile. Neither path performs general source-ICC conversion. The group is absent from GUI preview and main TIFF/JPEG. Its cached merged RGB is the uncorrected reference and is explicitly marked as requiring native Photoshop recomposition. Third-party flattened previews may omit the correction. Rebuild the snapshot group after changing underlying filter layers.
+All display TIFF/JPEG/PSB products embed **sRGB** for assumed-sRGB application display RGB, including PSBs without Color Correction. This is profile assignment, not general camera/source-ICC conversion. The group is absent from GUI preview and main TIFF/JPEG. Its cached merged RGB is the uncorrected reference and is explicitly marked as requiring native Photoshop recomposition. Third-party flattened previews may omit the correction. Rebuild the snapshot group after changing underlying filter layers.
 
 ## Verification and publication
 
@@ -76,6 +76,6 @@ Progress reports completed stages rather than remaining time. Filter timings ove
 
 ## Validation boundary
 
-Current automated tests cover writer bytes, masks, blend modes, cancellation, output separation, settings and optional adjustments. The latest full real-image check confirms the un-stretched TIFF contract and selected JPEG, without producing a PSB. Earlier exports opened successfully in Photoshop 2026, but those measurements predate the current automatic presentation and hidden reference. **The current presentation/reference combination has not been revalidated by opening it in Photoshop.** See [current validation](validation.md) and [archived native measurements](psb-validation-history.md).
+Current automated tests cover writer bytes, masks, blend modes, cancellation, output separation, settings and optional adjustments. Historical full real-image checks predate the presented-TIFF contract. Current synthetic export tests verify TIFF/PSB pixel equality, profiles and preserved float32 sources. Earlier exports opened successfully in Photoshop 2026, but those measurements predate the current automatic presentation and hidden reference. **The current presentation/reference combination has not been revalidated by opening it in Photoshop.** See [current validation](validation.md) and [archived native measurements](psb-validation-history.md).
 
 Export cancellation is cooperative. Cancel export remains available beside the viewport while settings are locked; closing also requests cancellation. Operators and export stages stop at safe checkpoints. A compression/write call finishes before the next checkpoint. TIFF, JPEG and settings JSON are prepared in temporary files before their publication begins; cancellation then stops being accepted. Existing files are preserved on pre-publication cancellation. Already completed layer, source or prominence packages may remain, and the cancellation message states this. Publication remains atomic per file, not across the complete bundle.
