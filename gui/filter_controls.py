@@ -14,12 +14,12 @@ CONTROLS = {
         ('fnrgf_ridge', 'fnrgf_ridge', 'Harmonic regularization', 0, 1000, 10, 1000., 'Dimensionless penalty on higher angular harmonics. Increased automatically for partial coverage; zero disables it.'),
         ('fnrgf_floor', 'fnrgf_floor', 'Minimum width fraction', 0, 100, 5, 100., 'Floor relative to typical annular spread. Continuous mode also keeps its divisor positive.'),
         ('fnrgf_robust', 'fnrgf_robust', 'Robust fit iterations', 0, 5, 2, 1., 'Continuous-model reweighting passes; zero selects ordinary regularized least squares.'),
-        ('fnrgf_min_pixels', 'fnrgf_min_pixels', 'Minimum samples per sector', 1, 32, 1, 1., 'Sectors with fewer observed pixels do not constrain the model. Widths always need at least two samples; rings without three measured sector widths retain the input.'),
+        ('fnrgf_min_pixels', 'fnrgf_min_pixels', 'Minimum samples per sector', 1, 32, 1, 1., 'Sectors with fewer observed pixels do not constrain the model. Widths always need at least two samples; rings without three measured sector widths have undefined, transparent layer output.'),
         ('fnrgf_mean_tail', 'fnrgf_mean_tail', 'Highest-harmonic mean weight', 0, 100, 0, 100., 'Final weight of the linearly attenuated brightness harmonics. Continuous mode preserves the DC mean unless all coefficients are removed.'),
         ('fnrgf_width_tail', 'fnrgf_width_tail', 'Highest-harmonic width weight', 0, 100, 0, 100., 'Final weight of the width harmonics. Continuous mode fits log-width and always retains its DC scale.')],
     'rhef': [
         ('rhef_upsilon_high', 'rhef_upsilon_high', 'Upper-tail exponent', 1, 500, 35, 100., 'Exponent for the upper half of the rank curve. One leaves this tail unchanged.'),
-        ('rhef_min_count', 'rhef_min_count', 'Minimum samples per ring', 2, 128, 12, 1., 'Continuous mode: fewer positive samples leave the ring unprocessed.'),
+        ('rhef_min_count', 'rhef_min_count', 'Minimum samples per ring', 2, 128, 12, 1., 'Continuous mode: rings with fewer positive samples remain undefined and transparent.'),
         ('rhef_quantiles', 'rhef_quantiles', 'Quantile samples', 17, 1025, 257, 1., 'Continuous mode: integer number of quantile nodes, including both endpoints. Any count from 17 to 1025 is valid; powers of two are not required. Odd counts include the median node. Default 257 gives 256 intervals. More nodes increase cost.'),
         ('rhef_noise_confidence', 'rhef_noise_confidence', 'Noise confidence (0 = off)', 0, 100, 0, 10., 'Optional blend attenuation where angular spread is near estimated noise. Adjacent-pixel noise is approximate, particularly on correlated stacks.')],
     'larson_sekanina': [
@@ -105,7 +105,7 @@ def add_controls(window):
         on_release_callback=lambda: window.on_filter_slider_released(window.sec_wow))
     # Retain the hidden widget so existing v4 control snapshots still load.
     window.sl_wow_noise_floor, _ = create_slider_float('AEL noise floor', 0, 100, 30, 10.,
-        window.sec_wow.content_layout, tooltip='AEL regularization multiplier of measured noise in the whitening denominator. This is not a significance threshold.',
+        window.sec_wow.content_layout, tooltip='Retired compatibility value; current AEL guided WOW uses its fixed upstream noise regularization. This control has no effect.',
         on_release_callback=lambda: window.on_filter_slider_released(window.sec_wow))
 
 
@@ -142,12 +142,12 @@ def set_control_visible(control, visible):
 
 def add_advanced_mode(window, header_layout):
     window.chk_advanced = QCheckBox('Advanced mode')
-    window.chk_advanced.setToolTip('Show all filter parameters. Hidden settings remain active. Basic WOW noise edits apply to every scale; basic Upsilon edits link both tails.')
+    window.chk_advanced.setToolTip('Show full filter and presentation controls, including prominence contrast and negative prominence exposure. Hidden settings remain active. Basic WOW noise edits apply to every scale; basic Upsilon edits link both tails.')
     header_layout.addWidget(window.chk_advanced)
     window.sl_wow_noise, _ = create_slider_float(
         'Noise threshold (all scales, sigma)', 0, 100, 0, 10.,
         window.sec_wow.content_layout,
-        tooltip='Apply this noise threshold to every native wavelet scale. Zero disables noise suppression. Editing replaces individual advanced thresholds.',
+        tooltip='Standard/watroo modes: apply this noise threshold to every native wavelet scale. Zero disables noise suppression. Editing replaces individual advanced thresholds.',
         on_release_callback=lambda: window.on_filter_slider_released(window.sec_wow))
     window.lbl_advanced_values = QLabel('Individual WOW thresholds or separate RHEF tails remain active. Edit the basic control to link them again.')
     window.lbl_advanced_values.setWordWrap(True)

@@ -202,6 +202,67 @@ class ProjectSettingsTests(unittest.TestCase):
         finally:
             for window in windows:close_window(window)
 
+    def test_windows_relative_separators_and_explicit_relocation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/'images').mkdir();source=root/'images'/'original.tif';source.touch()
+            path=write_settings(root/'settings.json',source,dict(controls={}),{}, {})
+            data=json.loads(path.read_text());data['source']='C:\\old\\original.tif'
+            data['source_relative']='images\\original.tif';path.write_text(json.dumps(data))
+            loaded,_=read_settings(path);self.assertEqual(loaded,source.resolve())
+            relocated=root/'replacement.tif';relocated.touch()
+            loaded,_=read_settings(path,source_override=relocated)
+            self.assertEqual(loaded,relocated.resolve())
+            with self.assertRaisesRegex(FileNotFoundError,'absent-replacement'):
+                read_settings(path,source_override=root/'absent-replacement.tif')
+            with self.assertRaisesRegex(ValueError,'not another JSON'):
+                read_settings(path,source_override=path)
+
+    def test_missing_source_dialog_loads_relocated_original_without_rewriting_json(self):
+        w=EclipseProcessorApp();w.auto_calculate=False
+        try:
+            w.txt_x.setText('24.25');w.txt_y.setText('16.5');w.txt_r.setText('5.25')
+            w.chk_calibrate_colour.setChecked(False)
+            w.sl_mgn_opacity.setValue(73);settings=capture_settings(w)
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);missing=root/'old'/'original.tif';source=root/'relocated.tif'
+                image=np.arange(32*48,dtype=np.float32).reshape(32,48)+1;tifffile.imwrite(source,image)
+                path=write_settings(root/'recipe.json',missing,settings,{},{});before=path.read_bytes()
+                w.sl_mgn_opacity.setValue(12)
+                with patch('gui.app.QFileDialog.getOpenFileName',side_effect=[(str(path),''),(str(source),'')]) as dialog:
+                    w.load_image_action();wait_for_gui(w)
+                self.assertEqual(dialog.call_count,2)
+                self.assertIn('Locate original image',dialog.call_args.args[1])
+                self.assertEqual(Path(w.source_path).resolve(),source.resolve(),w.status_label.text())
+                np.testing.assert_array_equal(w.full_raw_image,image)
+                self.assertEqual(capture_settings(w),settings)
+                self.assertEqual(path.read_bytes(),before)
+                updated=write_settings(root/'resaved.json',w.source_path,capture_settings(w),{}, {})
+                self.assertEqual(read_settings(updated)[0],source.resolve())
+        finally:close_window(w)
+
+    def test_cancel_missing_source_dialog_preserves_current_state_and_invalid_recipe_does_not_prompt(self):
+        w=EclipseProcessorApp();w.auto_calculate=False
+        try:
+            current=np.ones((32,48),np.float32);w.full_raw_image=w.raw_image=w.preview_image=current
+            w.txt_x.setText('24');w.txt_y.setText('16');w.txt_r.setText('5')
+            settings=capture_settings(w);revision=w._preview_revision;status=w.status_label.text()
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);path=write_settings(root/'missing.json',root/'absent.tif',settings,{}, {})
+                with patch('gui.app.QFileDialog.getOpenFileName',side_effect=[(str(path),''),('','')]), \
+                     patch.object(w.filter_worker,'cancel') as cancel:
+                    w.load_image_action();cancel.assert_not_called()
+                self.assertIs(w.full_raw_image,current)
+                self.assertEqual(capture_settings(w),settings)
+                self.assertEqual(w._preview_revision,revision)
+                self.assertEqual(w.status_label.text(),status)
+                bad=json.loads(path.read_text());bad['settings']={};path.write_text(json.dumps(bad))
+                with patch('gui.app.QFileDialog.getOpenFileName',return_value=(str(path),'')) as dialog:
+                    w.load_image_action()
+                self.assertEqual(dialog.call_count,1)
+                self.assertIs(w.full_raw_image,current)
+                self.assertEqual(capture_settings(w),settings)
+        finally:close_window(w)
+
     def test_relative_source_survives_moving_project_and_missing_source_is_clear(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);old=root/'old';old.mkdir()

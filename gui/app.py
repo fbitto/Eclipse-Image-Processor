@@ -38,7 +38,7 @@ from gui.background_controls import BackgroundExtraction
 from core.colour import neutralize_tse, set_luminosity
 from core.result_cache import parameter_signature
 from core.export_paths import export_paths, protect_source, available_export_path
-from core.project_settings import read_settings, write_settings
+from core.project_settings import MissingSourceImage, read_settings, write_settings
 from gui.project_settings import capture_settings, restore_settings, validate_settings, initialize_filter_defaults, reset_filter_defaults
 from gui.filter_controls import add_controls, collect_controls, add_advanced_mode, add_achf_variants, collect_achf_variants, add_layer_opacities
 from gui.components import BUTTON_STYLE, CHECKBOX_STYLE, CollapsibleSection, FullRowCheckBox, InWindowTooltips, ScrollSafeComboBox
@@ -208,7 +208,7 @@ class EclipseProcessorApp(QMainWindow):
 
         btn_row = QHBoxLayout()
         self.btn_load = QPushButton("Open Image / Settings")
-        self.btn_load.setToolTip("Open a settings JSON to restore its original image and all adjustments, or open TIFF, FITS, XISF, PNG, JPEG or BMP. Filters use monochrome intensity; source RGB is retained for preview and export. Missing samples remain excluded.")
+        self.btn_load.setToolTip("Open a settings JSON to restore its original image and adjustments; locate the original if its saved paths are unavailable. Or open TIFF, FITS, XISF, PNG, JPEG or BMP. Filters use monochrome intensity; source RGB is retained for preview and export. Missing samples remain excluded.")
         self.btn_load.clicked.connect(self.load_image_action)
         btn_row.addWidget(self.btn_load)
 
@@ -471,7 +471,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_mask, _ = create_slider(
             "Limb protection (%)", 0, 100, 0, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf),
-            tooltip="Protect the working input near r/R = 1 with a triangular band from 0.95 to 1.05. Zero disables protection; 100 removes FNRGF at the band center. This is not the missing-data mask."
+            tooltip="Reduce FNRGF layer opacity near r/R = 1 with a triangular band from 0.95 to 1.05. Zero disables protection; 100 removes FNRGF at the band center. This is not the missing-data mask."
         )
         self.sec_fnrgf.toggled_active.connect(self.on_filter_toggled)
         radial_group.addWidget(self.sec_fnrgf)
@@ -482,7 +482,7 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_rhef_mode.addItem("Legacy / compatible", "legacy")
         self.combo_rhef_mode.addItem("Continuous global", "continuous")
         self.combo_rhef_mode.setCurrentIndex(1)
-        self.combo_rhef_mode.setToolTip("Legacy ranks samples independently within rings. Continuous global interpolates positive log-intensity quantiles across populated neighboring rings; nonpositive and sparse samples retain their input values.")
+        self.combo_rhef_mode.setToolTip("Legacy ranks samples independently within rings. Continuous global interpolates positive log-intensity quantiles across populated neighboring rings. Undefined layer output stays transparent, preserving the underlying presentation.")
         self.combo_rhef_mode.currentIndexChanged.connect(lambda _: self.on_filter_slider_released(self.sec_rhef))
         self.sec_rhef.content_layout.addWidget(self.combo_rhef_mode)
         self.sl_rhef_rad, _ = create_slider(
@@ -495,7 +495,7 @@ class EclipseProcessorApp(QMainWindow):
             "Lower-tail Upsilon", 1, 500, 35, self.sec_rhef.content_layout,
             divisor=100,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_rhef),
-            tooltip="Exponent from 0.01 to 5, applied to both rank-distribution tails. Values below 1 compress the tail toward mid-grey; 1 leaves the curve unchanged; values above 1 expand it. Upper-tail linking is controlled below."
+            tooltip="Rank exponent from 0.01 to 5: linked mode applies it to both tails; otherwise it controls the lower tail. Values below 1 compress the tail toward mid-grey; 1 leaves the curve unchanged; values above 1 expand it. Upper-tail linking is controlled below."
         )
         self.sl_rhef_bin, _ = create_slider(
             "Ring Width (native px)", 5, 100, 10, self.sec_rhef.content_layout,
@@ -538,7 +538,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_wow_scales, _ = create_slider(
             "Native wavelet scales", 0, 10, 0, self.sec_wow.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow),
-            tooltip="Integer number of native-resolution wavelet scales, not a power of two. Auto uses six for AEL and the largest supported count for native WOW (up to 10). The internal dilation doubles at each scale. Fast preview adapts physical bands approximately."
+            tooltip="Integer number of native-resolution wavelet scales, not a power of two. Auto uses eight for AEL and the largest supported count for native WOW (up to 10). The internal dilation doubles at each scale. Fast preview adapts physical bands approximately."
         )
         self.sl_wow_scales.setProperty("zero_label", "Auto")
         update_slider_display(self.sl_wow_scales)
@@ -549,12 +549,12 @@ class EclipseProcessorApp(QMainWindow):
                 self.sec_wow.content_layout,
                 divisor=10,
                 on_release_callback=lambda: self.on_filter_slider_released(self.sec_wow),
-                tooltip="Noise-significance threshold in sigma units for this native-resolution band. Fast preview shifts thresholds with its spatial bands. Zero disables thresholding; higher values suppress more weak detail. Noise is estimated from the current input, with approximate thresholds on masked inputs."
+                tooltip="Standard/watroo modes: noise-significance threshold in sigma units for this native-resolution band. Fast preview shifts thresholds with its spatial bands. Zero disables thresholding; higher values suppress more weak detail. Noise is estimated from the current input, with approximate thresholds on masked inputs."
             )
             self.sl_wow_denoise.append(slider)
         self.combo_wow_bilateral = ScrollSafeComboBox()
         self.combo_wow_bilateral.addItems(["Standard WOW (observed support)", "watroo bilateral (observed support)", "AEL edge-aware (guided)"])
-        self.combo_wow_bilateral.setToolTip("Standard and adjustable edge-aware WOW use the existing backend. AEL edge-aware uses linear luminance, guided range weights and symmetric observed starlet pairs. Worst sectors can still invert faint detail. No mode fills missing data.")
+        self.combo_wow_bilateral.setToolTip("Standard and watroo bilateral WOW use observed-support application kernels. AEL edge-aware uses linear luminance, guided range weights and symmetric observed starlet pairs. Worst sectors can still invert faint detail. No mode fills missing data.")
         self.combo_wow_bilateral.setCurrentIndex(1)
         self.combo_wow_bilateral.currentIndexChanged.connect(lambda _: self.on_filter_slider_released(self.sec_wow))
         self.combo_wow_bilateral.currentIndexChanged.connect(lambda _: self.update_wow_controls())
@@ -597,12 +597,12 @@ class EclipseProcessorApp(QMainWindow):
             "Contrast Gain", 0, 50, 20, adaptive_layout,
             divisor=10,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf,"adaptive"),
-            tooltip="Signed high-pass gain from 0 to 5. Opacity controls its contribution to the composition."
+            tooltip="Multiplier of ring-encoded signed detail from 0 to 5, before opacity blending."
         )
         self.sl_achf_threshold, _ = create_slider(
             "Neighbor contrast threshold (%)", 0, 200, 10, adaptive_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf,"adaptive"),
-            tooltip="Maximum difference relative to the mean absolute intensity of each neighbor pair; both opposite neighbors must pass. Valid for signed/zero observations. 200% accepts every finite pair."
+            tooltip="Maximum difference relative to the mean absolute intensity of each neighbor pair; both opposite neighbors must pass. Valid for signed/zero observations. At 200% there is no intensity-based rejection; missing samples and region boundaries still apply."
         )
         for slider in self.achf_adaptive_panel.findChildren(QSlider):
             slider.setProperty("achf_variant","adaptive")
@@ -641,11 +641,11 @@ class EclipseProcessorApp(QMainWindow):
         psb_group.addWidget(self.lbl_psb_presentation)
         self.chk_prominences = QCheckBox('Export original prominences and chromosphere')
         self.chk_prominences.setEnabled(False)
-        self.chk_prominences.setToolTip('Use the originally loaded RGB, before background extraction, color calibration, Warm and filters. Adjust its display with Prominences (EV) and Prominence saturation. Save a separate dark TIFF and mask; add an editable masked layer when Photoshop layers are exported. Requires RGB. Review the automatic red-excess mask.')
+        self.chk_prominences.setToolTip('Use the originally loaded RGB, before background extraction, color calibration, Warm and filters. Adjust its display with Prominences (EV), saturation and Advanced prominence contrast. Save a separate dark TIFF and mask; add an editable masked layer when Photoshop layers are exported. Requires RGB. Review the automatic red-excess mask.')
         psb_group.addWidget(self.chk_prominences)
         self.sl_prominence_exposure, _ = create_slider(
             'Prominences (EV)', -300, 500, 0, psb_group, divisor=100,
-            tooltip='Independent prominence exposure before its soft highlight curve. -1 EV halves the input exposure; the separate curve retains bright detail. Does not affect the corona or change the original file.')
+            tooltip='Advanced prominence exposure from -3 to +5 EV, before its soft highlight curve. -1 EV halves the input exposure; the separate curve retains bright detail. Does not affect the corona or change the original file.')
         # Keep one recipe value; the Basic editor never clamps a saved negative exposure.
         self.prominence_exposure_basic, _ = create_slider(
             'Prominences (EV)', 0, 500, 0, psb_group, divisor=100,
@@ -684,7 +684,7 @@ class EclipseProcessorApp(QMainWindow):
         self.chk_export_layers = QCheckBox("Also export editable Photoshop layers")
         self.chk_export_layers.setChecked(True)
         self.chk_export_layers.setStyleSheet("QCheckBox { color: #dddddd; font-size: 11px; }")
-        self.chk_export_layers.setToolTip("Export a 16-bit PSB or TIFF layer package with a stretched base, independent filter layers and optional RGB Color layer. Uses AEL-style presentation with automatic scale and adjustable exposure even when Preview PSB presentation is off. Includes a scaled 16-bit input preview; full-precision working data and validity are saved separately as float32 sources.")
+        self.chk_export_layers.setToolTip("Export a 16-bit PSB or TIFF layer package with a stretched base, independent filter layers and optional RGB Color layer. Uses AEL-style presentation with automatic scale and adjustable exposure even when Preview PSB presentation is off. Includes a scaled 16-bit input preview; full-precision float32 working data and validity masks are saved separately.")
         layout.addWidget(self.chk_export_layers)
         self.combo_layers_format = ScrollSafeComboBox()
         self.combo_layers_format.addItem("Photoshop · PSB (16-bit layers)", "psb")
@@ -758,7 +758,7 @@ class EclipseProcessorApp(QMainWindow):
         self.btn_export.setToolTip("Save full-resolution RGB16 TIFF and JPEG using the PSB presentation, plus float32 working sources and validity in a companion folder. The viewport preview toggle does not change these products. Optional Color Correction remains Photoshop-only.")
         self.btn_export.clicked.connect(self.export_image_action)
         self.btn_save_settings = QPushButton("Save Settings Only")
-        self.btn_save_settings.setToolTip("Save current adjustments to JSON without calculating filters or exporting images. The original image is required when reopening the JSON.")
+        self.btn_save_settings.setToolTip("Save current adjustments to JSON without calculating filters or exporting images. Pixels are not embedded; reopening asks you to locate the original image if its paths are unavailable.")
         self.btn_save_settings.clicked.connect(self.save_settings_action)
         layout.addWidget(self.btn_save_settings)
         layout.addWidget(self.btn_export)
@@ -1388,7 +1388,17 @@ class EclipseProcessorApp(QMainWindow):
         try:
             project = None
             if file_path.lower().endswith('.json'):
-                image_path, project = read_settings(file_path)
+                try:
+                    image_path, project = read_settings(file_path)
+                except MissingSourceImage as error:
+                    validate_settings(self, error.settings)
+                    image_path, _ = QFileDialog.getOpenFileName(
+                        self, f'Locate original image — saved source: {error.source}',
+                        os.path.dirname(file_path),
+                        'Original image (*.tiff *.tif *.fits *.fit *.fts *.xisf *.png *.jpg *.jpeg *.bmp);;All Files (*)')
+                    if not image_path:
+                        return
+                    image_path, project = read_settings(file_path, source_override=image_path)
                 validate_settings(self, project)
                 file_path = str(image_path)
             geometry = None if project is None else tuple(float(project['geometry'][k]) for k in ('x','y','r'))

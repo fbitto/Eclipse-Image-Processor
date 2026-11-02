@@ -1,6 +1,6 @@
 # Processing settings JSON
 
-Only **version 4** is accepted. Older versions, retired controls and unknown controls are rejected; there is no migration layer.
+Only **version 4** is accepted. Other schema versions and unknown controls are rejected; explicitly supported optional/retired keys have documented compatibility handling.
 
 Save Settings Only writes controls and a source reference without running filters. Image export writes the same reloadable settings after TIFF/JPEG. Open Image / Settings restores the referenced original source and settings; pixels and numerical caches are not embedded.
 
@@ -13,12 +13,20 @@ Save Settings Only writes controls and a source reference without running filter
 | `format` | `eclipse-image-processor-settings` |
 | `version` | Integer 4 |
 | `source` | Absolute source path |
-| `source_relative` | Relative source path, preferred on reopen when resolvable; null across Windows drives |
+| `source_relative` | Relative source path, preferred on reopen; new writes use portable forward slashes; null across Windows drives |
 | `settings` | Validated GUI snapshot |
 | `parameters` | Numerical parameter receipt |
 | `display` | Display receipt; not a second set of GUI controls |
 
-The source must exist and cannot itself be JSON. The reader limits files to 2 MiB. Writes reject nonfinite JSON numbers and publish through a same-directory temporary file, fsync and replace. The image and JSON can move together using the relative source path, with the absolute path as fallback.
+The source must exist and cannot itself be JSON. The reader limits files to 2 MiB. Writes reject nonfinite JSON numbers and publish through a same-directory temporary file, fsync and replace. The image and JSON can move together using the relative source path, with the absolute path as fallback. Older Windows relative paths containing backslashes are also tried with portable separators; literal local paths are checked first.
+
+## Relocating a missing original
+
+If neither saved source path exists, the GUI validates the saved controls before opening **Locate original image**. Select the relocated original or an identical copy; loading continues through the normal image decoder and source-size-aware recipe restoration. JSON files cannot be selected as replacement images. Cancelling leaves the current image, controls and pending work unchanged.
+
+The original JSON is not rewritten by loading. The active source path becomes the selected file; saving settings or exporting a new recipe records that location. The source pixels remain external to JSON, and selecting a different image is not automatically checked against an original content hash.
+
+The core reader remains usable without a GUI: missing sources raise `MissingSourceImage`, a `FileNotFoundError` subclass carrying the saved source and settings. An explicit `source_override` selects a replacement without silently falling back to another image.
 
 ## GUI snapshot
 

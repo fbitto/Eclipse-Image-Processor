@@ -8,6 +8,14 @@ FORMAT='eclipse-image-processor-settings'
 VERSION=4
 
 
+class MissingSourceImage(FileNotFoundError):
+    """Valid settings envelope whose original image needs to be located."""
+    def __init__(self, source, settings):
+        super().__init__(f'Original image not found: {source}')
+        self.source = source
+        self.settings = settings
+
+
 def write_settings(output_path, source_path, settings, parameters, display):
     from .image_data import recipe_parameters
     destination=Path(output_path).with_suffix('.json')
@@ -15,7 +23,7 @@ def write_settings(output_path, source_path, settings, parameters, display):
     protect_source([destination], source_path)
     source=Path(source_path).resolve()
     try:
-        relative=os.path.relpath(source,destination.parent.resolve())
+        relative=Path(os.path.relpath(source,destination.parent.resolve())).as_posix()
     except ValueError:
         relative=None
     document=dict(format=FORMAT,version=VERSION,source=str(source),
@@ -35,7 +43,7 @@ def write_settings(output_path, source_path, settings, parameters, display):
     return destination
 
 
-def read_settings(path):
+def read_settings(path, *, source_override=None):
     path=Path(path)
     if path.stat().st_size>2*1024**2:
         raise ValueError('Settings JSON is too large')
@@ -48,11 +56,17 @@ def read_settings(path):
         raise ValueError('Settings JSON has no controls or source image')
     candidates=[]
     relative=data.get('source_relative')
-    if isinstance(relative,str):candidates.append(path.parent/relative)
-    candidates.append(Path(data['source']))
+    if source_override is not None:
+        candidates.append(Path(source_override))
+    else:
+        if isinstance(relative,str):
+            candidates.append(path.parent/relative)
+            # Older Windows recipes used backslashes; retain literal POSIX names first.
+            candidates.append(path.parent/relative.replace('\\','/'))
+        candidates.append(Path(data['source']))
     source=next((p.resolve() for p in candidates if p.is_file()),None)
     if source is None:
-        raise FileNotFoundError(f"Original image not found: {data['source']}")
+        raise MissingSourceImage(str(source_override) if source_override is not None else data['source'],data['settings'])
     if source.suffix.lower()=='.json':
         raise ValueError('Settings source must be an image, not another JSON file')
     return source,data['settings']
