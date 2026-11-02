@@ -185,7 +185,7 @@ class ProjectSettingsTests(unittest.TestCase):
                     self.app.processEvents()
                 settings_file=root/'processed.session.json'
                 self.assertTrue(settings_file.is_file())
-                document=json.loads(settings_file.read_text())
+                document=json.loads(settings_file.read_text(encoding='utf-8'))
                 self.assertEqual(document['settings'],expected)
                 self.assertNotIn('valid_mask',document['parameters'])
                 self.assertNotIn('statistics_mask',document['parameters'])

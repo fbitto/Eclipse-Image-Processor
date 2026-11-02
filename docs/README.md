@@ -18,7 +18,8 @@ Current implementation: Eclipse Image Processor 0.6.0. Updated 26 October 2026 f
 | [P0/P1 acceptance, 2 November](p0-p1-acceptance-20261102.md) | Native Photoshop/exFAT, current AEL parity and native-image support checks |
 | [Prominence detail correction](prominence-detail-20261102.md) | Separate highlight curve, inward mask edge blend and Asinh comparison |
 | [P2 native performance](p2-native-performance-20261102.md) | Measured adaptive ACHF cost, cancellation and Cocoa scheduling |
-| [P3 release checks](p3-release-validation-20261102.md) | macOS app/DMG, legacy recipe/export smoke and pending Windows handoff |
+| [P3 release checks](p3-release-validation-20261102.md) | macOS app/DMG and legacy recipe/export smoke; Windows follow-up recorded separately |
+| [Windows validation, 2 November](windows-validation-20261102.md) | Passing regression suite, packaged export/reopen, cross-drive loading, cancellation and native Photoshop checks |
 | [Issue #3 response draft](issue-3-response-draft.md) | Item-by-item local review response; not posted |
 | [Validation](validation.md) | Reproducible checks and the limits of existing evidence |
 | [macOS build](build-macos.md) / [Windows build](build-windows.md) | Platform packaging |

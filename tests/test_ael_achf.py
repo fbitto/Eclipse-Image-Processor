@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import sys
 
 import numpy as np
 import tifffile
@@ -15,7 +16,8 @@ from core.layer_export import export_layer_package, to_u16
 
 class AELACHFTests(unittest.TestCase):
     def setUp(self):
-        with np.load(Path(__file__).parent/'fixtures/ael_achf_iso04_135.npz') as f:
+        fixture='ael_achf_iso04_windows.npz' if sys.platform=='win32' else 'ael_achf_iso04_135.npz'
+        with np.load(Path(__file__).parent/'fixtures'/fixture) as f:
             self.image = f['image']
             self.valid = f['valid']
             self.expected = f['expected']
@@ -30,7 +32,8 @@ class AELACHFTests(unittest.TestCase):
         self.assertEqual(info['native_outer_sigma'], 1.5)
 
     def test_three_variants_match_upstream_oracles_and_accept_custom_parameters(self):
-        with np.load(Path(__file__).parent/'fixtures/ael_achf_variants_135.npz') as oracles:
+        fixture='ael_achf_variants_windows.npz' if sys.platform=='win32' else 'ael_achf_variants_135.npz'
+        with np.load(Path(__file__).parent/'fixtures'/fixture) as oracles:
             for variant in ('ael_iso_01','ael_iso_04','ael_angular_4'):
                 layer, _ = ael_achf_layer(self.image,self.cx,self.cy,self.radius,
                                          self.valid,variant=variant)

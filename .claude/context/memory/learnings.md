@@ -1,5 +1,8 @@
 # Qt GUI patterns
 
+- Windows JSON tests must read UTF-8 explicitly when comparing persisted selector text. File readers (including TiffFile in tests) need context managers: Windows cannot remove open files. Layer scheduling must use physical_memory_bytes rather than assuming os.sysconf exists; the helper already supports GlobalMemoryStatusEx.
+- Native Windows file-dialog accessibility focus can describe the search box while the screenshot shows the filename caret. Target the related dialog screenshot, inspect visible focus and entered text, and refresh after each action. Packaged recipe/export/cancel/close checks succeeded through the native UI using this workflow.
+
 - PySide6 QThread tasks must receive snapshots of arrays and scalar settings; read widgets and install QPixmap only on the GUI thread.
 - Coalesce presentation jobs and check both source identity and request revision before showing results. Colour caches can be reused only for the same source and colour revision.
 - During close, ignore the event while workers finish and retry from their finished signals. Waiting synchronously prevents progress events and freezes the window.

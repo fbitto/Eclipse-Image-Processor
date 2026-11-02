@@ -72,10 +72,8 @@ def layer_workers(source, count):
     128 bytes/pixel/filter estimates scratch space, not measured peak RSS.
     Reserve two thirds of physical RAM for caches, GUI, OS and other applications.
     """
-    try:
-        memory=os.sysconf('SC_PHYS_PAGES')*os.sysconf('SC_PAGE_SIZE')//3
-    except (AttributeError,ValueError,OSError):
-        memory=512*1024**2
+    installed=physical_memory_bytes()
+    memory=512*1024**2 if installed is None else installed//3
     # shortcut: scratch estimates are per pixel; measure per-operator peaks if larger masters exceed the budget.
     memory_limit=max(1,memory//max(1,source.size*128))
     size_limit=2 if source.size>4_000_000 else 4

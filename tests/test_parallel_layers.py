@@ -96,13 +96,12 @@ class ParallelLayerTests(unittest.TestCase):
 
     def test_native_concurrency_limits_and_unknown_memory_fallback(self):
         image=SimpleNamespace(size=3744*5608)
-        def memory(name):return (24*1024**3//4096 if name=='SC_PHYS_PAGES' else 4096)
-        with patch('core.parallelism.os.sysconf',side_effect=memory), \
+        with patch('core.parallelism.physical_memory_bytes',return_value=24*1024**3), \
              patch('core.parallelism.CPU_CORES',10):
             self.assertEqual(layer_workers(image,10),2)
             self.assertEqual(layer_workers(SimpleNamespace(size=640*427),10),4)
             self.assertEqual(layer_workers(image,1),1)
-        with patch('core.parallelism.os.sysconf',side_effect=OSError('unknown')):
+        with patch('core.parallelism.physical_memory_bytes',return_value=None):
             self.assertEqual(layer_workers(image,10),1)
         with patch('core.parallelism.CPU_CORES',1):
             self.assertEqual(layer_workers(image,10),1)

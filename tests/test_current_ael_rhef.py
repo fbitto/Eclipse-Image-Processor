@@ -1,6 +1,7 @@
 """Frozen AEL 1.4.1 radial_quantile_rank global oracles (Pere Guerra Serra, MIT)."""
 from pathlib import Path
 import unittest
+import sys
 from unittest.mock import patch
 import numpy as np
 from core.filters import FilterWorker
@@ -9,7 +10,8 @@ from core.radial_continuous import rhef_continuous_normalize
 
 class CurrentAELRHEFTests(unittest.TestCase):
     def test_current_global_rank_and_application_dispatch_are_exact(self):
-        with np.load(Path(__file__).parent/'fixtures/ael_rhef_global_141.npz') as fixture:
+        name='ael_rhef_global_windows.npz' if sys.platform=='win32' else 'ael_rhef_global_141.npz'
+        with np.load(Path(__file__).parent/'fixtures'/name) as fixture:
             for index in range(2):
                 with self.subTest(scene=index):
                     a,valid,r,angles,geometry,expected=[fixture[f'{index}_{key}'] for key in

@@ -33,7 +33,8 @@ class ExportDisplaySeparationTests(unittest.TestCase):
                               processed=composition if i else None)
                 tiffs.append(tifffile.imread(target))
                 jpegs.append(cv2.imread(str(target.with_name(f'out{i}_preview.jpg')),0))
-                metadata=json.loads(tifffile.TiffFile(target).pages[0].description)
+                with tifffile.TiffFile(target) as tif:
+                    metadata=json.loads(tif.pages[0].description)
                 self.assertTrue(metadata['visual_stretch_applied'])
             np.testing.assert_array_equal(tiffs[0],tiffs[1])
             from core.presentation_edges import finish_presentation

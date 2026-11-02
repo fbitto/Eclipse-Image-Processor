@@ -148,7 +148,7 @@ The default Photoshop format is **PSB, 16-bit layers**. Open it directly in Phot
 
 The progress bar advances by export stages, not estimated time. Long filters or PSB verification may remain at one stage for a while. The console reports calculation times and, after completion, whether processing is idle or another update is pending. Layered exports use one available numbered stem for every companion, preserving previous bundles. GUI exports always include working sources and choose one unused stem for the full bundle.
 
-The PSB is verified before publication. Its cached composition matches the PSB-presentation reference, which differs from the main TIFF; Photoshop can round 16-bit blending slightly when recomputing edited layers. The optional **Add Color Correction to PSB (sRGB)** group is rendered only in Photoshop and starts off. Only that option assigns sRGB; the basic writer does not add an ICC profile. The current presentation/reference output has not been rechecked in native Photoshop. See [PSB validation and limits](docs/psb-export.md).
+The PSB is verified before publication. Its cached composition matches the main presented TIFF; Photoshop can round 16-bit blending slightly when recomputing layers. Display exports include an sRGB profile. The optional **Add Color Correction to PSB (sRGB)** group is rendered only in Photoshop; disable it when comparing with the application TIFF. See [PSB validation and limits](docs/psb-export.md).
 
 ## Input, color and limitations
 
@@ -161,6 +161,8 @@ The PSB is verified before publication. Its cached composition matches the PSB-p
 - Fast preview and native processing can differ because resampling changes noise and local statistics. Full-resolution verification is authoritative; it does not establish astrophysical reality or eliminate filter artifacts.
 
 ## Development
+
+Windows 11 validation passed **429 tests**, packaged full-resolution export and recipe reopening, cross-drive source loading, and cancellation/close during export. Native Photoshop 2026 recomposition closely matched the application TIFF with Color Correction off. See the [Windows validation report](docs/windows-validation-20261102.md) for measurements and limits; this is not a public-release acceptance claim.
 
 ```bash
 python -m unittest discover -s tests -v
