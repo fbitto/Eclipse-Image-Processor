@@ -48,6 +48,25 @@ class ProminenceTests(unittest.TestCase):
         self.assertLess(softened[20,50],65535)
         self.assertEqual(softened[35,50],65535)
 
+    def test_adjustable_edge_softness_changes_only_mask_and_preserves_support(self):
+        mask=np.zeros((80,90),np.uint16)
+        mask[10:70,20:80]=65535;mask[3,5:15]=65535
+        np.testing.assert_array_equal(_soften_mask(mask,0),mask)
+        normal=_soften_mask(mask,3);soft=_soften_mask(mask,10)
+        self.assertLess(soft[13,40],normal[13,40])
+        self.assertFalse(soft[mask==0].any())
+        np.testing.assert_array_equal(soft[3,5:15],mask[3,5:15])
+        rgb,p=scene()
+        settings=prominence_settings(rgb,p)
+        image,default=prominence_layer(rgb,p,settings)
+        settings['mask_edge_width_native_px']=0
+        sharp,unfeathered=prominence_layer(rgb,p,settings)
+        np.testing.assert_array_equal(image,sharp)
+        self.assertTrue(np.all(default<=unfeathered))
+        for bad in (-.1,20.1,np.nan):
+            with self.assertRaises(ValueError):prominence_settings(rgb,p,edge_softness=bad)
+            with self.assertRaises(ValueError):prominence_layer(rgb,p,dict(settings,mask_edge_width_native_px=bad))
+
     def test_contrast_changes_curve_shape_without_changing_mask(self):
         rgb=np.zeros((32,48,3),np.float32)
         for x,value in enumerate((.25,.5,1.,2.,4.),start=20):rgb[16,x]=np.array([1.,.15,.1])*value
@@ -273,7 +292,7 @@ class ProminenceGuiTests(unittest.TestCase):
             self.assertEqual((w.prominence_exposure_basic.minimum(),w.prominence_exposure_basic.maximum()),(0,500))
             self.assertTrue(w.sl_prominence_contrast.parameter_row.isHidden())
             w.chk_advanced.setChecked(True);w.sl_prominence_exposure.setValue(-200)
-            w.sl_prominence_contrast.setValue(40);saved=capture_settings(w)
+            w.sl_prominence_contrast.setValue(40);w.sl_prominence_edge_softness.setValue(85);saved=capture_settings(w)
             self.assertNotIn('prominence_exposure_basic',saved['controls'])
             w.chk_advanced.setChecked(False)
             self.assertEqual(w.sl_prominence_exposure.value(),-200)
@@ -285,9 +304,12 @@ class ProminenceGuiTests(unittest.TestCase):
             restore_settings(w,saved)
             self.assertEqual(w.sl_prominence_exposure.value(),-200)
             self.assertEqual(w.sl_prominence_contrast.value(),40)
+            self.assertEqual(w.sl_prominence_edge_softness.value(),85)
+            saved['controls'].pop('sl_prominence_edge_softness')
             saved['controls'].pop('sl_prominence_contrast');saved['controls']['chk_advanced']['value']=False
             restore_settings(w,saved)
             self.assertEqual(w.sl_prominence_contrast.value(),20)
+            self.assertEqual(w.sl_prominence_edge_softness.value(),30)
             self.assertEqual(w.sl_prominence_exposure.value(),-200)
             self.assertFalse(w.lbl_prominence_ev_retained.isHidden())
         finally:close_window(w)
@@ -312,9 +334,10 @@ class ProminenceGuiTests(unittest.TestCase):
                 w.chk_prominences.setChecked(True)
                 w.sl_prominence_exposure.setValue(-300)
                 w.sl_prominence_contrast.setValue(40)
+                w.sl_prominence_edge_softness.setValue(80)
                 w.prominence_view.setCurrentIndex(1)
                 w.render_matrix_to_screen();wait_for_gui(w)
-                image,mask=prominence_layer(rgb,p,prominence_settings(rgb,p,-3,saturation=.65,contrast=2.))
+                image,mask=prominence_layer(rgb,p,prominence_settings(rgb,p,-3,saturation=.65,contrast=2.,edge_softness=8.))
                 np.testing.assert_allclose(w.last_preview_presentation,composite_prominences(np.zeros(mask.shape),image,mask),atol=1e-7)
                 w.prominence_view.setCurrentIndex(2)
                 w.render_matrix_to_screen();wait_for_gui(w)
@@ -341,6 +364,7 @@ class ProminenceGuiTests(unittest.TestCase):
                     self.assertEqual(export.call_args.kwargs['warmth'],.7)
                     self.assertEqual(export.call_args.kwargs['prominence_saturation'],.65)
                     self.assertEqual(export.call_args.kwargs['prominence_contrast'],2.)
+                    self.assertEqual(export.call_args.kwargs['prominence_edge_softness'],8.)
                 # Mono input must turn the feature off, with no fabricated red image.
                 w.original_source_rgb=None;w.on_input_state_changed()
                 self.assertFalse(w.chk_prominences.isChecked())

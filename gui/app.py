@@ -669,6 +669,10 @@ class EclipseProcessorApp(QMainWindow):
             'Prominence saturation (%)', 0, 100, 65, psb_group,
             tooltip='Saturation of the separate original prominence layer: 0 is grayscale; 65 softens intense reds; 100 preserves original saturation. Applies to preview and prominence exports. Leaves the original RGB and mask unchanged; adjust brightness with Prominences (EV).')
         self.sl_prominence_saturation.valueChanged.connect(self._on_prominence_changed)
+        self.sl_prominence_edge_softness, _ = create_slider(
+            'Prominence edge softness (px)', 0, 200, 30, psb_group, divisor=10,
+            tooltip='Inward mask feather from 0 to 20 native image pixels; default 3. Zero disables edge feathering. Higher values soften the blend without blurring image detail or expanding the selection. Thin chromosphere features retain thickness protection. Applies to preview and exports.')
+        self.sl_prominence_edge_softness.valueChanged.connect(self._on_prominence_changed)
         self.prominence_view = ScrollSafeComboBox()
         self.prominence_view.addItem('Preview composition', 'composition')
         self.prominence_view.addItem('Preview prominences on black', 'image')
@@ -1591,6 +1595,7 @@ class EclipseProcessorApp(QMainWindow):
                 prominence_exposure_ev=self.sl_prominence_exposure.value()/100,
                 prominence_saturation=self.sl_prominence_saturation.value()/100,
                 prominence_contrast=self.sl_prominence_contrast.value()/20,
+                prominence_edge_softness=self.sl_prominence_edge_softness.value()/10,
                 warmth=self.sl_warmth.value()/100,
                 calibrate_colour=self.chk_calibrate_colour.isChecked(), white=self.source_rgb_white,
                 export_layers=self.chk_export_layers.isChecked(), layers_format=self.combo_layers_format.currentData(),
@@ -1691,6 +1696,7 @@ class EclipseProcessorApp(QMainWindow):
                 prominence_exposure_ev=self.sl_prominence_exposure.value()/100,
                 prominence_saturation=self.sl_prominence_saturation.value()/100,
                 prominence_contrast=self.sl_prominence_contrast.value()/20,
+                prominence_edge_softness=self.sl_prominence_edge_softness.value()/10,
                 warmth=self.sl_warmth.value()/100,
                 prominence_view=self.prominence_view.currentData(),
                 calibrate=self.chk_calibrate_colour.isChecked(),
@@ -1729,6 +1735,7 @@ class EclipseProcessorApp(QMainWindow):
     def _on_prominence_changed(self, *_):
         enabled=self.chk_prominences.isEnabled() and self.chk_prominences.isChecked()
         self.sl_prominence_exposure.parameter_row.setEnabled(enabled)
+        self.sl_prominence_edge_softness.parameter_row.setEnabled(enabled)
         self.sl_prominence_saturation.parameter_row.setEnabled(enabled)
         self.prominence_exposure_basic.parameter_row.setEnabled(enabled)
         self.sl_prominence_contrast.parameter_row.setEnabled(enabled)

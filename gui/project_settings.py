@@ -103,7 +103,7 @@ def validate_settings(window,settings):
     values=settings.get('controls')
     if isinstance(values,dict):
         values={k:v for k,v in values.items() if k != 'sl_achf_background'}
-    optional=set(filter_widgets(window)) | {'chk_statistics_separate_ael','btn_psb_preview','chk_prominences','sl_prominence_exposure','combo_background_degree','sl_warmth','sl_prominence_saturation','sl_prominence_contrast'}
+    optional=set(filter_widgets(window)) | {'chk_statistics_separate_ael','btn_psb_preview','chk_prominences','sl_prominence_exposure','combo_background_degree','sl_warmth','sl_prominence_saturation','sl_prominence_contrast','sl_prominence_edge_softness'}
     if (not isinstance(values,dict) or set(values)-set(widgets) or
             set(widgets)-set(values)-optional):
         raise ValueError('Settings controls do not match this application version')
@@ -182,6 +182,7 @@ def _apply_settings(window,settings):
         window.sl_prominence_exposure.setValue(-200)
         window.sl_prominence_saturation.setValue(65)
         window.sl_prominence_contrast.setValue(20)
+        window.sl_prominence_edge_softness.setValue(30)
         window.sl_warmth.setValue(0)
         window.background.points=([tuple(p) for p in settings['background_samples']] if settings.get('background_samples') is not None else None)
         window.background.dirty=window.background.base is not None

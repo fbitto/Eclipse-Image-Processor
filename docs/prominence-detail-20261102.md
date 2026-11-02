@@ -75,3 +75,9 @@ Targeted checks passed **15 tests**, including contrast endpoints, unity exactne
 A full-native export at **+5 EV and contrast 2.0** on the supplied master passed PSB channel/mask verification; the standalone mask was exact, mask bytes matched contrast 1.0, all 226,939 missing pixels remained excluded and source SHA-256 was unchanged. Basic, retained-negative and Advanced layout captures were visually checked under `/tmp/eclipse-prominence-range-review/ui-*.png`. These are offscreen UI checks, not Windows acceptance. Native exports and logs are in `native-controls/` under that directory.
 
 Final complete regression suite: **425 tests passed in 183.381 seconds**. The refreshed macOS app passed strict/deep signature verification and its DMG checksum verified. The source hash and new upper-setting native export were checked separately. No Windows run or native Photoshop rendering at contrast 2.0 is claimed.
+
+## Adjustable mask softness
+
+Prominence edge softness is available in Basic and Advanced modes: 0–20 native pixels in 0.1-pixel steps, default 3. It controls the existing inward, thickness-limited feather rather than blurring RGB or expanding mask support. Zero bypasses feathering. Recipes without the new field retain the previous 3-pixel behavior. Preview, standalone masks and editable Photoshop exports share the setting.
+
+Validation: 16 prominence tests, 13 settings tests and 33 GUI interaction tests pass. On the supplied native margin--2px master at geometry (3013,1688,273), widths 0, 3, 8 and 20 produced progressively nonincreasing alpha; all missing RGB pixels remained excluded. Integrated alpha sums were 3348.91, 2272.09, 1801.38 and 1763.14 pixel equivalents. Large values can reduce apparent prominence brightness; local thickness protection limits the effective width. No app rebuild or new visual acceptance comparison was performed.

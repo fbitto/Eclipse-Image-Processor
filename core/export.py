@@ -23,7 +23,7 @@ def export_images(source, parameters, display, file_path, original_path,
                   layers_format='tiff', layer_cache=None, project_settings=None, progress=None,
                   color_correction=False, psb_exposure_ev=0., psb_preview_jpeg=False,
                   original_rgb=None, export_prominences=False, prominence_exposure_ev=-2.,
-                  prominence_saturation=1., warmth=0., prominence_contrast=1.):
+                  prominence_saturation=1., warmth=0., prominence_contrast=1., prominence_edge_softness=3.):
     """Compute/write in the caller's worker; source and cached output stay untouched."""
     export_linear=bool(export_linear or export_layers)
     products = dict(include_settings=project_settings is not None,
@@ -47,7 +47,7 @@ def export_images(source, parameters, display, file_path, original_path,
         from .prominences import prominence_settings, prominence_layer
         if original_rgb is None or np.shape(original_rgb) != (*source.shape, 3):
             raise ValueError('Prominences require the original loaded RGB on the same canvas')
-        settings=prominence_settings(original_rgb,parameters,prominence_exposure_ev,prominence_saturation,prominence_contrast)
+        settings=prominence_settings(original_rgb,parameters,prominence_exposure_ev,prominence_saturation,prominence_contrast,prominence_edge_softness)
         image,mask=prominence_layer(original_rgb,parameters,settings)
         prominences=(image,mask,settings)
     stages=['Preparing export','Calculating filters']

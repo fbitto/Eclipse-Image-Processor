@@ -169,7 +169,7 @@ def render_snapshot(job):
     if job.get('prominences_enabled') and job.get('original_rgb') is not None:
         from core.prominences import prominence_settings, prominence_layer
         original=job['original_rgb']
-        settings=prominence_settings(original,job['psb_params'],job['prominence_exposure_ev'], job.get('prominence_saturation', 1.), job.get('prominence_contrast', 1.))
+        settings=prominence_settings(original,job['psb_params'],job['prominence_exposure_ev'], job.get('prominence_saturation', 1.), job.get('prominence_contrast', 1.), job.get('prominence_edge_softness', 3.))
         # Select before reduction: averaging RGB first can erase thin red structures.
         image,mask=prominence_layer(original,job['psb_params'],settings)
         coverage=mask.astype(np.float32)/65535.

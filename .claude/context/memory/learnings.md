@@ -56,3 +56,5 @@
 - A Basic QSlider cannot narrow its range without clamping a negative saved EV. Keep the canonical full-range recipe control and use an unpersisted Basic editor with a retained-value notice; block synchronization signals. Initialize prominence mode wiring after Advanced mode exists. New contrast fields default to unity for legacy recipes and must reach both render jobs and export requests.
 
 - Missing-source recovery must catch its own FileNotFoundError subclass, not a missing/corrupt JSON. Validate recipe controls before asking to locate the image; cancel before changing revisions or stopping current work. Keep JSON untouched until explicit save and carry the relocated path into subsequent exports. Try legacy Windows backslash relatives after literal native paths.
+
+- Prominence edge softness uses native pixels and must travel in both presentation jobs and export requests; optional recipe fields restore the historical 3-pixel feather. Keep the slider in both UI modes and gate it with the RGB prominence checkbox.

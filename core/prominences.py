@@ -15,7 +15,7 @@ def _red_excess(rgb):
     return red-np.maximum(green, blue)-np.maximum(green-blue, 0.)
 
 
-def prominence_settings(rgb, geometry, exposure_ev=-2., saturation=1., contrast=1.):
+def prominence_settings(rgb, geometry, exposure_ev=-2., saturation=1., contrast=1., edge_softness=3.):
     """Native reference shared by preview/export; no corona filters or colour gains.
 
     The red-excess selection is a presentation heuristic, not an H-alpha measurement.
@@ -31,6 +31,8 @@ def prominence_settings(rgb, geometry, exposure_ev=-2., saturation=1., contrast=
         raise ValueError('Prominence saturation must be between 0 and 1')
     if not np.isfinite(contrast) or not .5 <= contrast <= 2.:
         raise ValueError('Prominence contrast must be between 0.5 and 2.0')
+    if not np.isfinite(edge_softness) or not 0 <= edge_softness <= 20:
+        raise ValueError('Prominence edge softness must be between 0 and 20 native pixels')
     stride = max(1, int(np.ceil(max(a.shape[:2])/2048)))
     sample = np.asarray(a[::stride, ::stride], dtype=np.float64)
     y, x = np.ogrid[:sample.shape[0], :sample.shape[1]]
@@ -45,7 +47,7 @@ def prominence_settings(rgb, geometry, exposure_ev=-2., saturation=1., contrast=
                 source='original loaded RGB; no background extraction, filters or colour neutralization',
                 method='linear exposure then shared soft shoulder; inward red-mask edge blend; no lunar-disk exclusion',
                 highlight_curve='peak**contrast / (1 + peak**contrast), common RGB gain after exposure and saturation',
-                mask_edge_width_native_px=3.,
+                mask_edge_width_native_px=float(edge_softness),
                 red_excess='R-max(G,B)-max(G-B,0)',
                 red_fraction_range=[.05, .25], intensity_range=[.005, .03],
                 outer_radii=[1.3, 1.5], review_required=True)
@@ -71,6 +73,9 @@ def prominence_layer(rgb, geometry, settings):
     contrast = float(settings.get('contrast', 1.))
     if not np.isfinite(contrast) or not .5 <= contrast <= 2.:
         raise ValueError('Prominence contrast must be between 0.5 and 2.0')
+    edge_softness = float(settings.get('mask_edge_width_native_px', 3.))
+    if not np.isfinite(edge_softness) or not 0 <= edge_softness <= 20:
+        raise ValueError('Prominence edge softness must be between 0 and 20 native pixels')
     image = np.empty(a.shape, np.uint16)
     mask = np.empty(a.shape[:2], np.uint16)
     x = np.arange(a.shape[1], dtype=float)[None, :]-cx
@@ -104,18 +109,18 @@ def prominence_layer(rgb, geometry, settings):
     y0, y1 = max(0,int(np.floor(cy-1.5*radius))-1), min(a.shape[0],int(np.ceil(cy+1.5*radius))+2)
     x0, x1 = max(0,int(np.floor(cx-1.5*radius))-1), min(a.shape[1],int(np.ceil(cx+1.5*radius))+2)
     if y1 > y0 and x1 > x0:
-        mask[y0:y1,x0:x1] = _soften_mask(mask[y0:y1,x0:x1])
+        mask[y0:y1,x0:x1] = _soften_mask(mask[y0:y1,x0:x1], edge_softness)
     return image, mask
 
 
-def _soften_mask(mask):
-    """Inward three-native-pixel blend; retain ridges of thin chromosphere features."""
-    if not mask.any():
+def _soften_mask(mask, edge_softness=3.):
+    """Inward native-pixel blend; retain ridges of thin chromosphere features."""
+    if edge_softness == 0 or not mask.any():
         return mask
     check_cancelled()
     distance = distance_transform_edt(np.pad(mask > 0, 1))[1:-1,1:-1]
     # Limit feather width by local thickness so isolated one-pixel detail stays visible.
-    width = np.minimum(3., maximum_filter(distance, size=7, mode='constant'))
+    width = np.minimum(edge_softness, maximum_filter(distance, size=7, mode='constant'))
     coverage = _smooth((distance-.5)/np.maximum(width-.5,.5))
     check_cancelled()
     return np.rint(mask*coverage).astype(np.uint16)
