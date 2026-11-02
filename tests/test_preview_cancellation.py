@@ -37,7 +37,9 @@ class CancellationTests(unittest.TestCase):
             if not release.wait(3):
                 raise AssertionError('Test did not release first convolution')
             return original(*args, **kwargs)
-        with patch('core.masked_filters.gaussian_filter', side_effect=blocking_gaussian) as gaussian:
+        # The masked MGN blurs through core.filters.strip_gaussian, which calls SciPy's
+        # gaussian_filter directly at this size.
+        with patch('core.filters.gaussian_filter', side_effect=blocking_gaussian) as gaussian:
             thread = Thread(target=worker.process_pipeline, args=(image, params))
             thread.start()
             try:

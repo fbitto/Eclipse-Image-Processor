@@ -7,6 +7,19 @@ This optional variant differs from the reference-compatible FNRGF core.
 from .cancellation import check_cancelled
 import numpy as np
 from .nrgf import _local_quadratic
+from .parallelism import map_in_threads
+
+
+def stable_key_order(keys):
+    """``np.argsort(keys, kind='stable')``; keys below 2**16 are sorted as uint16.
+
+    A stable sort has one result for given key values, and NumPy sorts 16-bit
+    integers with a radix sort, much faster than the merge sort of 64-bit keys.
+    """
+    keys = np.asarray(keys)
+    if keys.size and keys.min() >= 0 and keys.max() < 1 << 16:
+        return np.argsort(keys.astype(np.uint16), kind='stable')
+    return np.argsort(keys, kind='stable')
 
 
 def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
@@ -52,7 +65,7 @@ def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
     unit = a / (magnitude if magnitude else 1.)
     sector = np.floor((theta.ravel()[ids] % (2*np.pi))*segments/(2*np.pi)).astype(int) % segments
     keys = bins.ravel()[ids]*segments+sector
-    sorting = np.argsort(keys, kind='stable')
+    sorting = stable_key_order(keys)
     ids = ids[sorting]
     counts = np.bincount(keys, minlength=(len(edges)-1)*segments)
     cuts = np.r_[0, np.cumsum(counts)]
@@ -129,7 +142,9 @@ def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
                                 np.linspace(1., width_tail, order+1)])
         if cutoff:
             attenuation[:, -cutoff:] = 0
-        for first in range(0, targets.size, 32768):
+        # Chunks of targets are independent (each writes its own pixels): they run on
+        # helper threads, with the same operations per pixel as one at a time.
+        def evaluate(first):
             check_cancelled()
             selected = targets[first:first+32768]
             rr, tt = r.ravel()[selected], theta.ravel()[selected]
@@ -154,4 +169,5 @@ def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
             floor = np.interp(rr, nodes, floors[run])
             width = np.maximum(np.exp(np.clip(log_width, -700, 700)), floor)
             output.ravel()[selected] = (unit.ravel()[selected]-mean)/width
+        map_in_threads(evaluate, range(0, targets.size, 32768))
     return output

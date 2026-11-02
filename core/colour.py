@@ -1,6 +1,13 @@
-"""Optional gain-only neutralization derived from tse-tools and display-only RGB/mono composition."""
+"""Optional gain-only neutralization derived from tse-tools and display-only RGB/mono composition.
+
+neutralize_tse and set_luminosity work per pixel; they run in fixed row strips
+on helper threads. Global maxima are reduced over the strips, which does
+not depend on order, so the results are identical bit for bit to one thread.
+"""
 import numpy as np
-from .presentation import normalized_base
+from .cancellation import check_cancelled
+from .parallelism import map_in_threads
+from .presentation import normalized_base, row_strips
 
 
 def neutralize_tse(rgb, white=1.):
@@ -14,21 +21,28 @@ def neutralize_tse(rgb, white=1.):
     white=None uses a shared HDR working scale, not measured sensor saturation.
     This assumes neutral sky/corona statistics; it is not ICC calibration.
     """
-    a = np.asarray(rgb, dtype=float)
-    if a.ndim != 3 or a.shape[-1] != 3:
+    source = np.asarray(rgb)
+    if source.ndim != 3 or source.shape[-1] != 3:
         raise ValueError('Colour calibration needs an RGB image')
-    valid = np.isfinite(a).all(axis=-1)
+    strips = row_strips(source.shape[0])
+    def block(bounds):
+        a = np.asarray(source[bounds[0]:bounds[1]], dtype=float)
+        return a, np.isfinite(a).all(axis=-1)
+    def observed_maximum(bounds):
+        check_cancelled()
+        a, valid = block(bounds)
+        return bool(valid.any()), float(np.max(a, where=valid[..., None], initial=-np.inf))
     automatic = white is None
     if automatic:
-        if not valid.any():
+        found = map_in_threads(observed_maximum, strips)
+        if not any(any_valid for any_valid, _ in found):
             raise ValueError('Colour calibration needs finite RGB observations')
         # One common scale preserves channel ratios and arbitrary input units.
-        maximum = float(np.max(a,where=valid[...,None],initial=-np.inf))
+        maximum = max(value for _, value in found)
         white = maximum * (1 + 1e-6)
     if not np.isfinite(white) or white <= 0:
         raise ValueError('Colour calibration needs a positive input white or positive HDR observations')
-    a = a/white
-    small = a[::10, ::10]
+    small = np.asarray(source[::10, ::10], dtype=float)/white
     selected = small[np.isfinite(small).all(axis=-1) & (small > 0).all(axis=-1) & (small < 1).all(axis=-1)]
     if len(selected) < 2:
         raise ValueError('Not enough sampled RGB pixels strictly between 0 and 1 for calibration')
@@ -39,17 +53,28 @@ def neutralize_tse(rgb, white=1.):
     ratios = span/span[1]
     ratios /= ratios.max()
     gains=1/ratios
-    corrected=np.maximum(a,0)*gains
+    def gained(bounds):
+        a, valid = block(bounds)
+        return np.maximum(a/white, 0)*gains, valid
+    def gained_maximum(bounds):
+        check_cancelled()
+        corrected, valid = gained(bounds)
+        return float(np.max(corrected, where=valid[..., None], initial=-np.inf))
     # One common factor avoids independent channel clipping in bright pixels.
-    highlight_scale=max(float(np.max(corrected[valid])),1.)
-    corrected=np.where(valid[...,None],corrected/highlight_scale,np.nan)
+    highlight_scale=max(max(map_in_threads(gained_maximum, strips)),1.)
+    corrected=np.empty(source.shape, np.float32)
+    def write(bounds):
+        check_cancelled()
+        values, valid = gained(bounds)
+        corrected[bounds[0]:bounds[1]] = np.where(valid[..., None], values/highlight_scale, np.nan)
+    map_in_threads(write, strips)
     report = dict(method='gain-only P1/P99-span neutralization', reference_revision='14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391',
                   white=float(white), white_source=('shared observed maximum with headroom' if automatic else 'declared input white'),
                   sample_p1=background.tolist(), sample_p99=foreground.tolist(),
                   ratios=ratios.tolist(), gains=gains.tolist(), highlight_scale=highlight_scale,
                   background_subtracted=False, sampled_pixels=len(selected), stride=10,
                   assumption='Declared linear input; neutral channel spans; not photometric/ICC calibration')
-    return corrected.astype(np.float32), report
+    return corrected, report
 
 
 def colour_layer(rgb, source, display):
@@ -76,7 +101,21 @@ def set_luminosity(colour, luminance):
 
     Legacy display-number coefficients (.30,.59,.11); native Photoshop colour
     management can differ, so its rendering still needs verification.
+    Fixed row strips run on helper threads; every operation is per pixel.
     """
+    colour = np.asarray(colour)
+    luminance = np.asarray(luminance)
+    if colour.ndim != 3 or luminance.shape != colour.shape[:2]:
+        return _set_luminosity(colour, luminance)
+    result = np.empty(colour.shape, np.float64)
+    def strip(bounds):
+        check_cancelled()
+        result[bounds[0]:bounds[1]] = _set_luminosity(colour[bounds[0]:bounds[1]], luminance[bounds[0]:bounds[1]])
+    map_in_threads(strip, row_strips(colour.shape[0]))
+    return result
+
+
+def _set_luminosity(colour, luminance):
     c = np.asarray(colour, dtype=float)
     weights = np.array([.30, .59, .11])
     c = c + (luminance-c@weights)[..., None]

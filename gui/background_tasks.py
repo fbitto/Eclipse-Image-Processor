@@ -7,7 +7,7 @@ from core.linear_export import split_source_channels
 from core.image_data import resize_observed, observed_bounds
 from core.layer_engine import colour_display
 from core.presentation import (normalized_base, composition_settings,
-                               psb_presentation_settings, psb_base)
+                               psb_presentation_settings, psb_base, u16_to_unit)
 from core.presentation_edges import finish_presentation
 
 
@@ -144,7 +144,12 @@ def render_snapshot(job):
         if psb_settings is None:
             psb_settings=psb_presentation_settings(job['source_identity'],
                 params=job['psb_params'], exposure_ev=job['psb_exposure_ev'])
-        base,colour=psb_base(source,params,psb_settings,rgb)
+        cache=job.get('presentation_cache')
+        if cache is not None:
+            # The same 16-bit base serves later views and the export.
+            base,colour=(u16_to_unit(a) for a in cache.base_u16(source,params,psb_settings,rgb))
+        else:
+            base,colour=psb_base(source,params,psb_settings,rgb)
         settings=dict(psb_settings,blend=display.get('blend',1.))
         final=engine.render(job['worker'],source,params,settings,calculate=False,base=base)
         if final is None:

@@ -2,12 +2,23 @@
 
 Adapted from AEL filterbank.py, verified through 1.4.1 (17029c9) (MIT; docs/third-party/AEL-MIT.txt).
 Linear luminance, symmetric observed pairs; no reflected or invented samples.
+
+Threads: the 128-row blocks of every paired step and of the local-power
+convolution run on core.parallelism.map_in_threads, within the layer's CPU
+budget. Each block writes its own rows and each pixel goes through the same
+operations in the same order, so the result is bit-identical for any number of
+threads. The level Gaussians (cv2.GaussianBlur, one call on the whole frame)
+stay on one thread: OpenCV spreads one call over the cores itself.
 """
 import numpy as np
 from .ael_achf import display_detail
 from .cancellation import check_cancelled
+from .parallelism import map_in_threads, memory_bounded_workers
+from .progress import report
 
 _B3K = np.array([1, 4, 6, 4, 1], np.float32) / 16
+# Scratch memory of one block of a paired step, per pixel of the block (measured: about 330 bytes).
+PAIRED_BYTES_PER_PIXEL = 330
 _TAPS = [(dy, dx) for dy in range(-2, 3) for dx in range(-2, 3)]
 
 
@@ -29,16 +40,31 @@ def _shifted(z, d, axis):
     return out
 
 
-def _b3_normalized(a, m, step):
+def _run_blocks(job, h, rows, workers=None):
+    """``job(y0, y1)`` on fixed blocks of ``rows`` rows, on up to ``workers`` threads (default: this filter's CPU
+    budget). Blocks write disjoint rows, so neither the order nor the number of threads changes a bit. A cancelled job
+    stops at the next block."""
+    def run(block):
+        check_cancelled()
+        job(*block)
+    map_in_threads(run, [(y0, min(h, y0 + rows)) for y0 in range(0, h, rows)], workers)
+
+
+def _b3_normalized(a, m, step, rows=128, workers=None):
     """Normalised B3 convolution at ``step`` over the observed pixels: the local power used to whiten a scale (a variance
-    needs no symmetric taps)."""
-    def conv(z):
-        tmp = np.zeros_like(z)
-        for kk, kv in zip(range(-2, 3), _B3K): tmp += kv * _shifted(z, kk * step, 0)
-        out = np.zeros_like(z)
-        for kk, kv in zip(range(-2, 3), _B3K): out += kv * _shifted(tmp, kk * step, 1)
-        return out
-    return conv(np.where(m, a, 0).astype(np.float32)) / np.maximum(conv(m.astype(np.float32)), 1e-20)
+    needs no symmetric taps). By row blocks; each pixel is summed in AEL's order (rows first, then columns)."""
+    z = np.where(m, a, 0).astype(np.float32); mf = m.astype(np.float32)
+    out = np.empty_like(z)
+    def job(y0, y1):
+        def conv(src):
+            tmp = np.zeros((y1 - y0, src.shape[1]), np.float32)
+            for kk, kv in zip(range(-2, 3), _B3K): tmp += kv * _rows_shifted(src, y0, y1, kk * step, 0, 0)
+            res = np.zeros_like(tmp)
+            for kk, kv in zip(range(-2, 3), _B3K): res += kv * _shifted(tmp, kk * step, 1)
+            return res
+        out[y0:y1] = conv(z) / np.maximum(conv(mf), 1e-20)
+    _run_blocks(job, z.shape[0], rows, workers)
+    return out
 
 
 def _weighted_gaussian(x, w, sigma):
@@ -49,41 +75,63 @@ def _weighted_gaussian(x, w, sigma):
     return num / np.maximum(den, 1e-6)
 
 
-def _paired_b3_step(c, m, step, bilateral=False, guide=None, rows=128):
+def _paired_b3_step(c, m, step, bilateral=False, guide=None, rows=128, workers=None):
     """One à-trous B3 step over symmetric observed pairs: a tap counts only if its mirror tap is observed too, so the
     local mean never leans to one side of an edge of the data. With ``bilateral``, each tap is also weighted by
     exp(-(v - c)² / 2σ²), σ² the local variance of the tap differences; with ``guide``, those range weights come from the
-    guide and the mean from ``c``. Returns (smoothed, observed share of the kernel, 1 where some pair is observed)."""
-    h, w = c.shape; out = np.zeros_like(c); compl = np.zeros_like(c); pair = np.zeros_like(c)
-    for y0 in range(0, h, rows):
-        check_cancelled()
-        y1 = min(h, y0 + rows); ctr = c[y0:y1]; mc = m[y0:y1]; ctg = ctr if guide is None else guide[y0:y1]
+    guide and the mean from ``c``. Returns (smoothed, observed share of the kernel, 1 where some pair is observed).
+    The blocks of ``rows`` rows run on threads (_run_blocks); each block is AEL's loop body, unchanged."""
+    out = np.zeros_like(c); compl = np.zeros_like(c); pair = np.zeros_like(c)
+    # Shifted reads are views of one zero-padded copy per array instead of a new copy per
+    # tap and block (same values: outside the frame a tap reads zero / unobserved).
+    h, w = c.shape; P = 2 * step
+    def padded(z, fill):
+        out_ = np.full((h + 2 * P, w + 2 * P), fill, z.dtype); out_[P:P + h, P:P + w] = z
+        return out_
+    cp = padded(c, 0); mp = padded(m, False); gp = cp if guide is None else padded(guide, 0)
+    def shifted(zp, y0, y1, dy, dx):
+        return zp[P + y0 + dy * step:P + y1 + dy * step, P + dx * step:P + dx * step + w]
+    def block(y0, y1):
+        ctr = c[y0:y1]; mc = m[y0:y1]; ctg = ctr if guide is None else guide[y0:y1]
         V, VG, VAL = {}, {}, {}
         for dy, dx in _TAPS:
-            V[dy, dx] = _rows_shifted(c, y0, y1, dy * step, dx * step, 0)
-            VG[dy, dx] = V[dy, dx] if guide is None else _rows_shifted(guide, y0, y1, dy * step, dx * step, 0)
-            VAL[dy, dx] = _rows_shifted(m, y0, y1, dy * step, dx * step, False)
+            V[dy, dx] = shifted(cp, y0, y1, dy, dx)
+            VG[dy, dx] = V[dy, dx] if guide is None else shifted(gp, y0, y1, dy, dx)
+            VAL[dy, dx] = shifted(mp, y0, y1, dy, dx)
         G = {}
         for t in _TAPS:
             u = (-t[0], -t[1])
             G[t] = mc.astype(np.float32) if t == (0, 0) else G[u] if u in G else (VAL[t] & VAL[u] & mc).astype(np.float32)
+        # k * g, its mask and ctg in double precision are the same for every use below.
+        KG, POS = {}, {}
+        for dy, dx in _TAPS:
+            KG[dy, dx] = float(_B3K[dy + 2] * _B3K[dx + 2]) * G[dy, dx]; POS[dy, dx] = G[dy, dx] > 0
         if bilateral:
             mo = np.zeros_like(ctr); mo2 = np.zeros_like(ctr); ma = np.zeros_like(ctr)
             for dy, dx in _TAPS:
-                k = float(_B3K[dy + 2] * _B3K[dx + 2]); g = G[dy, dx]; dl = np.where(g > 0, VG[dy, dx] - ctg, 0)
-                mo += k * g * dl; mo2 += k * g * dl * dl; ma += k * g
+                kg = KG[dy, dx]; dl = np.where(POS[dy, dx], VG[dy, dx] - ctg, 0)
+                kgdl = kg * dl
+                mo += kgdl; mo2 += kgdl * dl; ma += kg
             mean = mo / np.maximum(ma, 1e-20); vv = np.maximum(mo2 / np.maximum(ma, 1e-20) - mean * mean, 1e-20).astype(np.float64)
+            ctg64 = ctg.astype(np.float64)
         num = np.zeros_like(ctr); den = np.zeros_like(ctr); ks = np.zeros_like(ctr); kn = np.zeros_like(ctr)
         for dy, dx in _TAPS:
-            k = float(_B3K[dy + 2] * _B3K[dx + 2]); g = G[dy, dx]; v = np.where(g > 0, V[dy, dx], 0)
-            if (dy, dx) != (0, 0): kn += k * g
+            k = float(_B3K[dy + 2] * _B3K[dx + 2]); g = G[dy, dx]; kg = KG[dy, dx]; v = np.where(POS[dy, dx], V[dy, dx], 0)
+            if (dy, dx) != (0, 0): kn += kg
             if bilateral:                                       # in double precision, as the author's chain computed it
-                vg = v if guide is None else np.where(g > 0, VG[dy, dx], 0)
-                wt = k * g.astype(np.float64) * np.exp(-.5 * (ctg.astype(np.float64) - vg) ** 2 / vv)
+                vg = v if guide is None else np.where(POS[dy, dx], VG[dy, dx], 0)
+                # k * g * exp(-.5 * (ctg - vg)**2 / vv), each operation in place, in the same order.
+                x = np.subtract(ctg64, vg); np.square(x, out=x); np.multiply(x, -.5, out=x)
+                np.divide(x, vv, out=x); np.exp(x, out=x)
+                wt = g.astype(np.float64); np.multiply(wt, k, out=wt); np.multiply(wt, x, out=wt)
+                np.multiply(wt, v - ctr, out=x); num += x; den += wt
             else:
-                wt = k * g
-            num += wt * (v - ctr); den += wt; ks += k * g
+                num += kg * (v - ctr); den += kg
+            ks += kg
         out[y0:y1] = ctr + num / np.maximum(den, 1e-20); compl[y0:y1] = ks; pair[y0:y1] = kn > 0
+    if workers is None:
+        workers = memory_bounded_workers(PAIRED_BYTES_PER_PIXEL * rows * w)
+    _run_blocks(block, c.shape[0], rows, workers)
     return out, compl, pair
 
 
@@ -103,25 +151,79 @@ def wow_edge_aware(img, valid, *, n_scales=8, guided=True, completeness=(.6, .99
     does not contain the detail of that scale (the same step without range weights) and the mean still comes from the
     data. Measured: docs/VALIDATION_1.3.4.md and docs/VALIDATION_1.3.5.md. ``guided=False`` is the author's operator as it
     ran in 2026."""
+    import cv2
     a = np.asarray(img, np.float32); m = valid & np.isfinite(a)
     c = np.where(m, a, 0).astype(np.float32); out = np.zeros_like(c); lo, hi = completeness
+    h = c.shape[0]
+    total = 3 * n_scales
+    # The per-pixel steps between the threaded B3 steps run in the same row blocks on threads
+    # (each block computes exactly the expressions the whole-frame code computed); only the
+    # mean over the whole kernels stays one serial reduction, so its value is unchanged.
     for s in range(n_scales):
         check_cancelled()
         step = 2 ** s
-        guide = np.where(m, _paired_b3_step(c, m, step)[0], 0).astype(np.float32) if guided else None
-        nxt, compl, pair = _paired_b3_step(c, m, step, True, guide); nxt = np.where(m, nxt, 0).astype(np.float32)
-        wave = np.where(m, c - nxt, 0).astype(np.float32)
-        wave[np.abs(wave) <= 8 * np.finfo(np.float32).eps * np.maximum(np.abs(c), np.abs(nxt))] = 0
-        g = np.where(m & (compl > 0), wave / np.sqrt(np.maximum(_b3_normalized(wave * wave, m, step), 1e-20)), 0).astype(np.float32)
-        if s >= 3:
-            q = np.clip((compl - lo) / (hi - lo), 0, 1); w = (q * q * (3 - 2 * q) * m).astype(np.float32)
-        else:
-            w = (m & (compl > 0)).astype(np.float32)
-        whole = m & (compl >= .999)
-        g = g - (float(np.mean(g[whole], dtype=np.float64)) if whole.any() else 0.)
-        g = g - pair * _weighted_gaussian(g, w * pair, min(150., max(32., 4. * step)))
-        out += w * g; c = nxt
-    return np.where(m, out, np.nan).astype(np.float32)
+        report(3 * s, total, f'WOW scale {s + 1}/{n_scales}: guide')
+        guide = None
+        if guided:
+            smooth = _paired_b3_step(c, m, step)[0]
+            guide = np.empty_like(c)
+            def observed_guide(y0, y1):
+                guide[y0:y1] = np.where(m[y0:y1], smooth[y0:y1], 0)
+            _run_blocks(observed_guide, h, 128)
+            del smooth
+        report(3 * s + 1, total, f'WOW scale {s + 1}/{n_scales}: range weights')
+        smooth, compl, pair = _paired_b3_step(c, m, step, True, guide)
+        del guide
+        nxt = np.empty_like(c); wave = np.empty_like(c); square = np.empty_like(c)
+        def wavelet(y0, y1):
+            ms, cs = m[y0:y1], c[y0:y1]
+            n = np.where(ms, smooth[y0:y1], 0).astype(np.float32)
+            wv = np.where(ms, cs - n, 0).astype(np.float32)
+            wv[np.abs(wv) <= 8 * np.finfo(np.float32).eps * np.maximum(np.abs(cs), np.abs(n))] = 0
+            nxt[y0:y1] = n; wave[y0:y1] = wv; square[y0:y1] = wv * wv
+        _run_blocks(wavelet, h, 128)
+        del smooth
+        report(3 * s + 2, total, f'WOW scale {s + 1}/{n_scales}: whitening')
+        power = _b3_normalized(square, m, step)
+        del square
+        g = np.empty_like(c); w = np.empty_like(c); wp = np.empty_like(c); whole = np.empty(c.shape, bool)
+        def whiten(y0, y1):
+            ms, cm = m[y0:y1], compl[y0:y1]
+            g[y0:y1] = np.where(ms & (cm > 0), wave[y0:y1] / np.sqrt(np.maximum(power[y0:y1], 1e-20)), 0)
+            if s >= 3:
+                q = np.clip((cm - lo) / (hi - lo), 0, 1); w[y0:y1] = (q * q * (3 - 2 * q) * ms).astype(np.float32)
+            else:
+                w[y0:y1] = (ms & (cm > 0)).astype(np.float32)
+            wp[y0:y1] = w[y0:y1] * pair[y0:y1]
+            whole[y0:y1] = ms & (cm >= .999)
+        _run_blocks(whiten, h, 128)
+        del power, wave
+        mean = float(np.mean(g[whole], dtype=np.float64)) if whole.any() else 0.
+        del whole
+        weighted = np.empty_like(c)
+        def centre(y0, y1):
+            g[y0:y1] = g[y0:y1] - mean
+            weighted[y0:y1] = (g[y0:y1] * wp[y0:y1]).astype(np.float32)
+        _run_blocks(centre, h, 128)
+        check_cancelled()
+        sigma = min(150., max(32., 4. * step))
+        num = cv2.GaussianBlur(weighted, (0, 0), sigma, borderType=cv2.BORDER_CONSTANT)
+        del weighted
+        check_cancelled()
+        den = cv2.GaussianBlur(wp, (0, 0), sigma, borderType=cv2.BORDER_CONSTANT)
+        del wp
+        def accumulate(y0, y1):
+            level = num[y0:y1] / np.maximum(den[y0:y1], 1e-6)
+            out[y0:y1] += w[y0:y1] * (g[y0:y1] - pair[y0:y1] * level)
+        _run_blocks(accumulate, h, 128)
+        del num, den, g, w, pair, compl
+        c = nxt
+    report(total, total, 'WOW done')
+    result = np.empty_like(out)
+    def finish(y0, y1):
+        result[y0:y1] = np.where(m[y0:y1], out[y0:y1], np.nan)
+    _run_blocks(finish, h, 128)
+    return result
 
 
 wow_bilateral = wow_edge_aware                           # the name up to 1.3.4

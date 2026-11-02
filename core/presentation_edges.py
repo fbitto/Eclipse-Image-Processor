@@ -51,10 +51,28 @@ def black_edge_alpha(source, valid=None, scale=1., geometry=None):
     return alpha
 
 
-def finish_presentation(image, alpha):
-    """Opaque black for nonfinite display samples, plus the same PSB Normal overlay."""
+def _finish(image, alpha):
     result=np.nan_to_num(image,nan=0.,posinf=0.,neginf=0.)
     if alpha is not None:
         coverage=1-alpha.astype(float)/65535
         result=result*(coverage[...,None] if result.ndim==3 else coverage)
+    return result
+
+
+def finish_presentation(image, alpha):
+    """Opaque black for nonfinite display samples, plus the same PSB Normal overlay.
+
+    Per pixel, in fixed row strips on helper threads: the same values bit for bit.
+    """
+    from .parallelism import map_in_threads
+    from .presentation import row_strips
+    image=np.asarray(image)
+    if image.ndim<2 or not image.size or (alpha is not None and np.shape(alpha)!=image.shape[:2]):
+        return _finish(image,alpha)         # whole frame: the same result or the same error as before
+    probe=_finish(image[:1],None if alpha is None else alpha[:1])
+    result=np.empty(image.shape,probe.dtype)
+    def strip(bounds):
+        y0,y1=bounds
+        result[y0:y1]=_finish(image[y0:y1],None if alpha is None else alpha[y0:y1])
+    map_in_threads(strip,row_strips(image.shape[0]))
     return result

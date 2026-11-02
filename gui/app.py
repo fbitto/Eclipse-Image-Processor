@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 from config import APP_VERSION, CPU_CORES
 from core.filters import FilterWorker
 from core.pipeline import prepare_parameters
-from core.presentation import composition_settings
+from core.presentation import PresentationCache, composition_settings
 from core.layer_engine import engine_for
 from gui.background_tasks import TaskThread, load_source, render_snapshot
 from gui.export_worker import ExportThread
@@ -620,6 +620,8 @@ class EclipseProcessorApp(QMainWindow):
     def _build_presentation_section(self, layout: QVBoxLayout):
         """Build the shared PSB/JPEG presentation controls above export options."""
         psb_group = create_filter_group('PHOTOSHOP PRESENTATION', layout)
+        # 16-bit PSB bases shared by the fast view and the native view.
+        self._presentation_cache = PresentationCache()
         self.sl_psb_exposure, self.lbl_psb_exposure = create_slider(
             'PSB Exposure (EV)', -600, 600, 0, psb_group,
             divisor=100, formatter=None,
@@ -1420,6 +1422,7 @@ class EclipseProcessorApp(QMainWindow):
             self.source_rgb_white = loaded['white']
             self._colour_cache = None
             self._preview_colour_cache = None
+            self._presentation_cache.clear()
             # Restore the requested defaults without rendering the previous image
             # or scheduling a worker until the new source and geometry are ready.
             for control in (() if project is not None else (self.combo_input_state, self.chk_calibrate_colour, self.chk_verify_preview)):
@@ -1661,6 +1664,7 @@ class EclipseProcessorApp(QMainWindow):
                 colour_cache=self._colour_cache, preview_cache=self._preview_colour_cache,
                 neutralize=neutralize_tse, set_luminosity=set_luminosity,
                 psb_preview=self.btn_psb_preview.isChecked(), psb_exposure_ev=self.sl_psb_exposure.value()/100,
+                presentation_cache=self._presentation_cache,
                 psb_params=(self.collect_filter_parameters(self.full_raw_image.shape,include_mask=False)
                             if self.btn_psb_preview.isChecked() or self.chk_prominences.isChecked() else None),
                 preview_size=(self.raw_image.shape[1],self.raw_image.shape[0]))

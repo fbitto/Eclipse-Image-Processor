@@ -23,7 +23,7 @@ class ExportSafetyTests(unittest.TestCase):
             (root/'final_PS_layers.psb').write_bytes(b'old psb')
             # A companion-only collision also reserves the entire next stem.
             (root/'final_2_preview.jpg').write_bytes(b'old jpeg')
-            with patch('core.psb_export.export_psb_package') as psb:
+            with patch('core.psb_export.export_psb_layers') as psb:
                 def publish(package,path,**kwargs):Path(path).write_bytes(b'new psb')
                 psb.side_effect=publish
                 message=export_images(image,{}, {},str(target),'source.fits',processed=image,

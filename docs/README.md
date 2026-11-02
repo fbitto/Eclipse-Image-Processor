@@ -33,6 +33,7 @@ These documents retain their original measurements and design decisions. They ca
 - [Filter validation, 19 October](filter-validation-20261019.md).
 - [GHS reference, 19 October](ghs-reference-20261019.md): retired presentation path.
 - [Performance measurements, 21 October](performance-optimization-20261021.md).
+- [Performance measurements, 1 November](performance-optimization-20261101.md).
 - [Photoshop colour proposal](propuesta-color-atardecer-psb.md): design and earlier native checks.
 - [PSB writer probe](psb-writer-probe.md): feasibility experiment using an installed AEL runtime.
 - [Earlier native PSB measurements](psb-validation-history.md): previous transparent, black-backed and antialiased exports.

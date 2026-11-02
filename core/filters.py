@@ -10,13 +10,13 @@ Numerical enhancement operators:
 import os
 from threading import Event
 from .cancellation import ProcessingCancelled, cancellation_scope, check_cancelled, cancellation_check
-from .parallelism import filter_cpu_budget
+from .parallelism import filter_budget, filter_cpu_budget, map_in_threads
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 
 import numpy as np
 from PySide6.QtCore import QObject, Signal, Slot
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, gaussian_filter1d
 from scipy.stats import rankdata
 
 CPU_CORES = os.cpu_count() or 4
@@ -70,14 +70,51 @@ def ordered_scale_results(function, items, image):
             check_cancelled()
             yield function(item)
         return
+    share = max(1, filter_cpu_budget()//workers)
+    def budgeted(item):
+        # Threads inside a scale (strip_gaussian) share the filter's CPU budget.
+        with filter_budget(share):
+            return function(item)
     def run(task):
         context, item = task
-        return context.run(function, item)
+        return context.run(budgeted, item)
     with ThreadPoolExecutor(max_workers=workers) as executor:
         tasks = ((copy_context(), item) for item in items)
         for value in executor.map(run, tasks, buffersize=workers):
             check_cancelled()
             yield value
+
+
+def strip_gaussian(values, sigma, truncate=4.0, mode='nearest', workers=None):
+    """``gaussian_filter(values, sigma, truncate=truncate, mode=mode)`` of a 2-D array on helper threads.
+
+    SciPy's 2-D filter runs the 1-D filter along axis 0 and then along axis 1,
+    line by line, storing the intermediate in the input's float type. Here axis
+    0 runs over blocks of columns and axis 1 over blocks of rows, with the same
+    SciPy call per line, so the result is the same bit for bit for any thread
+    count. SciPy releases the GIL. Small images and one thread call SciPy directly.
+    This relies on how SciPy runs gaussian_filter; tests/test_strip_gaussian.py
+    compares the two and must pass after a SciPy update.
+    """
+    a = np.asarray(values)
+    workers = filter_cpu_budget() if workers is None else int(workers)
+    if a.ndim != 2 or a.size < 262144 or workers <= 1 or a.dtype.kind != 'f':
+        return gaussian_filter(a, sigma, truncate=truncate, mode=mode)
+    middle = np.empty_like(a)
+    out = np.empty_like(a)
+    def blocks(n):
+        edges = np.linspace(0, n, 2*workers+1).astype(int)
+        return [(int(x0), int(x1)) for x0, x1 in zip(edges[:-1], edges[1:]) if x1 > x0]
+    def columns(block):
+        x0, x1 = block
+        gaussian_filter1d(a[:, x0:x1], sigma, axis=0, mode=mode, truncate=truncate, output=middle[:, x0:x1])
+    def rows(block):
+        y0, y1 = block
+        gaussian_filter1d(middle[y0:y1], sigma, axis=1, mode=mode, truncate=truncate, output=out[y0:y1])
+    map_in_threads(columns, blocks(a.shape[1]), workers)
+    check_cancelled()
+    map_in_threads(rows, blocks(a.shape[0]), workers)
+    return out
 
 
 def larson_sekanina_residual(image, cx, cy, radius, radial_increment=0.,
@@ -185,9 +222,9 @@ def mgn_normalize(image, sigma=None, k=0.7, gamma=3.2, h=0.7,
         check_cancelled()
         if weight == 0:return np.zeros_like(data)
         with np.errstate(all="ignore"):
-            residual = data-gaussian_filter(data, scale, truncate=truncate, mode="nearest")
+            residual = data-strip_gaussian(data, scale, truncate=truncate, mode="nearest")
             check_cancelled()
-            deviation = np.sqrt(gaussian_filter(residual**2, scale,
+            deviation = np.sqrt(strip_gaussian(residual**2, scale,
                                                truncate=truncate, mode="nearest"))
             deviation = np.where(deviation == 0, 1.0, deviation)
             residual /= deviation
