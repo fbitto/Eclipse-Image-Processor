@@ -18,7 +18,7 @@ Angular subtracts an angular Gaussian in log-luminance on a linear polar grid, m
 
 All variants start from the shared working mono input, not a preceding enhancement or a tone-mapped image. Native-pixel widths scale down for fast preview; angular widths stay in degrees. Reduced annular statistics are approximate.
 
-The editing selector initially shows ISO 04. Each variant has independent parameters, opacity and Include state; the ACHF master Active checkbox gates them together. ISO 04 and Angular start included at internal strength 100 and opacity 10%. There are no per-variant Strength sliders. Adaptive is a separate application implementation, initially excluded at opacity 19%. An Angular 8 variant is not exposed.
+Each variant has a separate card with independent parameters, opacity and Active state. Basic shows ISO 04 and Angular; Standard and Expert also show ISO 01 and Adaptive. ISO 04 and Angular start active at internal strength 100 and opacity 10%. There are no per-variant Strength sliders. Adaptive is a separate application implementation, initially inactive at opacity 19%. An Angular 8 variant is not exposed.
 
 Encoded AEL layers use Overlay unchanged by adaptive ACHF's Background Retention or the application's other neutral-detail normalizers. Export writes active variants only. Main TIFF and PSB share filter layers and the presented base; see [composition](layer-composition.md) and [PSB export](psb-export.md).
 

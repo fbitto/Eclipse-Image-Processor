@@ -100,12 +100,17 @@ class GuiInteractionTests(unittest.TestCase):
         w=self.window
         w.recalculation_timer.stop();w.presentation_timer.stop()
         w.has_pending_request=False;w.is_processing=False
+        wait_for_gui(w)
         with patch('builtins.print') as output:
             w._log_processing_end('PIPELINE','Complete')
             self.assertIn('Idle — no processing running or queued',output.call_args.args[0])
             w.recalculation_timer.start(1000)
             w._log_processing_end('PIPELINE','Complete')
             self.assertIn('Waiting for pending update',output.call_args.args[0])
+            w._presentation_request = {}
+            w._log_processing_end('PIPELINE','Complete')
+            self.assertIn('Another process is running',output.call_args.args[0])
+            w._presentation_request = None
             w.is_processing=True
             w._log_processing_end('PIPELINE','Complete')
             self.assertIn('Another process is running',output.call_args.args[0])
@@ -171,14 +176,14 @@ class GuiInteractionTests(unittest.TestCase):
             for name, image in (("rgb", rgb), ("mono", mono), ("rgb_again", rgb), ("rgb_hdr",rgb.astype(np.float32)*10)):
                 path = Path(tmp)/f"{name}.tif"
                 tifffile.imwrite(path, image, photometric="rgb" if image.ndim == 3 else "minisblack")
-                w.combo_input_state.setCurrentIndex(2)
+                w.combo_input_state.setCurrentIndex(w.combo_input_state.findData('nonlinear'))
                 w.chk_verify_preview.setChecked(True)
                 with patch("gui.app.QFileDialog.getOpenFileName", return_value=(str(path), "")):
                     w.load_image_action();wait_for_gui(w)
                 self.assertEqual(w.source_path, str(path), w.status_label.text())
                 self.assertEqual(w.combo_input_state.currentData(), "linear")
                 self.assertFalse(w.lbl_input_linearity.isHidden())
-                self.assertEqual(w.lbl_input_linearity.text(), "Assumed linear; not confirmed.")
+                self.assertEqual(w.lbl_input_linearity.text(), 'Linear input (user declaration).')
                 self.assertFalse(w.lbl_input_linearity.wordWrap())
                 header=w.combo_input_state.parentWidget().layout()
                 self.assertEqual(header.indexOf(w.lbl_input_linearity), header.indexOf(w.combo_input_state)+1)
@@ -199,10 +204,10 @@ class GuiInteractionTests(unittest.TestCase):
         t = np.linspace(.01, .9, 64*64).reshape(64, 64)
         rgb = np.stack([.1+.6*t, .05+.3*t, .025+.15*t], axis=-1).astype(np.float32)
         self.window.full_source_rgb = rgb
-        self.window.combo_input_state.setCurrentIndex(0)
+        self.window.combo_input_state.setCurrentIndex(self.window.combo_input_state.findData('nonlinear'))
         self.window.on_input_state_changed()
         self.assertFalse(self.window.chk_calibrate_colour.isEnabled())
-        self.window.combo_input_state.setCurrentIndex(1)
+        self.window.combo_input_state.setCurrentIndex(self.window.combo_input_state.findData('linear'))
         self.assertTrue(self.window.chk_calibrate_colour.isEnabled())
         from core.colour import neutralize_tse, set_luminosity
         with patch("gui.app.neutralize_tse", wraps=neutralize_tse) as calibrate, patch("gui.app.set_luminosity", wraps=set_luminosity) as colorize:
@@ -222,7 +227,7 @@ class GuiInteractionTests(unittest.TestCase):
         original, _, original_report = self.window._colour_cache
         np.testing.assert_array_equal(original, calibrated)
         self.assertIn("gain-only", original_report["method"])
-        self.window.combo_input_state.setCurrentIndex(2)
+        self.window.combo_input_state.setCurrentIndex(self.window.combo_input_state.findData('nonlinear'))
         self.assertFalse(self.window.chk_calibrate_colour.isChecked())
         wait_for_gui(self.window)
         restored, _, report = self.window._colour_cache
@@ -231,7 +236,7 @@ class GuiInteractionTests(unittest.TestCase):
 
     def test_calibration_row_whitespace_toggles_once_per_click(self):
         self.window.full_source_rgb = np.repeat(np.linspace(.01,.9,64*64,dtype=np.float32).reshape(64,64,1),3,axis=-1)
-        self.window.combo_input_state.setCurrentIndex(1)
+        self.window.combo_input_state.setCurrentIndex(self.window.combo_input_state.findData('linear'))
         self.window.on_input_state_changed()
         checkbox = self.window.chk_calibrate_colour
         checkbox.setChecked(False)
@@ -320,7 +325,7 @@ class GuiInteractionTests(unittest.TestCase):
     def test_version_and_layer_model_tooltips_match_current_behavior(self):
         from config import APP_VERSION
         w=self.window
-        self.assertEqual(APP_VERSION,'0.6.0')
+        self.assertEqual(APP_VERSION,'0.7.0')
         self.assertIn('v'+APP_VERSION,w.windowTitle())
         self.assertFalse(hasattr(w,'combo_stretch_mode'))
         self.assertTrue(w.btn_psb_preview.isChecked())
@@ -417,7 +422,7 @@ class GuiInteractionTests(unittest.TestCase):
         for name in ('nrgf','fnrgf','rhef','mgn','wow','tangential','achf'):
             self.assertFalse(hasattr(w,'sl_'+name+'_str'))
             opacity=getattr(w,'sl_'+name+'_opacity')
-            self.assertEqual(opacity.parameter_row.parentWidget().layout().indexOf(opacity.parameter_row),1 if name == 'achf' else 0)
+            self.assertEqual(opacity.parameter_row.parentWidget().layout().indexOf(opacity.parameter_row),0)
         self.assertEqual(w.sl_larson_sekanina_str.title_label.text(),'Gain (%)')
         for controls in w.achf_ael_controls.values():
             self.assertNotIn('strength',controls)
@@ -449,7 +454,8 @@ class GuiInteractionTests(unittest.TestCase):
         w.combo_achf_variant.setCurrentIndex(w.combo_achf_variant.findData('ael_iso_04'))
         for shape in (w.raw_image.shape, w.full_raw_image.shape):
             self.assertEqual(w.collect_filter_parameters(shape)['achf_variant'], 'ael_iso_04')
-        self.assertFalse(w.sl_achf_kernel.isEnabled())
+        # Independent cards remain configurable even when another variant is selected.
+        self.assertTrue(w.sl_achf_kernel.isEnabled())
         self.assertTrue(w.achf_ael_controls['ael_iso_04']['opacity'].isEnabled())
         w.combo_achf_variant.setCurrentIndex(0)
         self.assertTrue(w.sl_achf_kernel.isEnabled())
@@ -523,6 +529,18 @@ class GuiInteractionTests(unittest.TestCase):
         self.assertEqual(self.requests[0]["sx"], 20)
         self.assertEqual(self.requests[0]["sy"], 25)
 
+    def test_geometry_edits_invalidate_colour_before_deferred_presentation(self):
+        w = self.window
+        w._colour_cache = w._preview_colour_cache = object()
+        revision = w._colour_revision
+        with patch.object(w, 'render_matrix_to_screen') as render:
+            w.txt_x.setText('20');w.txt_y.setText('25');w.txt_r.setText('7')
+            render.assert_not_called()
+        self.assertGreater(w._colour_revision, revision)
+        self.assertIsNone(w._colour_cache)
+        self.assertIsNone(w._preview_colour_cache)
+        self.assertTrue(w.presentation_timer.isActive())
+
     def test_active_slider_change_is_delayed_and_coalesced(self):
         # Enable without a recomputation; the worker is disconnected in setUp.
         from unittest.mock import patch
@@ -577,7 +595,8 @@ class GuiInteractionTests(unittest.TestCase):
         self.assertTrue(w.sl_wow_noise.isHidden())
         w.chk_advanced.setChecked(False)
         self.assertEqual(before, parameter_signature(w.collect_filter_parameters((64, 64))))
-        self.assertIs(w.chk_advanced.parentWidget(), w.chk_calibrate_colour.parentWidget())
+        self.assertTrue(w.chk_advanced.isHidden())
+        self.assertIs(w.chk_calibrate_colour.parentWidget(),w.appearance_layout.parentWidget())
 
     def test_basic_wow_noise_updates_every_scale_and_advanced_values_survive(self):
         w = self.window

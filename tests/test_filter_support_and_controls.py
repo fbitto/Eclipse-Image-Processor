@@ -204,7 +204,7 @@ class ControlAndVerificationTests(unittest.TestCase):
         w.chk_calibrate_colour.setChecked(False)
         w.full_source_rgb=np.repeat(full[...,None],3,axis=-1)
         w._full_cache=(full,parameter_signature(w.collect_filter_parameters(full.shape)),full.copy(),w._preview_revision)
-        w.combo_input_state.setCurrentIndex(1)
+        w.combo_input_state.setCurrentIndex(w.combo_input_state.findData('linear'))
         w.chk_calibrate_colour.setChecked(True);wait_for_gui(w)
         self.assertFalse(w.chk_calibrate_colour.isChecked())
         self.assertIn('neutralization disabled',w.status_label.text())

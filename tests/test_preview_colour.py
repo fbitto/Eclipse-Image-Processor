@@ -58,6 +58,21 @@ class FastColourPreviewTests(unittest.TestCase):
         np.testing.assert_allclose(w.last_preview_presentation,expected,atol=1e-7,rtol=0)
         np.testing.assert_array_equal(self.rgb,original)
 
+    def test_warmth_edits_reuse_calibrated_rgb_and_leave_filter_recipe_alone(self):
+        w = self.window
+        w.sl_background_radius.setValue(20)
+        w.render_matrix_to_screen();wait_for_gui(w)
+        with patch('gui.app.neutralize_tse',wraps=neutralize_tse) as calibration:
+            w.chk_calibrate_colour.setChecked(True);wait_for_gui(w)
+            cached = w._colour_cache[0]
+            before = w.collect_filter_parameters(w.raw_image.shape)
+            w.sl_warmth.setValue(100);wait_for_gui(w)
+            self.assertEqual(calibration.call_count,1)
+            self.assertIs(w._colour_cache[0],cached)
+            after = w.collect_filter_parameters(w.raw_image.shape)
+            before.pop('valid_mask');after.pop('valid_mask')
+            self.assertEqual(before,after)
+
     def test_display_edits_reuse_calibration_and_reduced_rgb_and_toggle_is_reversible(self):
         w=self.window
         with patch('gui.app.neutralize_tse',wraps=neutralize_tse) as calibration:

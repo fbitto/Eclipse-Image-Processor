@@ -2,6 +2,8 @@
 
 The application uses independent encoded layers for fast/native preview and export. **The main TIFF/JPEG and PSB share the presentation base.** No installed AEL runtime is required. The PSB writer adapts AEL 1.3.3 by Pere Guerra Serra under MIT and uses pinned psd-tools 1.26.0; see [attribution](../ATTRIBUTIONS.md).
 
+When Warm is enabled and sky samples support a mask, an editable **Warmth - enhanced corona** Normal layer follows the RGB Color layer, before Edge Antialias and original prominences. Its separate 16-bit mask follows enhanced streamer contrast above sampled sky noise without a radial cutoff. TIFF layer packages include `WARMTH_MASK.tif`; PSB stores the same mask natively. Moving Warm changes this presentation layer, not the linear reference or working source products. See [streamer warmth](streamer-warmth-20261102.md).
+
 ## Output contracts
 
 | Product | Base / presentation |

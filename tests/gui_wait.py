@@ -13,6 +13,8 @@ def wait_for_gui(window, timeout=10000):
         if time.monotonic() > deadline:
             raise AssertionError('GUI background task did not finish')
         QTest.qWait(10)
+        # Qt's wait can retain the GIL; let Python task threads make progress too.
+        time.sleep(.001)
 
 
 def close_window(window):

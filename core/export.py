@@ -9,7 +9,8 @@ import tifffile
 from PIL import Image
 from .filters import FilterWorker, CPU_CORES
 from .presentation import psb_presentation_settings
-from .colour import neutralize_tse, set_luminosity, warm_colour
+from .colour import neutralize_tse, set_luminosity
+from .warmth import warmth_layer, blend_warmth
 from .image_data import recipe_parameters
 from .layer_export import export_layer_package
 from .export_paths import export_paths, protect_source, available_export_path
@@ -23,7 +24,8 @@ def export_images(source, parameters, display, file_path, original_path,
                   layers_format='tiff', layer_cache=None, project_settings=None, progress=None,
                   color_correction=False, psb_exposure_ev=0., psb_preview_jpeg=False,
                   original_rgb=None, export_prominences=False, prominence_exposure_ev=-2.,
-                  prominence_saturation=1., warmth=0., prominence_contrast=1., prominence_edge_softness=3.):
+                  prominence_saturation=1., warmth=0., prominence_contrast=1., prominence_edge_softness=3.,
+                  warmth_background=None):
     """Compute/write in the caller's worker; source and cached output stay untouched."""
     export_linear=bool(export_linear or export_layers)
     products = dict(include_settings=project_settings is not None,
@@ -73,8 +75,8 @@ def export_images(source, parameters, display, file_path, original_path,
     if source_rgb is not None and calibrate_colour:
         colour_rgb, colour_report = neutralize_tse(source_rgb, white)
     if colour_rgb is not None:
-        colour_rgb = warm_colour(colour_rgb, warmth)
         colour_report['warmth'] = warmth
+        colour_report['warmth_stage'] = 'enhanced presentation; sky-noise mask'
     stage('Calculating filters')
     from .layer_engine import engine_for
     engine = engine_for(worker)
@@ -103,7 +105,7 @@ def export_images(source, parameters, display, file_path, original_path,
             from .psb_export import export_psb_layers
             package = build_layer_package(worker, source, parameters, package_display,
                 original_path, rgb=colour_rgb, colour_report=colour_report,
-                prominences=prominences, base_colour=base_colour)
+                prominences=prominences, base_colour=base_colour, warmth=warmth, warmth_background=warmth_background)
             del base_colour
             stage('Writing and verifying PSB')
             export_psb_layers(package,candidate,color_correction=color_correction)
@@ -112,7 +114,7 @@ def export_images(source, parameters, display, file_path, original_path,
         else:
             layers_path = export_layer_package(worker, source, parameters, package_display,
                 original_path, candidate, rgb=colour_rgb, colour_report=colour_report,
-                prominences=prominences, base_colour=base_colour)
+                prominences=prominences, base_colour=base_colour, warmth=warmth, warmth_background=warmth_background)
             del base_colour
 
     linear_path = None
@@ -129,6 +131,9 @@ def export_images(source, parameters, display, file_path, original_path,
     presentation = None
     img_norm=engine.render(worker,source,parameters,package_display,base=base)
     if colour is not None:img_norm=set_luminosity(colour,img_norm)
+    if colour is not None:
+        img_norm=blend_warmth(img_norm,warmth_layer(img_norm,warmth,warmth_background,
+                              valid=np.isfinite(source) & parameters.get('valid_mask',True)))
     edge=engine.edge_alpha(source,parameters)
     img_norm=finish_presentation(img_norm,edge)
     if prominences is not None:

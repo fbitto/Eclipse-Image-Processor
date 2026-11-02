@@ -307,6 +307,7 @@ class ProminenceGuiTests(unittest.TestCase):
             self.assertEqual(w.sl_prominence_edge_softness.value(),85)
             saved['controls'].pop('sl_prominence_edge_softness')
             saved['controls'].pop('sl_prominence_contrast');saved['controls']['chk_advanced']['value']=False
+            saved['ui_mode']='standard'
             restore_settings(w,saved)
             self.assertEqual(w.sl_prominence_contrast.value(),20)
             self.assertEqual(w.sl_prominence_edge_softness.value(),30)

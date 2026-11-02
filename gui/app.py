@@ -41,6 +41,7 @@ from core.export_paths import export_paths, protect_source, available_export_pat
 from core.project_settings import MissingSourceImage, read_settings, write_settings
 from gui.project_settings import capture_settings, restore_settings, validate_settings, initialize_filter_defaults, reset_filter_defaults
 from gui.filter_controls import add_controls, collect_controls, add_advanced_mode, add_achf_variants, collect_achf_variants, add_layer_opacities
+from gui.ui_levels import build_achf_cards, add_ui_levels, apply_ui_level
 from gui.components import BUTTON_STYLE, CHECKBOX_STYLE, CollapsibleSection, FullRowCheckBox, InWindowTooltips, ScrollSafeComboBox
 from gui.factories import (
     create_filter_group,
@@ -90,6 +91,7 @@ class EclipseProcessorApp(QMainWindow):
         self._native_display_revision = None
         self._native_filter_revision = None
         self._presentation_revision = 0
+        self._preview_ready_status = None
         self._closing = False
         self._running_half_job = False
         self._running_full_job = False
@@ -160,7 +162,7 @@ class EclipseProcessorApp(QMainWindow):
             button=QPushButton(label)
             button.setCheckable(True)
             button.setEnabled(False)
-            button.setToolTip('Fit the complete image; subsequent edits use fast processing unless native verification is checked.' if zoom is None else
+            button.setToolTip('Fit the complete image; subsequent edits use fast processing unless Full-resolution preview is checked.' if zoom is None else
                               ('50%: calculate filters at half the original width and height. Drag to pan.' if zoom == .5 else f'{label}: native image pixels relative to physical screen pixels. Drag to pan; native filters are calculated only when needed.'))
             button.clicked.connect(lambda checked,zoom=zoom:self.set_preview_zoom(zoom))
             self.zoom_buttons.addButton(button,0 if zoom is None else int(100*zoom))
@@ -214,7 +216,7 @@ class EclipseProcessorApp(QMainWindow):
 
         self.btn_compare = QPushButton("View Original")
         self.btn_compare.setCheckable(True)
-        self.btn_compare.setToolTip("Temporarily bypass detail filters to inspect the working input with the selected PSB presentation or un-stretched view. Enabled background equalization, Calibrate color and Warm apply to both views. The separate prominence layer is bypassed in View Original. This comparison does not change filter settings or the export.")
+        self.btn_compare.setToolTip("Temporarily bypass detail filters to inspect the working input with the selected PSB presentation or un-stretched view. Enabled background equalization, Calibrate color and Warmth apply to both views. The separate prominence layer is bypassed in View Original. This comparison does not change filter settings or the export.")
         self.btn_compare.toggled.connect(self.toggle_compare_mode)
         btn_row.addWidget(self.btn_compare)
 
@@ -233,11 +235,11 @@ class EclipseProcessorApp(QMainWindow):
         btn_row.addWidget(self.btn_recalc)
 
         top_header_layout.addLayout(btn_row)
-        self.chk_verify_preview = QCheckBox('Full-resolution verification preview')
+        self.chk_verify_preview = QCheckBox('Full-resolution preview')
         self.chk_verify_preview.setChecked(False)
         self.chk_verify_preview.setToolTip('Use native filter calculations even in Fit view. 50% calculates at half resolution; 100% and 200% request native resolution automatically. Export reuses native layers when settings match. Disable and use Fit for fast approximate editing.')
         self.chk_verify_preview.toggled.connect(self.dispatch_pipeline_request_if_auto)
-        top_header_layout.addWidget(self.chk_verify_preview)
+        view_header.insertWidget(1,self.chk_verify_preview)
         right_layout.addWidget(top_header_panel)
 
         scroll_area = QScrollArea()
@@ -255,12 +257,13 @@ class EclipseProcessorApp(QMainWindow):
         main_layout.addWidget(right_container)
 
         self.lbl_input_linearity = QLabel()
-        self.lbl_input_linearity.setToolTip("Input transfer-function declaration; linearity is assumed unless confirmed by the source. This does not undo a previous stretch.")
+        self.lbl_input_linearity.setToolTip('Explicit input type declaration; no automatic detection. This does not undo a previous stretch.')
         self.lbl_input_linearity.setWordWrap(False)
         self.lbl_input_linearity.setStyleSheet("color: #e5a00d; font-size: 11px;")
         self.lbl_input_linearity.setVisible(False)
-        self._build_geometry_section(control_layout)
-        self.background.build(control_layout)
+        self.preparation_layout=create_filter_group('PREPARATION',control_layout)
+        self._build_geometry_section(self.preparation_layout)
+        self.background.build(self.preparation_layout)
         self._build_filters_section(control_layout)
         add_layer_opacities(self)
         for section in (self.sec_nrgf, self.sec_fnrgf, self.sec_mgn, self.sec_wow, self.sec_rhef,
@@ -270,26 +273,27 @@ class EclipseProcessorApp(QMainWindow):
                     continue
                 slider.valueChanged.connect(
                     lambda value, section=section, slider=slider: self.on_filter_slider_released(section, slider.property("achf_variant")))
+        build_achf_cards(self)
         self._build_presentation_section(control_layout)
-        top_header_layout.insertWidget(2, self.combo_input_state)
-        top_header_layout.insertWidget(3, self.lbl_input_linearity)
-        colour_row = QHBoxLayout()
-        colour_row.setContentsMargins(0, 0, 0, 0)
-        colour_row.addWidget(self.chk_calibrate_colour)
-        top_header_layout.addLayout(colour_row)
-        self.sl_warmth, _ = create_slider('Warm', 0, 100, 0, colour_row,
-            tooltip='Artistic color warmth: 0 preserves color; 100 gives a sunset tone. Requires RGB. Applies to corona color in preview and exports, independently of calibration. The separate original prominence layer retains its own saturation and exposure.')
-        self.sl_warmth.title_label.setFixedWidth(40)
-        self.sl_warmth.value_label.setFixedWidth(35)
-        self.sl_warmth.parameter_row.setMaximumWidth(230)
+        input_label=QLabel('Input type')
+        input_label.setToolTip('Explicit input declaration: Linear or Non-linear (stretched). No automatic detection.')
+        self.preparation_layout.insertWidget(0,input_label)
+        self.preparation_layout.insertWidget(1,self.combo_input_state)
+        self.preparation_layout.insertWidget(2,self.lbl_input_linearity)
+        self.appearance_layout.insertWidget(1,self.chk_calibrate_colour)
+        self.sl_warmth, _ = create_slider('Warmth', 0, 100, 0, self.appearance_layout,
+            tooltip='Warm enhanced corona and streamers while protecting sampled sky color. The soft mask uses contrast above sky noise, supported by whiter color; there is no outer-radius cutoff. 0 keeps the calibrated image; 100 gives the strongest sunset tint. Requires RGB and six usable sky patches spread across the image. Review Background Gradient samples; equalization may remain off. Warmth has an editable mask in layer exports. Original prominences keep separate color controls.')
+        self.appearance_layout.removeWidget(self.sl_warmth.parameter_row)
+        self.appearance_layout.insertWidget(2,self.sl_warmth.parameter_row)
         self.sl_warmth.setEnabled(False)
-        self.sl_warmth.valueChanged.connect(self.on_colour_changed)
+        self.sl_warmth.valueChanged.connect(lambda _: self.render_matrix_to_screen())
         add_advanced_mode(self, top_header_layout)
         self.chk_advanced.toggled.connect(self._update_prominence_mode)
         self._update_prominence_mode()
-        top_header_layout.addWidget(self.lbl_colour_hint)
+        self.appearance_layout.insertWidget(3,self.lbl_colour_hint)
         self.sl_wow_scales.valueChanged.connect(lambda _: self.update_wow_controls())
         self.update_wow_controls()
+        add_ui_levels(self,top_header_layout)
         section_help = {
             self.sec_geo: "Set the disk center and reference radius in native image pixels for radial filtering and the circle overlay.",
             self.sec_nrgf: "Normalizing Radial Graded Filter (AEL): continuous annular brightness and spread on linear input; independent Multiply layer. Undefined annuli stay transparent.",
@@ -495,7 +499,7 @@ class EclipseProcessorApp(QMainWindow):
             "Lower-tail Upsilon", 1, 500, 35, self.sec_rhef.content_layout,
             divisor=100,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_rhef),
-            tooltip="Rank exponent from 0.01 to 5: linked mode applies it to both tails; otherwise it controls the lower tail. Values below 1 compress the tail toward mid-grey; 1 leaves the curve unchanged; values above 1 expand it. Upper-tail linking is controlled below."
+            tooltip="Rank exponent from 0.01 to 5: linked mode applies it to both tails; otherwise it controls the lower tail. Values below 1 compress the tail toward mid-grey; 1 leaves the curve unchanged; values above 1 expand it. Expert exposes independent upper-tail linking."
         )
         self.sl_rhef_bin, _ = create_slider(
             "Ring Width (native px)", 5, 100, 10, self.sec_rhef.content_layout,
@@ -607,25 +611,18 @@ class EclipseProcessorApp(QMainWindow):
         for slider in self.achf_adaptive_panel.findChildren(QSlider):
             slider.setProperty("achf_variant","adaptive")
         add_achf_variants(self)
-        def update_achf_controls():
-            selected = self.combo_achf_variant.currentData()
-            self.achf_adaptive_panel.setVisible(selected == 'adaptive')
-            self.achf_adaptive_panel.setEnabled(selected == 'adaptive')
-            for variant, controls in self.achf_ael_controls.items():
-                controls['panel'].setVisible(selected == variant)
-        self.combo_achf_variant.currentIndexChanged.connect(update_achf_controls)
-        update_achf_controls()
         self.sec_achf.toggled_active.connect(self.on_filter_toggled)
         sharpening_group.addWidget(self.sec_achf)
         add_controls(self)
 
     def _build_presentation_section(self, layout: QVBoxLayout):
         """Build the shared PSB/JPEG presentation controls above export options."""
-        psb_group = create_filter_group('PHOTOSHOP PRESENTATION', layout)
+        psb_group = create_filter_group('APPEARANCE', layout)
+        self.appearance_layout=psb_group
         # 16-bit PSB bases shared by the fast view and the native view.
         self._presentation_cache = PresentationCache()
         self.sl_psb_exposure, self.lbl_psb_exposure = create_slider(
-            'PSB Exposure (EV)', -600, 600, 0, psb_group,
+            'Exposure (EV)', -600, 600, 0, psb_group,
             divisor=100, formatter=None,
             tooltip='Automatic native-image scale plus exposure compensation: +1 EV doubles exposure; -1 EV halves it. Affects presented TIFF, JPEG and Photoshop layer presentation. The preview toggle changes only the viewport. Float32 working sources retain their units. Double-click to restore 0 EV.')
         self.sl_psb_exposure.valueChanged.connect(self._on_psb_exposure_changed)
@@ -641,18 +638,18 @@ class EclipseProcessorApp(QMainWindow):
         psb_group.addWidget(self.lbl_psb_presentation)
         self.chk_prominences = QCheckBox('Export original prominences and chromosphere')
         self.chk_prominences.setEnabled(False)
-        self.chk_prominences.setToolTip('Use the originally loaded RGB, before background extraction, color calibration, Warm and filters. Adjust its display with Prominences (EV), saturation and Advanced prominence contrast. Save a separate dark TIFF and mask; add an editable masked layer when Photoshop layers are exported. Requires RGB. Review the automatic red-excess mask.')
+        self.chk_prominences.setToolTip('Use the originally loaded RGB, before background extraction, color calibration, Warmth and filters. Adjust its display with Prominences (EV), saturation and Expert prominence contrast. Save a separate dark TIFF and mask; add an editable masked layer when Photoshop layers are exported. Requires RGB. Review the automatic red-excess mask.')
         psb_group.addWidget(self.chk_prominences)
         self.sl_prominence_exposure, _ = create_slider(
             'Prominences (EV)', -300, 500, 0, psb_group, divisor=100,
-            tooltip='Advanced prominence exposure from -3 to +5 EV, before its soft highlight curve. -1 EV halves the input exposure; the separate curve retains bright detail. Does not affect the corona or change the original file.')
+            tooltip='Expert prominence exposure from -3 to +5 EV, before its soft highlight curve. -1 EV halves the input exposure; the separate curve retains bright detail. Does not affect the corona or change the original file.')
         # Keep one recipe value; the Basic editor never clamps a saved negative exposure.
         self.prominence_exposure_basic, _ = create_slider(
             'Prominences (EV)', 0, 500, 0, psb_group, divisor=100,
-            tooltip='Prominence exposure from 0 to +5 EV. Advanced mode also permits negative exposure.')
+            tooltip='Basic and Standard prominence exposure from 0 to +5 EV. Expert also permits negative exposure.')
         self.lbl_prominence_ev_retained = QLabel()
         self.lbl_prominence_ev_retained.setWordWrap(True)
-        self.lbl_prominence_ev_retained.setToolTip('A saved negative prominence exposure remains active in Basic mode. Move the Basic slider to choose a nonnegative value, or use Advanced mode to edit the negative value.')
+        self.lbl_prominence_ev_retained.setToolTip('A saved negative prominence exposure remains active in Basic and Standard. Move this slider to choose a nonnegative value, or use Expert to edit the negative value.')
         self.lbl_prominence_ev_retained.setStyleSheet('color: #aaaaaa; font-size: 10px;')
         psb_group.addWidget(self.lbl_prominence_ev_retained)
         self.sl_prominence_contrast, _ = create_slider(
@@ -684,6 +681,7 @@ class EclipseProcessorApp(QMainWindow):
         self.prominence_view.currentIndexChanged.connect(self._on_prominence_changed)
         self._on_prominence_changed()
         layout.addSpacing(8)
+        layout=create_filter_group('EXPORT',layout)
 
         self.chk_export_layers = QCheckBox("Also export editable Photoshop layers")
         self.chk_export_layers.setChecked(True)
@@ -742,12 +740,10 @@ class EclipseProcessorApp(QMainWindow):
         """)
         input_view.viewport().setStyleSheet("background-color: #282828; border-radius: 0;")
         self.combo_input_state.setView(input_view)
-        self.combo_input_state.addItem("Input: linearity unspecified", "unknown")
-        self.combo_input_state.addItem("Input: linear", "linear")
-        self.combo_input_state.addItem("Input: already stretched / nonlinear", "nonlinear")
+        self.combo_input_state.addItem('Linear','linear')
+        self.combo_input_state.addItem('Non-linear (stretched)','nonlinear')
         self.combo_input_state.setCurrentIndex(self.combo_input_state.findData("linear"))
-        self.combo_input_state.setToolTip("Linear is assumed by default, not automatically confirmed. Change this if the source was already stretched. This declaration also controls color calibration; it does not undo stretching.")
-        self.combo_input_state.setVisible(False)
+        self.combo_input_state.setToolTip('Declare Linear or Non-linear (stretched). The default is Linear; there is no automatic detection. Color calibration and background equalization require Linear. This setting does not undo stretching.')
         self.chk_calibrate_colour = FullRowCheckBox("Calibrate color")
         self.chk_calibrate_colour.setToolTip("Requires linear RGB. Assumes neutral channel spans: balances P99 minus P1 using gains only, without subtracting backgrounds. A common highlight scale preserves channel ratios. This is not photometric or ICC calibration. Applies to fast preview, verification and export. Preserves the original sources.")
         self.chk_calibrate_colour.setEnabled(False)
@@ -776,10 +772,8 @@ class EclipseProcessorApp(QMainWindow):
         warning = getattr(self, '_input_linearity_warning', '')
         state = self.combo_input_state.currentData()
         self.lbl_input_linearity.setText(
-            'Assumed linear; not confirmed.' if state == 'linear' else
-            'Input already stretched.' if state == 'nonlinear' else
-            'Input linearity unknown.')
-        self.lbl_input_linearity.setToolTip(warning or 'Input linearity declaration. Linear is assumed unless confirmed by the source; this does not undo a previous stretch.')
+            'Linear input (user declaration).' if state == 'linear' else 'Non-linear (stretched) input.')
+        self.lbl_input_linearity.setToolTip(warning or 'Explicit input type declaration; no automatic detection. This does not undo a previous stretch.')
         self.lbl_input_linearity.setVisible(bool(warning))
         allowed = self.full_source_rgb is not None and self.combo_input_state.currentData() == "linear"
         self.chk_background.setEnabled(self.full_raw_image is not None and state == 'linear')
@@ -794,9 +788,12 @@ class EclipseProcessorApp(QMainWindow):
         self.lbl_colour_hint.setText(
             "Color calibration requires an RGB image." if self.full_source_rgb is None else
             "Color calibration is shown in preview and export." if allowed else
-            "Select 'Input: linear' to enable color calibration.")
+            "Select Linear input to enable color calibration.")
         if not allowed:
             self.chk_calibrate_colour.setChecked(False)
+
+    def apply_ui_level(self, *, recalculate=True):
+        apply_ui_level(self,recalculate=recalculate)
 
     def on_colour_changed(self, *_):
         """Update presentation colour without invalidating the numerical cache."""
@@ -838,6 +835,10 @@ class EclipseProcessorApp(QMainWindow):
         if self.background.base is not None and self.chk_background.isChecked() and not getattr(self,'_restoring_settings',False):
             self.background.points=None;self.background.dirty=True
         self.background.overlay()
+        self._colour_cache = self._preview_colour_cache = None
+        self._colour_revision += 1
+        # Wait for geometry edits to settle before preparing native RGB colour.
+        self.presentation_timer.start(100)
         self.dispatch_pipeline_request_if_auto()
 
     def trigger_circle_redraw(self):
@@ -1073,7 +1074,8 @@ class EclipseProcessorApp(QMainWindow):
     def _log_processing_end(self, process, outcome):
         pending=(self.recalculation_timer.isActive() or self.presentation_timer.isActive()
                  or (self.has_pending_request and (self.auto_calculate or self._pending_manual)))
-        if self.is_processing or self._export_thread is not None:
+        if (self.is_processing or self._export_thread is not None
+                or self._presentation_thread is not None or self._presentation_request is not None):
             state="Another process is running"
         elif pending:
             state="Waiting for pending update"
@@ -1123,8 +1125,10 @@ class EclipseProcessorApp(QMainWindow):
             if self._running_full_job:
                 self._full_cache = (self.full_raw_image, self._running_signature, output_matrix, self._preview_revision)
             self.processed_image = output_matrix
-            self.status_label.setText('Status: Half-resolution preview ready' if self._running_half_job else 'Status: Full-resolution verification ready' if self._running_full_job else 'Status: Fast preview ready (approximate)')
-            self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
+            ready = ('Status: Half-resolution preview ready' if self._running_half_job else
+                     'Status: Full-resolution verification ready' if self._running_full_job else
+                     'Status: Fast preview ready (approximate)')
+            self._preview_ready_status = (self.full_raw_image, self._preview_revision, ready)
             self.render_matrix_to_screen()
         else:
             self.status_label.setText("Status: Updated settings pending..." if
@@ -1132,7 +1136,7 @@ class EclipseProcessorApp(QMainWindow):
                                       "Status: Settings changed — recalculate")
             self.status_label.setStyleSheet("color: #e5a00d; font-weight: bold;")
         self._dispatch_pending_preview()
-        self._log_processing_end("PIPELINE", "Complete")
+        self._log_processing_end("FILTERS", "Calculated")
 
     def update_wow_controls(self, *, preserve_settings=False):
         shape = getattr(self, '_restoring_source_shape',
@@ -1457,6 +1461,7 @@ class EclipseProcessorApp(QMainWindow):
             self.source_rgb_white = loaded['white']
             self._colour_cache = None
             self._preview_colour_cache = None
+            self._preview_ready_status = None
             self._presentation_cache.clear()
             # Restore the requested defaults without rendering the previous image
             # or scheduling a worker until the new source and geometry are ready.
@@ -1467,12 +1472,8 @@ class EclipseProcessorApp(QMainWindow):
                 else:
                     control.setChecked(loaded['rgb'] is not None if control is self.chk_calibrate_colour else False)
                 control.blockSignals(blocked)
-            self._input_linearity_warning = (
-                "Input assumed linear. This format commonly contains display-encoded images; "
-                "if already stretched, select 'Input: already stretched / nonlinear'."
-                if lower_path.endswith(('.jpg', '.jpeg', '.png', '.bmp')) else
-                "Input assumed linear; linearity has not been confirmed. "
-                "If the source was stretched before saving, select 'Input: already stretched / nonlinear'.")
+            self._input_linearity_warning = ('Input type is a user declaration; no automatic detection. '
+                                             'Choose Non-linear (stretched) if a stretch was already applied.')
             if project is None:
                 with QSignalBlocker(self.sl_warmth), QSignalBlocker(self.sl_prominence_saturation):
                     self.sl_warmth.setValue(0)
@@ -1512,6 +1513,7 @@ class EclipseProcessorApp(QMainWindow):
             self.update_wow_controls(preserve_settings=project is None and not first_image)
 
             # Invalidate the filter revision before snapshotting the first preview.
+            self.apply_ui_level(recalculate=False)
             self.dispatch_pipeline_request_if_auto()
             self.render_matrix_to_screen()
             missing = loaded['missing']
@@ -1597,6 +1599,7 @@ class EclipseProcessorApp(QMainWindow):
                 prominence_contrast=self.sl_prominence_contrast.value()/20,
                 prominence_edge_softness=self.sl_prominence_edge_softness.value()/10,
                 warmth=self.sl_warmth.value()/100,
+                warmth_background=self.background.warmth_parameters(),
                 calibrate_colour=self.chk_calibrate_colour.isChecked(), white=self.source_rgb_white,
                 export_layers=self.chk_export_layers.isChecked(), layers_format=self.combo_layers_format.currentData(),
                 color_correction=self.chk_color_correction.isEnabled() and self.chk_color_correction.isChecked(),
@@ -1682,8 +1685,14 @@ class EclipseProcessorApp(QMainWindow):
             display = self.collect_display_parameters()
             if self.show_original_mode:
                 display = dict(display, blend=0.)
+            ready = self._preview_ready_status
+            ready_status = (ready[2] if ready is not None and ready[0] is self.full_raw_image
+                            and ready[1] == self._preview_revision else None)
+            if ready_status is not None and self.show_original_mode:
+                ready_status = 'Status: Showing Original'
             self._presentation_request = dict(
                 revision=self._presentation_revision, filter_revision=self._preview_revision,
+                ready_status=ready_status,
                 colour_revision=self._colour_revision,
                 source_identity=self.full_raw_image,
                 source=source, params=params, display=display, native=native, half=half,
@@ -1698,6 +1707,7 @@ class EclipseProcessorApp(QMainWindow):
                 prominence_contrast=self.sl_prominence_contrast.value()/20,
                 prominence_edge_softness=self.sl_prominence_edge_softness.value()/10,
                 warmth=self.sl_warmth.value()/100,
+                warmth_background=self.background.warmth_parameters(),
                 prominence_view=self.prominence_view.currentData(),
                 calibrate=self.chk_calibrate_colour.isChecked(),
                 colour_cache=self._colour_cache, preview_cache=self._preview_colour_cache,
@@ -1710,6 +1720,10 @@ class EclipseProcessorApp(QMainWindow):
         except (ValueError, TypeError, OverflowError):
             self._presentation_request = None
             return  # Keep the last valid view while geometry is being edited.
+        if (ready_status is not None and not self.is_processing and self._export_thread is None
+                and not self.recalculation_timer.isActive() and not self.has_pending_request):
+            self.status_label.setText('Status: Preparing preview...')
+            self.status_label.setStyleSheet('color: #e5a00d; font-weight: bold;')
         self._start_presentation()
 
     def _on_psb_exposure_changed(self):
@@ -1729,7 +1743,7 @@ class EclipseProcessorApp(QMainWindow):
         update_slider_display(self.prominence_exposure_basic)
         self.prominence_exposure_basic.value_label.setReadOnly(value < 0)
         self.lbl_prominence_ev_retained.setText(
-            f'Advanced exposure {value/100:+.2f} EV is active. Move the slider to select 0 to +5 EV, or use Advanced mode.')
+            f'Saved exposure {value/100:+.2f} EV is active. Move the slider to select 0 to +5 EV, or use Expert.')
         self.lbl_prominence_ev_retained.setVisible(not advanced and value < 0 and self.chk_prominences.isChecked())
 
     def _on_prominence_changed(self, *_):
@@ -1786,6 +1800,14 @@ class EclipseProcessorApp(QMainWindow):
                     self._native_display_revision=self._presentation_revision
                     self._native_filter_revision=self._preview_revision
                 self._install_display_pixels(pixels,native_pixels)
+                if (not colour_error and job.get('ready_status') is not None
+                        and not self.is_processing and self._export_thread is None
+                        and not self.recalculation_timer.isActive() and not self.has_pending_request
+                        and not self.presentation_timer.isActive()
+                        and self.status_label.text() == 'Status: Preparing preview...'):
+                    self.status_label.setText(job['ready_status'])
+                    self.status_label.setStyleSheet('color: #00ff00; font-weight: bold;')
+                    self._log_processing_end('PREVIEW', 'Ready')
         thread.result = None
         thread.args = ()
         thread.deleteLater()

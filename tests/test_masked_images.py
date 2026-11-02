@@ -178,7 +178,7 @@ class MaskedImageTests(unittest.TestCase):
                 np.testing.assert_array_equal(np.isfinite(window.full_raw_image), np.isfinite(image))
                 np.testing.assert_allclose([int(window.txt_x.text()), int(window.txt_y.text()), int(window.txt_r.text())], (140,90,23), atol=1)
                 self.assertFalse(window.combo_input_state.isHidden())  # All sources need transfer-state control.
-                window.combo_input_state.setCurrentIndex(1)
+                window.combo_input_state.setCurrentIndex(window.combo_input_state.findData('linear'))
                 # This normalized-float fixture is deliberately above white=1;
                 # this test checks missing-data export without neutralization.
                 window.chk_calibrate_colour.setChecked(False)

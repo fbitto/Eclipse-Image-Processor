@@ -1,6 +1,6 @@
 # Application architecture
 
-This guide describes the active 0.6.0 implementation. See the [documentation index](README.md) for algorithm and export details.
+This guide describes the active 0.7.0 implementation. See the [documentation index](README.md) for algorithm and export details.
 
 ## Entry point and responsibilities
 
@@ -10,9 +10,11 @@ This guide describes the active 0.6.0 implementation. See the [documentation ind
 | `gui/app.py` | Window, source state, geometry, parameter snapshots and task coordination |
 | `gui/filter_controls.py`, `gui/factories.py`, `gui/components.py` | Filter controls, units, resets and widget construction |
 | `gui/image_view.py` | ROI painting, zoom, panning and overlays |
+| `gui/ui_levels.py` | Basic/Standard/Expert visibility, Basic AEL selection and independent ACHF cards |
 | `gui/background_controls.py`, `gui/background_tasks.py` | Sample editing and asynchronous preparation/presentation jobs |
 | `core/image_data.py` | Observed support, native normalization bounds and support-aware resizing |
 | `core/background.py`, `core/colour.py` | Working-data gradient correction and optional RGB gain calibration |
+| `core/warmth.py` | Enhanced-streamer sky/noise mask and editable presentation warmth layer |
 | `core/pipeline.py`, `core/layer_engine.py` | Resolution adaptation, independent numerical branches and composition |
 | `core/filters.py`, `core/masked_filters.py` | Numerical operators, support-aware paths and persistent `FilterWorker` |
 | `core/nrgf.py`, `core/ael_wow.py`, `core/ael_achf.py` | Bundled AEL-derived filters |
@@ -30,7 +32,7 @@ This guide describes the active 0.6.0 implementation. See the [documentation ind
 3. Establish normalization bounds from the native working image. Filters use float32 mono, with RGB luminance `0.299 R + 0.587 G + 0.114 B`.
 4. Calculate each enabled filter independently from that shared mono input. Numerical branches never receive a preceding filter's output or a presentation curve.
 5. Encode and compose cached layers. Use the PSB presentation base for TIFF/JPEG/layer export; retain the linearly normalized base for optional un-stretched viewport inspection.
-6. Apply RGB presentation using the native calibrated RGB when calibration is enabled, then display-only edge antialias over black.
+6. Apply RGB presentation using the native calibrated RGB when calibration is enabled. Warmth then operates on the enhanced presentation, using Background Gradient sample positions (or a generated grid), even when gradient equalization is off. A robust sky plane and residual-noise estimate from at least six usable patches distinguish visible streamer contrast from sky noise. Features whiter than the sampled sky receive additional support at lower contrast; whiteness is never a required gate, and the cue is disabled when the sky is already neutral. The softly feathered mask has no outer-radius cutoff. Warm only the enhanced luminance excess above that plane, retaining the sky contribution to each RGB pixel and the calibrated baseline at zero warmth. This provides colour independently of faint linear RGB signal; the slider scales its coverage. Original RGB, calibration and automatic exposure remain independent of warmth. PSB/TIFF packages include a separate editable Warmth layer and mask below edge antialias and original prominences. Unsupported samples bypass warmth. This is an artistic heuristic; samples and residual sky gradients still need review. Apply display-only edge antialias over black afterward.
 7. Optionally composite original prominences above the PSB presentation. `original_source_rgb` is retained on load and never replaced by background preparation; this branch bypasses working-source filters and colour gains. Export its black-backed RGB16 and mask separately and keep unmasked RGB with an editable mask in Photoshop. Presented TIFF/JPEG also include the selected prominence composition.
 
 The linear input declaration is an assumption. It does not invert a transfer curve in an already stretched file. Enhanced composites are not photometric linear masters.
@@ -48,6 +50,8 @@ View Original bypasses detail layers but uses the prepared source and selected c
 ## Threads and stale results
 
 The persistent `FilterWorker` runs numerical processing in a QThread. Task threads handle source loading, geometry, background preparation and presentation; `ExportThread` owns export snapshots. Workers operate on arrays and scalar settings, not widgets or QPixmaps. GUI callbacks validate source identities and revisions before accepting results. Load invalidation also occurs with Auto Calculate off.
+
+Numerical completion starts the asynchronous presentation stage; it does not mean the new preview is on screen. The status remains **Preparing preview** until the current presentation installs its display pixels. Only that accepted result can publish **preview ready**; obsolete results cannot clear a pending-settings status. Console status includes running or queued presentation work when reporting whether processing is idle.
 
 Auto Calculate waits 650 ms after numerical edits. Layer-mix edits wait 250 ms after the last edit; PSB presentation edits use a 100 ms timer. Disabled auto mode requires a manual calculation for numerical edits. Closing cancels jobs and waits asynchronously rather than blocking the event loop.
 

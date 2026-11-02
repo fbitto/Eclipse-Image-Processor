@@ -142,17 +142,19 @@ def set_control_visible(control, visible):
 
 def add_advanced_mode(window, header_layout):
     window.chk_advanced = QCheckBox('Advanced mode')
-    window.chk_advanced.setToolTip('Show full filter and presentation controls, including prominence contrast and negative prominence exposure. Hidden settings remain active. Basic WOW noise edits apply to every scale; basic Upsilon edits link both tails.')
-    header_layout.addWidget(window.chk_advanced)
+    window.chk_advanced.setToolTip('Show full filter and presentation controls, including prominence contrast and negative prominence exposure. Hidden settings remain active. Standard WOW noise edits apply to every scale; Standard Upsilon edits link both tails.')
+    # Retain the flag for existing recipes; the visible selector has three levels.
+    window.chk_advanced.setParent(window)
+    window.chk_advanced.hide()
     window.sl_wow_noise, _ = create_slider_float(
         'Noise threshold (all scales, sigma)', 0, 100, 0, 10.,
         window.sec_wow.content_layout,
-        tooltip='Standard/watroo modes: apply this noise threshold to every native wavelet scale. Zero disables noise suppression. Editing replaces individual advanced thresholds.',
+        tooltip='Standard/watroo modes: apply this noise threshold to every native wavelet scale. Zero disables noise suppression. Editing replaces individual Expert thresholds.',
         on_release_callback=lambda: window.on_filter_slider_released(window.sec_wow))
-    window.lbl_advanced_values = QLabel('Individual WOW thresholds or separate RHEF tails remain active. Edit the basic control to link them again.')
+    window.lbl_advanced_values = QLabel('Individual WOW thresholds or separate RHEF tails remain active. Edit the Standard control to link them again.')
     window.lbl_advanced_values.setWordWrap(True)
     window.lbl_advanced_values.setStyleSheet('color: #aaaaaa; font-size: 10px;')
-    window.lbl_advanced_values.setToolTip('Switching modes preserves parameters. Advanced WOW and RHEF values remain active until their basic control is edited.')
+    window.lbl_advanced_values.setToolTip('Switching modes preserves parameters. Expert WOW and RHEF values remain active until their Standard control is edited.')
     header_layout.addWidget(window.lbl_advanced_values)
     advanced = [window.sl_mgn_trunc, *window.sl_mgn_sigmas, *window.sl_mgn_weights,
                 window.sl_wow_scales, *window.sl_wow_denoise,
@@ -203,6 +205,7 @@ def add_advanced_mode(window, header_layout):
     window.sl_wow_scales.valueChanged.connect(update_custom_values)
     window.chk_rhef_symmetric.toggled.connect(update_custom_values)
     window.chk_advanced.toggled.connect(update_visibility)
+    window.update_detail_visibility=update_visibility
     update_visibility(False)
 
 

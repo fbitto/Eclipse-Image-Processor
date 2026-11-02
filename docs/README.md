@@ -1,6 +1,6 @@
 # Technical documentation
 
-Current implementation: Eclipse Image Processor 0.6.0. Updated 26 October 2026 from the application source. The guides below describe the active pipeline; dated reports record earlier experiments and do not override these guides.
+Current implementation: Eclipse Image Processor 0.7.0. Updated 3 November 2026 from the application source. The guides below describe the active pipeline; dated reports record earlier experiments and do not override these guides.
 
 ## Current guides
 
@@ -11,6 +11,7 @@ Current implementation: Eclipse Image Processor 0.6.0. Updated 26 October 2026 f
 | [Layer composition](layer-composition.md) | Independent filters, blend modes, controls and caches |
 | [Background extraction](background-extraction.md) | Sky samples, robust plane fitting and slope subtraction |
 | [Settings JSON](settings.md) | Version 4 schema, restoration and source paths |
+| [Control levels](ui-levels-20261103.md) | Layout, Basic AEL filters and project compatibility |
 | [PSB export](psb-export.md) | Presentation, layer files, verification, colour correction and limits |
 | [AEL ACHF](achf-ael.md) | ISO 01, ISO 04 and Angular implementation |
 | [Larson–Sekanina](larson-sekanina.md) | Rotational residual, Gain and Linear Light encoding |
@@ -22,6 +23,8 @@ Current implementation: Eclipse Image Processor 0.6.0. Updated 26 October 2026 f
 | [Windows validation, 2 November](windows-validation-20261102.md) | Passing regression suite, packaged export/reopen, cross-drive loading, cancellation and native Photoshop checks |
 | [Issue #3 response draft](issue-3-response-draft.md) | Item-by-item local review response; not posted |
 | [Validation](validation.md) | Reproducible checks and the limits of existing evidence |
+| [Streamer-aware warmth, 2 November](streamer-warmth-20261102.md) | Enhanced streamer coverage, neutral-colour support and editable warmth masks |
+| [Earlier warmth/status checks, 2 November](warmth-validation-20261102.md) | Historical linear-signal warmth and active preview-ready status fix |
 | [macOS build](build-macos.md) / [Windows build](build-windows.md) | Platform packaging |
 | [Third-party attribution](../ATTRIBUTIONS.md) | Copied/adapted code and retained licence notices |
 

@@ -1,6 +1,6 @@
 # Third-party code and implementation attributions
 
-Eclipse Image Processor 0.6.0 is developed by Francisco Bitto. Third-party implementation authors retain credit and copyright for their contributions. The application's MIT license does not replace the notices retained for those components. Scientific-method references and other software acknowledgments are listed in the [README credits](README.md#algorithm-credits-scientific-references-and-acknowledgments).
+Eclipse Image Processor 0.7.0 is developed by Francisco Bitto. Third-party implementation authors retain credit and copyright for their contributions. The application's MIT license does not replace the notices retained for those components. Scientific-method references and other software acknowledgments are listed in the [README credits](README.md#algorithm-credits-scientific-references-and-acknowledgments).
 
 ## Agentic Eclipse Library (AEL)
 

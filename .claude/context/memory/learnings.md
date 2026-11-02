@@ -61,3 +61,5 @@
 - Missing-source recovery must catch its own FileNotFoundError subclass, not a missing/corrupt JSON. Validate recipe controls before asking to locate the image; cancel before changing revisions or stopping current work. Keep JSON untouched until explicit save and carry the relocated path into subsequent exports. Try legacy Windows backslash relatives after literal native paths.
 
 - Prominence edge softness uses native pixels and must travel in both presentation jobs and export requests; optional recipe fields restore the historical 3-pixel feather. Keep the slider in both UI modes and gate it with the RGB prominence checkbox.
+
+- Reparent canonical ACHF controls into independent cards rather than duplicating parameter state. Restore card expansion independently from canonical include flags so saved section activation cannot enable an omitted variant. Apply Basic restrictions after recipe restoration and source defaults, batching signals into one pipeline request. Persist UI levels by stable string; translate legacy combo text/index pairs before strict validation.

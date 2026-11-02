@@ -1,11 +1,11 @@
 # Eclipse Image Processor
 
-**Version 0.6.0 · Francisco Bitto**
+**Version 0.7.0 · Francisco Bitto**
 [Source and issues](https://github.com/fbitto/Eclipse-Image-Processor) · [MIT license](LICENSE)
 
 A Python/PySide6 desktop application for enhancing solar-eclipse corona images. Preview, full-resolution verification and export share independent filter layers and Photoshop blend modes. These are visualization products, not calibrated brightness measurements.
 
-![Eclipse Image Processor 0.6.0 showing a full-resolution corona preview and independent filter controls](docs/images/App_Overview.png)
+![Eclipse Image Processor showing a full-resolution corona preview and independent filter controls](docs/images/App_Overview.png)
 
 *Full-resolution verification with independent filter layers.*
 
@@ -22,7 +22,15 @@ python main.py
 
 On Windows, use `python` to create the environment and activate it with `.venv\Scripts\Activate.ps1`. For a macOS app or DMG, see [build instructions](docs/build-macos.md). Local builds are not a notarized public release.
 
-Dependencies: PySide6 (GUI), NumPy/SciPy (numerical processing), OpenCV/Pillow (image handling), Astropy/xisf (astronomical input), tifffile (TIFF), watroo 0.0.4 (WOW), and psd-tools 1.26.0 (PSB). Install the pinned requirements; the PSB writer relies on the specified low-level API. Keep `requirements.txt` and the inline metadata in `main.py` synchronized.
+Windows PowerShell, without activating the environment:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe main.py
+```
+
+Dependencies: PySide6 (GUI), NumPy/SciPy (numerical processing), OpenCV/Pillow (image handling), Astropy/xisf (astronomical input), tifffile (TIFF), watroo 0.0.4 (WOW), and psd-tools 1.26.0 (PSB). Install the listed requirements; the PSB writer relies on the specified low-level API. Keep `requirements.txt` and the inline metadata in `main.py` synchronized.
 
 ## Build a standalone application
 
@@ -50,11 +58,11 @@ The menu-bar/notification-area icon appears when the desktop supports a system t
 
 ## Process an image
 
-1. **Open Image / Settings:** open TIFF, FITS, XISF, PNG, JPEG or BMP, or reopen a settings JSON. TIFF input must be a single-page mono or RGB(A) image; multi-page/volume layouts are rejected. Images must be at least 4 × 4 pixels. Prefer an original linear image. **Input: linear** is an assumption you must check; choosing another input state does not undo a previous stretch.
+1. **Open Image / Settings:** open TIFF, FITS, XISF, PNG, JPEG or BMP, or reopen a settings JSON. TIFF input must be a single-page mono or RGB(A) image; multi-page/volume layouts are rejected. Images must be at least 4 × 4 pixels. Under **Preparation**, declare **Input type** as **Linear** or **Non-linear (stretched)**. Linear is the default; there is no automatic detection. Prefer original linear data. This declaration does not undo stretching.
 2. **Check disk geometry:** inspect the red circle and adjust Center X, Center Y and Radius in original-image pixels. Use **Auto-detect Lunar Disk** or Ctrl-click / Command-click to move the center. A missing-data boundary can be larger than the physical Moon. The adjacent **Disk overlay** button shows or hides the red circle and cross without recalculating the image; both are visible when opening an image.
-3. **Adjust the presentation:** the PSB preview starts enabled. Use PSB Exposure (EV) to adjust the automatic presentation, or double-click the slider to restore 0 EV.
+3. **Choose Controls and Appearance:** the selector near the status area offers Basic, Standard (default) and Expert. Basic limits filters and controls; entering it disables excluded filters without clearing their numeric settings. In **Appearance**, adjust **Exposure (EV)**, optionally enable **Calibrate color** for linear RGB, then adjust **Warmth**. The presentation preview starts enabled; double-click Exposure to restore 0 EV.
 4. **Activate and adjust layers:** expand a filter section to edit its controls, and check **Active** to include it. Expanding the section alone does not activate it. Use **Opacity** to mix its layer with the composition; changes recompose cached layers after a short pause. Larson–Sekanina additionally exposes **Gain**, which scales its signed detail before Linear Light clipping.
-5. **Choose ACHF variants:** enable the ACHF section's **Active** checkbox, select a variant to edit, then check **Include in composition** (or **Include Adaptive in composition**). The selector only changes the editing panel; several variants can be included together, each with its own opacity.
+5. **Choose ACHF variants:** each variant has a separate card with its own **Active** checkbox and opacity. Several can be active together. Basic offers ISO 04 and Angular; Standard and Expert also offer Adaptive and ISO 01.
 6. **Inspect detail:** use **Fit**, **50%**, **100%** or **200%** above the image. See the viewing instructions below.
 7. **Save:** choose **Save Settings Only** for a JSON, or **Export Final Image** for the full-resolution presented RGB16 TIFF, JPEG, settings JSON and float32 working-source package. Enable **Also export editable Photoshop layers** to add a layered PSB or TIFF package.
 
@@ -62,11 +70,11 @@ The menu-bar/notification-area icon appears when the desktop supports a system t
 
 **Fit** uses the fast preview, at most 1500 pixels on its longest side. **50%** calculates filters at half the original width and height (one quarter of the pixels), with a separate preview cache. **100%** and **200%** request native filter calculations in the background when needed; subsequent zooming and panning reuse the rendered pixels. Percentages refer to physical screen pixels, including Retina displays. At 200%, pixels are enlarged without smoothing. The 50% cache is never used as a full-resolution export result. The first native calculation can take time; pending views are labelled until ready.
 
-At 50%, 100% or 200%, drag, scroll or use arrow keys to pan. While editing sky samples, use middle-drag for panning. Ctrl-click / Command-click moves the disk center. Returning to Fit restores fast numerical editing unless **Full-resolution verification preview** is checked.
+At 50%, 100% or 200%, drag, scroll or use arrow keys to pan. While editing sky samples, use middle-drag for panning. Ctrl-click / Command-click moves the disk center. Returning to Fit restores fast numerical editing unless **Full-resolution preview** is checked.
 
 Fast preview, native verification and export share normalization levels measured on the native working image, including background correction. Fast filters remain approximate, but resizing does not independently choose a different brightness window. RGB color and optional calibration appear in both preview modes.
 
-**View Original** bypasses detail filters while retaining enabled background equalization, color calibration and the selected presentation. Uncheck **Calibrate color** to inspect uncalibrated color; disable background equalization too to inspect the source without that correction. Turn **Preview PSB presentation** off to inspect the un-stretched view. PSB Exposure controls presented TIFF/JPEG and layer-export presentation; this toggle changes only the viewport.
+**View Original** bypasses detail filters while retaining enabled background equalization, color calibration and the selected presentation. Uncheck **Calibrate color** to inspect uncalibrated color; disable background equalization too to inspect the source without that correction. Turn **Preview PSB presentation** off to inspect the un-stretched view. Exposure controls presented TIFF/JPEG and layer-export presentation; this toggle changes only the viewport.
 
 **Background Gradient** is optional and off by default. On linear inputs, enable **Equalize background gradient**, choose a coronal exclusion radius and review **Show / edit sky samples**. The initial six-disk-radius exclusion is a starting point, not a guarantee of empty sky. Green squares are sky samples; the dashed yellow circle excludes the corona and lunar disk. Left-click adds a sample, right-click removes a nearby one, and middle-drag pans while editing. Changing radius or grid density regenerates samples. In manual mode, press Calculate to apply changes.
 
@@ -76,11 +84,13 @@ Default opacities are NRGF 40%, WOW and all AEL ACHF variants 10%, FNRGF/MGN/RHE
 
 The first direct image load enables FNRGF, MGN, AEL guided edge-aware WOW, ACHF ISO 04 and ACHF Angular. Other filters start disabled/excluded. Later direct image loads preserve all filter edits and activation states; a JSON load restores its own settings and leaves omitted filters disabled. See the [complete defaults table](docs/layer-composition.md#layer-order-and-initial-controls).
 
-Settings JSON version 4 records the current controls. Only this version is accepted; older settings are not migrated. Larson–Sekanina Gain is stored separately from opacity.
+In Basic, FNRGF and all other excluded filters remain off, including on a new image load. Basic selects the available AEL variants and preserves the five visible filters' activation states; it does not automatically enable NRGF. Returning to Standard or Expert does not restore previously disabled filters. A note below Controls reports this behavior.
+
+Settings JSON version 4 records the current controls. Only schema version 4 is accepted. Earlier v4 control layouts are supported: the old Advanced flag maps to Standard or Expert, and unspecified input defaults to Linear. Larson–Sekanina Gain is stored separately from opacity.
 
 **Auto Calculate** waits 650 ms after numerical edits. Turn it off to edit several parameters, then use the manual calculation button. Disabling and re-enabling an unchanged filter reuses its cached layer. Native verification layers are reused for export while the source and filter settings match. Independent filters run in parallel within CPU and memory limits.
 
-The numeric fields are editable. Double-click a slider to restore its default. The mouse wheel scrolls the panel without changing values. Hover for an English tooltip; **Advanced mode** reveals additional settings without resetting hidden values.
+The numeric fields are editable. Double-click a slider to restore its default. The mouse wheel scrolls the panel without changing values. Hover for an English tooltip; **Controls** near the top selects Basic, Standard or Expert. Basic offers NRGF, MGN, AEL edge-aware WOW, ACHF ISO 04 and ACHF Angular with opacity controls. It disables other filters while retaining numeric settings; returning to Standard or Expert does not enable them again. Standard offers all filters with common controls; Expert reveals all parameters.
 
 ### Before and after
 
@@ -107,7 +117,7 @@ Every filter starts from the **shared working mono input**, including optional b
 
 MGN defaults to sigmas **1.25, 2.5, 5, 10, 20 and 40 original-image pixels**, weights 1, gamma 3.2, k 0.7, h 0.7 and truncation 3. The sliders always show original-image units; only the internal preview sigmas are reduced; unresolved bands below 0.5 target pixels are omitted. Other controls labelled **preview px** scale up for native processing; angular values remain in degrees.
 
-The ACHF selector chooses which variant to **edit**. Its Include checkboxes enable any combination; the ACHF section's Active checkbox gates the whole family. Each variant retains its own settings. All active ACHF variants are automatically included in layer export; inactive ones are omitted. Angular's default angular sigma is a parameter, not part of its name.
+ACHF cards independently enable any combination of variants. Each retains its own settings and opacity. All active ACHF variants are automatically included in layer export; inactive ones are omitted. Angular's default angular sigma is a parameter, not part of its name.
 
 Each filter has its own **Opacity**; there is no global Reveal slider. Increase enhancement cautiously: more contrast can reveal noise and processing artifacts as well as structure.
 
@@ -117,11 +127,13 @@ Current guides: [technical documentation index](docs/README.md), [layer composit
 
 **Preview PSB presentation** starts enabled. Its controls sit above the export options and remain usable when layer export is off. The presentation uses per-channel Asinh strength 10 and a shared 0.9 highlight shoulder, following AEL 1.3.3. Automatic scale selection uses P99.5 of positive native luminance outside 1.2 lunar radii; this estimate is an application heuristic, not an AEL default.
 
-**PSB Exposure (EV)** adjusts the presentation from −6 to +6 stops. Double-click the slider to restore 0 EV. The value is saved in JSON and affects presented TIFF/JPEG and layer export. Switch presentation off to inspect the un-stretched working composition in the viewport; exports remain presented. Native verification is authoritative; reduced preview is approximate.
+**Exposure (EV)** adjusts the presentation from −6 to +6 stops. Double-click the slider to restore 0 EV. The value is saved in JSON and affects presented TIFF/JPEG and layer export. Switch presentation off to inspect the un-stretched working composition in the viewport; exports remain presented. Native verification is authoritative; reduced preview is approximate.
+
+In **Appearance**, **Calibrate color** balances channel spans for linear RGB using gains, preserving channel ratios through a shared highlight scale. It is not photometric or ICC calibration. **Warmth**, immediately below it, warms the enhanced corona and streamers while protecting sampled sky color. Start low and inspect the sky and inner corona. It requires RGB and at least six usable sky patches spread across the image; review them in Preparation → Background Gradient, even if equalization is off. Warmth is shared by preview and export and has an editable mask in Photoshop layers. Original prominences use their own color controls.
 
 The PSB contains a hidden **Scaled input preview (16-bit)**, storing the working RGB (including enabled calibration/background correction) or mono input divided by its recorded storage scale. Negative values clip in this 16-bit reference; floating working-source and validity files preserve numerical mono input information. This quantized preview is not a recoverable linear master. Use the companion float32 working sources and validity for numerical data. See [presentation and export details](docs/psb-export.md).
 
-**Export original prominences and chromosphere** optionally creates a dark image from the originally loaded RGB, before background extraction, filters or colour calibration. Its independent **Prominences (EV)** exposure runs from 0 to +5 in Basic mode and −3 to +5 in Advanced mode (new-session default 0), relative to the original red limb highlights. Negative values in older recipes remain active, with a notice in Basic mode until you edit them. Advanced **Prominence contrast** runs from 0.5 to 2.0 (default 1.0), adjusting the separate soft highlight curve without changing the mask. Preview the image on black or its mask with the selector below it. In composition view it appears with PSB presentation; presented TIFF/JPEG include the selected prominence layer.
+**Export original prominences and chromosphere** optionally creates a dark image from the originally loaded RGB, before background extraction, filters or colour calibration. Its independent **Prominences (EV)** exposure runs from 0 to +5 in Basic and Standard modes and −3 to +5 in Expert mode (new-session default 0), relative to the original red limb highlights. Negative values in older recipes remain active, with a notice in Basic or Standard mode until you edit them. Expert **Prominence contrast** runs from 0.5 to 2.0 (default 1.0), adjusting the separate soft highlight curve without changing the mask. Preview the image on black or its mask with the selector below it. In composition view it appears with PSB presentation; presented TIFF/JPEG include the selected prominence layer.
 
 The automatic mask selects red excess with soft transitions and an outer fade from 1.3 to 1.5 lunar radii. Its colour score discounts yellow/orange continuum so a warm corona does not become a dark ring when the low-exposure layer is blended. It does not exclude the lunar disk geometrically: observed pixels inside the fitted circle remain available, and original dark lunar signal stays faint. Review it for noise, colour casts and correct geometry; this is an editable presentation selection, not a physical separation of emissions. Monochrome input cannot supply original red prominences. Saturated colour or pixels already removed from the loaded HDR cannot be recovered by lowering exposure.
 
@@ -182,7 +194,7 @@ NRGF, guided WOW, all three AEL ACHF variants and global continuous RHEF are ver
 
 | Project / authors | Contribution to this application |
 | --- | --- |
-| [sunkit-image](https://github.com/sunpy/sunkit-image), the SunPy community and contributors | Numerical implementation reference for MGN, FNRGF, RHEF and Upsilon, particularly version 0.7.0. The array implementations here follow the documented conventions with application-specific masks, mappings and layer encoding. SunPy and sunkit-image are reference projects, not application runtime dependencies. See their [documentation](https://docs.sunpy.org/projects/sunkit-image/en/stable/) and [license](https://github.com/sunpy/sunkit-image/blob/main/LICENSE). |
+| [sunkit-image](https://github.com/sunpy/sunkit-image), the SunPy community and contributors | Numerical implementation reference for MGN, FNRGF, RHEF and Upsilon, particularly version 0.6.0. The array implementations here follow the documented conventions with application-specific masks, mappings and layer encoding. SunPy and sunkit-image are reference projects, not application runtime dependencies. See their [documentation](https://docs.sunpy.org/projects/sunkit-image/en/stable/) and [license](https://github.com/sunpy/sunkit-image/blob/main/LICENSE). |
 | [watroo / wavelets](https://github.com/frederic-auchere/wavelets), Frédéric Auchère and contributors | Direct runtime backend for standard and bilateral WOW, B3-spline à trous decomposition and wavelet noise tools; pinned to `watroo==0.0.4`. The explicit-mask path is an application-specific normalized-starlet variant, not an identical implementation. See the upstream [MIT license](https://github.com/frederic-auchere/wavelets/blob/master/LICENSE.rst). |
 | [tse-tools / eclipsetools](https://github.com/naavis/eclipsetools), Samuli Vuorinen (`naavis`) | The optional RGB gain-only neutralization derives its P1/P99 span estimates from `color_calibrate` at [revision `14ae3f7`](https://github.com/naavis/eclipsetools/blob/14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391/src/eclipsetools/commands/utils.py), adding explicit nonfinite-data handling and application integration. The current version applies gains only, omitting upstream background subtraction and pedestal shifts. Copyright © 2025 Samuli Vuorinen; the [MIT notice is retained locally](docs/third-party/eclipsetools-MIT.txt). The upstream package is not required at runtime. |
 | [Agentic Eclipse Library (AEL)](https://github.com/PeterWar/Agentic-Eclipse-Library), **Pere Guerra Serra** (`PeterWar` / Peter War) | **Source code copied and adapted from AEL 1.3.3** for ACHF **ISO 01, ISO 04 and Angular** in `core/ael_achf.py`: radial log-profile fitting, Gaussian/support routines, angular/polar processing and MAD/tanh layer encoding. NRGF (`core/nrgf.py`) adapts AEL through 1.4.1; guided edge-aware WOW (`core/ael_wow.py`) and ACHF are verified through current 1.4.1. Global continuous RHEF (`core/radial_continuous.py`) now adapts current AEL reference arithmetic; its numerical API retains the independent float64 path. The presentation tone curve (`core/presentation.py`) follows 1.3.3. The production PSB writer in `core/psb_export.py` copies and adapts AEL’s low-level 16-bit document/layer routines. The research probe directly imports the installed AEL writer. Copyright © 2026 Pere Guerra Serra, MIT; [full attribution](ATTRIBUTIONS.md) and [retained license](docs/third-party/AEL-MIT.txt). Earlier research on continuous RHEF used AEL 1.3.2 as a reference; see [historical comparison](docs/ael-filter-review.md). The adapted ACHF and PSB code is bundled; the upstream package is not required for the application, but is required by the opt-in PSB probe. |
@@ -217,6 +229,6 @@ Each upstream project retains its own copyright and license. Scientific citation
 
 Report reproducible problems through [GitHub Issues](https://github.com/fbitto/Eclipse-Image-Processor/issues), including Python and dependency versions, operating system, filter settings and terminal errors.
 
-When citing the software, identify Francisco Bitto, *Eclipse Image Processor*, **v0.6.0** (or the exact release/commit used) and the repository URL. Include the relevant scientific-method citations above for the filters used.
+When citing the software, identify Francisco Bitto, *Eclipse Image Processor*, **v0.7.0** (or the exact release/commit used) and the repository URL. Include the relevant scientific-method citations above for the filters used.
 
 Licensed under the [MIT License](LICENSE).

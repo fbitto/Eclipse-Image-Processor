@@ -4,7 +4,7 @@
 
 ## Layer order and initial controls
 
-These are the prepared defaults for the first direct image load. Geometry-dependent filter heuristics are evaluated for that image; this table is not a universal numerical recipe.
+These are the prepared defaults for the first direct image load in Standard or Expert. Basic disables FNRGF and every filter outside its five-card selection, without automatically activating NRGF. Geometry-dependent filter heuristics are evaluated for that image; this table is not a universal numerical recipe.
 
 | Layer | Fixed mode | Initially active/included | Opacity | Gain |
 | --- | --- | --- | ---: | ---: |
@@ -22,7 +22,7 @@ These are the prepared defaults for the first direct image load. Geometry-depend
 
 Larson–Sekanina exposes Gain from 0 to 200%; tangential detail and adaptive ACHF also retain their operator-specific gain controls. The Larson–Sekanina radial increment is fixed at zero and angular increment starts at 3°. Other numerical branches run at internal strength 100 and expose opacity rather than redundant strength sliders. Opacity mixes a cached layer; Gain changes Larson–Sekanina encoding before Linear Light clipping and therefore invalidates that layer.
 
-ACHF's selector chooses the variant to edit. Its Include controls independently enable variants, and the master Active checkbox gates the family. ISO 04 is initially selected for editing. Switching panels preserves each variant's parameters and opacity.
+ACHF variants have separate Active cards with independent parameters and opacity. Basic shows ISO 04 and Angular; Standard and Expert expose all four variants. Expanding a card does not activate it.
 
 Directly opening another image preserves all filter parameters, activations and inclusion flags, including settings restored from JSON. Geometry is detected again; initial filter heuristics are not reapplied. Loading current JSON instead resets/restores its controls; absent filters remain disabled. See [settings](settings.md).
 

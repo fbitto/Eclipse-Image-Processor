@@ -128,8 +128,6 @@ def render_snapshot(job):
                     rgb, report = job['neutralize'](rgb, job['white'])
                 except ValueError as error:
                     colour_error = str(error)
-            from core.colour import warm_colour
-            rgb = warm_colour(rgb, job.get('warmth', 0.))
             colour_cache = (rgb, None, report)
         rgb = colour_cache[0]
         if job.get('psb_preview'):
@@ -165,6 +163,10 @@ def render_snapshot(job):
                 final=resize_observed(final,(source.shape[1],source.shape[0]))
         if rgb is not None:
             final=job['set_luminosity'](colour_display(rgb,source,composition_settings(display)),final)
+    if rgb is not None:
+        from core.warmth import warmth_layer, blend_warmth
+        final = blend_warmth(final, warmth_layer(final, job.get('warmth',0.), job.get('warmth_background'),
+                            native_shape=job['rgb'].shape[:2], valid=np.isfinite(source)))
     final = finish_presentation(final, engine.edge_alpha(source, params))
     if job.get('prominences_enabled') and job.get('original_rgb') is not None:
         from core.prominences import prominence_settings, prominence_layer

@@ -30,7 +30,7 @@ The core reader remains usable without a GUI: missing sources raise `MissingSour
 
 ## GUI snapshot
 
-`gui/project_settings.py` validates exactly these top-level settings keys: `background_samples`, `controls`, `sections`, `geometry`, `auto_calculate`.
+`gui/project_settings.py` validates these top-level settings keys: `background_samples`, `controls`, `sections`, `geometry`, `auto_calculate`, `ui_mode`. The mode is `basic`, `standard` or `expert`; older v4 snapshots infer Standard or Expert from their Advanced checkbox.
 
 - Controls identify widget kind and value; combo boxes also carry validated text/index information. Slider values use raw integer ticks, not formatted physical-unit labels.
 - Non-filter/global controls are required. Filter controls and sections can be omitted: filters reset to prepared defaults first, absent filter sections remain disabled, and absent ACHF Include flags remain unchecked. Previous-image edits are never inherited for omitted filters.
@@ -57,4 +57,4 @@ Exports now use the PSB presentation for TIFF/JPEG regardless of the viewport to
 
 ## Prominence control compatibility
 
-Prominence contrast is optional in older v4 recipes and restores to 1.0 when omitted. The new-session exposure is 0 EV; legacy recipes preserve saved negative EV values, including the historical −2 EV fallback when the exposure field is absent. Basic exposure edits cover 0…+5 EV, while Advanced permits −3…+5 EV. A saved negative exposure remains active when switching to Basic, with a visible notice; moving the Basic control explicitly replaces it. Mode changes do not alter exposure or hidden contrast. Preview and export use that same saved exposure and contrast.
+Prominence contrast is optional in older v4 recipes and restores to 1.0 when omitted. The new-session exposure is 0 EV; legacy recipes preserve saved negative EV values, including the historical −2 EV fallback when the exposure field is absent. Basic and Standard exposure edits cover 0…+5 EV, while Expert permits −3…+5 EV. A saved negative exposure remains active when switching to Basic or Standard, with a visible notice; moving the limited-range control explicitly replaces it. Mode changes do not alter exposure or hidden contrast. Preview and export use that same saved exposure and contrast.

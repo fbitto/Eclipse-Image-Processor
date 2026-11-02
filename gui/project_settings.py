@@ -1,5 +1,6 @@
 """Capture raw UI ticks, including hidden/advanced controls and ACHF panels."""
 import math
+from copy import deepcopy
 from PySide6.QtWidgets import QAbstractButton,QComboBox,QSlider
 from .components import CollapsibleSection
 
@@ -29,13 +30,14 @@ def capture_settings(window):
         for name,widget in vars(window).items() if isinstance(widget,CollapsibleSection)}
     return dict(background_samples=([list(p) for p in window.background.points] if window.background.points is not None else None),controls=values,sections=sections,
                 geometry={key:getattr(window,'txt_'+key).text() for key in ('x','y','r')},
-                auto_calculate=window.auto_calculate)
+                auto_calculate=window.auto_calculate,ui_mode=window.ui_level.currentData())
 
 
 
 def filter_widgets(window):
     from core.layer_engine import ORDER
     sections=[getattr(window,'sec_'+name) for name in (*ORDER,'achf')]
+    sections += list(getattr(window,'achf_cards',{}).values())
     return {name:widget for name,widget in controls(window).items()
             if any(section.isAncestorOf(widget) for section in sections)}
 
@@ -96,9 +98,44 @@ def reset_filter_defaults(window, *, ael=False):
         window.presentation_timer.stop()
 
 
+def _normalized_settings(window,settings):
+    """Import current v4 recipes without reinterpreting selector indices."""
+    if not isinstance(settings,dict):return settings
+    result=deepcopy(settings)
+    values=result.get('controls',{})
+    if not isinstance(values,dict):return result
+    old=values.get('combo_input_state')
+    if isinstance(old,dict):
+        mapping={(0,'Input: linearity unspecified'):'linear',(1,'Input: linear'):'linear',
+                 (2,'Input: already stretched / nonlinear'):'nonlinear'}
+        state=(mapping.get((old.get('value'),old.get('text')))
+               if type(old.get('value')) is int and isinstance(old.get('text'),str) else None)
+        if state is not None:
+            index=window.combo_input_state.findData(state)
+            values['combo_input_state']=dict(kind=old.get('kind'),value=index,
+                                             text=window.combo_input_state.itemText(index))
+    if 'ui_mode' not in result:
+        advanced=values.get('chk_advanced',{})
+        result['ui_mode']='expert' if isinstance(advanced,dict) and advanced.get('value') is True else 'standard'
+    sections=result.get('sections',{})
+    if isinstance(sections,dict) and isinstance(sections.get('sec_achf'),dict) and sections['sec_achf'].get('active') is False:
+        # Old include flags under a disabled parent were not active filters.
+        for name,record in values.items():
+            if name=='chk_achf_adaptive' or (name.startswith('achf_ael_controls.') and name.endswith('.enabled')):
+                if isinstance(record,dict) and record.get('kind')=='check' and type(record.get('value')) is bool:
+                    record['value']=False
+        for name,record in sections.items():
+            if name.startswith('sec_achf_') and isinstance(record,dict) and type(record.get('active')) is bool:
+                record['active']=False
+    return result
+
+
 def validate_settings(window,settings):
-    if not isinstance(settings,dict) or set(settings) != {'background_samples','controls','sections','geometry','auto_calculate'}:
+    settings=_normalized_settings(window,settings)
+    if not isinstance(settings,dict) or set(settings) != {'background_samples','controls','sections','geometry','auto_calculate','ui_mode'}:
         raise ValueError('Settings do not match the current format')
+    if settings['ui_mode'] not in ('basic','standard','expert'):
+        raise ValueError('Unknown interface level')
     widgets=controls(window)
     values=settings.get('controls')
     if isinstance(values,dict):
@@ -145,6 +182,7 @@ def validate_settings(window,settings):
 
 def restore_settings(window,settings, *, source_shape=None):
     """Apply a recipe atomically, including ranges changed by selector callbacks."""
+    settings=_normalized_settings(window,settings)
     validate_settings(window,settings)
     previous=capture_settings(window)
     ranges={name:(widget.minimum(),widget.maximum()) for name,widget in controls(window).items()
@@ -201,11 +239,19 @@ def _apply_settings(window,settings):
             if record['kind']=='check':widgets[name].setChecked(record['value'])
         for name,record in settings['sections'].items():
             section=getattr(window,name)
-            if section.chk_active is not None:section.chk_active.setChecked(record['active'])
+            # ACHF inclusion is canonical in controls; cards persist expansion only.
+            if section.chk_active is not None and section not in window.achf_cards.values():
+                section.chk_active.setChecked(record['active'])
             if section.is_expanded!=record['expanded']:section.toggle_expanded()
         for name,record in values.items():
             if record['kind']=='slider' and widgets[name].value()!=record['value']:
                 raise ValueError(f'Saved value is outside the supported range: {name}')
+        from PySide6.QtCore import QSignalBlocker
+        from .ui_levels import sync_achf_master
+        sync_achf_master(window)
+        with QSignalBlocker(window.ui_level):
+            window.ui_level.setCurrentIndex(window.ui_level.findData(settings['ui_mode']))
+        window.apply_ui_level(recalculate=False)
         window.auto_calculate=settings['auto_calculate']
         window.btn_auto_calc.setChecked(window.auto_calculate)
         window.btn_auto_calc.setText('Auto Calculate' if window.auto_calculate else 'Man Calc')

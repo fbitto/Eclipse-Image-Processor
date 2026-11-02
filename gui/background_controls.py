@@ -59,6 +59,12 @@ class BackgroundExtraction(QObject):
     def geometry(self):
         return tuple(float(getattr(self.w,'txt_'+key).text()) for key in ('x','y','r'))
 
+    def warmth_parameters(self):
+        """Copy native sky sampling settings for preview/export worker snapshots."""
+        return dict(geometry=self.geometry(), radius=self.w.sl_background_radius.value()/10,
+                    grid=self.w.sl_background_grid.value(),
+                    points=None if self.points is None else list(self.points))
+
     def invalidate(self,regenerate=True):
         w=self.w
         if getattr(w,'_restoring_settings',False):return
@@ -69,6 +75,7 @@ class BackgroundExtraction(QObject):
                                         'Disabled — recalculate to restore original input.')
             w.dispatch_pipeline_request_if_auto()
         self.overlay()
+        w.on_colour_changed()
 
     def generate(self):
         w=self.w

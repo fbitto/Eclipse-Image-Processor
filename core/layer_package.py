@@ -18,6 +18,7 @@ import tifffile
 
 from .cancellation import check_cancelled
 from .colour import set_luminosity
+from .warmth import warmth_layer, blend_warmth
 from .image_data import recipe_parameters, zero_missing
 from .layer_engine import engine_for, requests, opacity, LABELS
 
@@ -82,7 +83,7 @@ def _inputs(source, params, rgb):
 
 
 def _produce_layers(worker, source, valid, params, display, rgb, colour_report, prominences, emit,
-                    base_colour=None):
+                    base_colour=None, warmth=0., warmth_background=None):
     """Compute every layer in Photoshop order and pass it to ``emit``.
 
     ``source``, ``valid`` and ``rgb`` come from _inputs. ``emit(name,
@@ -136,6 +137,16 @@ def _produce_layers(worker, source, valid, params, display, rgb, colour_report, 
         emit('RGB_Color',tuple(color_u16[..., c] for c in range(3)),observed_alpha,
              dict(filter='colour',mode='Color',opacity=1.,opacity_255=255,visible=True))
         combined=set_luminosity(color,combined)
+        tint = warmth_layer(combined,warmth,warmth_background,valid=valid)
+        if tint is not None:
+            image,mask = tint
+            emit('WARMTH_Normal',tuple(image[...,c] for c in range(3)),None,
+                 dict(name='Warmth - enhanced corona',filter='warmth',mode='Normal',opacity=1.,
+                      opacity_255=255,visible=True,mask_file='WARMTH_MASK.tif',amount=warmth,
+                      normalization=dict(method='robust sampled sky plane; enhanced contrast and neutral-colour support',
+                                         coverage_sigma=[2.5,6.],neutral_sigma=[1.5,3.],native_shape=list(source.shape),
+                                         sampling=warmth_background)),mask=mask)
+            combined=blend_warmth(combined,tint)
     from .presentation_edges import finish_presentation, EDGE_WIDTH_NATIVE_PX
     edge=engine.edge_alpha(source,params)
     if edge is not None:
@@ -175,7 +186,7 @@ def _recipe(source, records, params, display, original_path, colour_report, prom
 
 
 def build_layer_package(worker, source, params, display, original_path, rgb=None, colour_report=None,
-                        prominences=None, base_colour=None):
+                        prominences=None, base_colour=None, warmth=0., warmth_background=None):
     """Every layer of the export in memory, in Photoshop order, with the recipe of the TIFF route.
 
     For core.psb_export.export_psb_layers. The rows name the files a TIFF
@@ -190,7 +201,7 @@ def build_layer_package(worker, source, params, display, original_path, rgb=None
         row=dict(order=len(layers)+1,file=f'{len(layers)+1:02d}_{name}.tif',**fields)
         layers.append(PackageLayer(row,planes,alpha,mask))
     display,params,combined,corona=_produce_layers(worker,source,valid,params,display,rgb,colour_report,
-                                                   prominences,keep,base_colour)
+                                                   prominences,keep,base_colour,warmth,warmth_background)
     recipe=_recipe(source,[layer.record for layer in layers],params,display,original_path,
                    colour_report,prominences)
     package=LayerPackage(source.shape,layers,quantize_u16(combined),recipe,
@@ -200,7 +211,8 @@ def build_layer_package(worker, source, params, display, original_path, rgb=None
 
 
 def export_layered_package(worker, source, params, display, original_path, destination,
-                           rgb=None, colour_report=None, prominences=None, base_colour=None):
+                           rgb=None, colour_report=None, prominences=None, base_colour=None,
+                           warmth=0., warmth_background=None):
     from .layer_export import to_u16, photoshop_loader
     from .color_correction import srgb_profile
     profile=srgb_profile()
@@ -236,7 +248,7 @@ def export_layered_package(worker, source, params, display, original_path, desti
         print(f'[LAYER {name}: TIFF WRITE] Done in {time.perf_counter()-timer:.3f}s')
     try:
         display,params,combined,corona=_produce_layers(worker,source,valid,params,display,rgb,colour_report,
-                                                       prominences,write,base_colour)
+                                                       prominences,write,base_colour,warmth,warmth_background)
         timer=time.perf_counter()
         if corona is not None:
             tifffile.imwrite(stage/'CORONA_COMBINED.tif',to_u16(corona),photometric='rgb',compression='zlib',metadata=None,

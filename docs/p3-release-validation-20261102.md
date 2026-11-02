@@ -12,7 +12,7 @@ Base source: 5cfe084, with two tooltip-only corrections found during the bundled
 
 ## macOS build and package checks
 
-Environment: macOS 27.2 arm64, Python 3.14.9, PyInstaller 6.22.3. Application/bundle version: 0.6.0. The final build used `scripts/build_macos.py --dmg`. App and installer outputs are ignored by Git.
+Environment: macOS 27.2 arm64, Python 3.14.9, PyInstaller 6.22.3. Historical pre-0.7.0 application/bundle; these checks do not validate a rebuilt 0.7.0 package. The final build used `scripts/build_macos.py --dmg`. App and installer outputs are ignored by Git.
 
 - `dist/Eclipse Image Processor.app`: Apple Silicon arm64 executable; ad-hoc signature passed `codesign --verify --deep --strict`.
 - `dist/Eclipse Image Processor.dmg`: **155,744,738 bytes**; `hdiutil verify` passed.

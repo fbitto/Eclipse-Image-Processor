@@ -118,6 +118,60 @@ class GuiResponsivenessTests(unittest.TestCase):
         finally:
             release.set();timer.stop()
 
+    def test_ready_status_waits_for_current_preview_pixels(self):
+        w = self.w
+        w.render_matrix_to_screen()
+        wait_for_gui(w)
+        w.request_processing_signal.disconnect()
+        previous = w.last_preview_presentation
+        entered, release = Event(), Event()
+        def blocked(job):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError('Test did not release presentation')
+            return render_snapshot(job)
+        try:
+            with patch('gui.app.render_snapshot', side_effect=blocked):
+                w.on_processing_finished(np.full_like(w.raw_image, .4))
+                deadline = time.monotonic()+2
+                while not entered.is_set() and time.monotonic()<deadline:QTest.qWait(10)
+                self.assertTrue(entered.is_set())
+                self.assertIn('Preparing preview', w.status_label.text())
+                self.assertIs(w.last_preview_presentation, previous)
+                with patch('builtins.print') as output:
+                    w._log_processing_end('FILTERS', 'Calculated')
+                    self.assertIn('Another process is running', output.call_args.args[0])
+                # Supersede this display job; only its successor may publish ready.
+                w.render_matrix_to_screen()
+                release.set();wait_for_gui(w)
+            self.assertIn('preview ready', w.status_label.text())
+            self.assertIsNot(w.last_preview_presentation, previous)
+            w.toggle_compare_mode(True);wait_for_gui(w)
+            self.assertEqual(w.status_label.text(), 'Status: Showing Original')
+        finally:
+            release.set()
+
+    def test_obsolete_presentation_does_not_replace_pending_settings_status(self):
+        w = self.w
+        wait_for_gui(w)
+        entered, release = Event(), Event()
+        def blocked(job):
+            entered.set()
+            if not release.wait(5):raise AssertionError('Test did not release presentation')
+            return render_snapshot(job)
+        try:
+            with patch('gui.app.render_snapshot', side_effect=blocked):
+                w.on_processing_finished(np.full_like(w.raw_image, .4))
+                deadline = time.monotonic()+2
+                while not entered.is_set() and time.monotonic()<deadline:QTest.qWait(10)
+                self.assertTrue(entered.is_set())
+                w.dispatch_pipeline_request_if_auto()
+                self.assertIn('recalculate', w.status_label.text())
+                release.set();wait_for_gui(w)
+            self.assertIn('recalculate', w.status_label.text())
+        finally:
+            release.set()
+
     def test_loading_runs_decoder_and_detection_outside_gui_thread(self):
         w = self.w
         gui_thread = QThread.currentThread()

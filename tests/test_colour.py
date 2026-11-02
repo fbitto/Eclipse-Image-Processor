@@ -29,6 +29,57 @@ class ColourTests(unittest.TestCase):
         for bad in (-1,2,np.nan):
             with self.assertRaises(ValueError):warm_colour(rgb,bad)
 
+    def test_warmth_preserves_blue_green_sky_and_warms_corona(self):
+        sky = np.array([.04, .08, .1])
+        signal = np.array([0., .001, .02, .5])[:, None]
+        rgb = (sky + signal)[None, ...]
+        for amount in (0., .5, 1.):
+            gains = np.array([1., 1.-.3*amount, 1.-.8*amount])
+            with self.subTest(amount=amount):
+                # The old global gains lower sky B/G: a cyan sky becomes greener.
+                legacy = warm_colour(rgb, amount)
+                self.assertLessEqual(legacy[0, 0, 2]/legacy[0, 0, 1], sky[2]/sky[1])
+                result = warm_colour(rgb, amount, sky_rgb=sky)
+                ideal = (sky + signal*gains)[None, ...]
+                self.assertTrue((result >= ideal-1.e-15).all())
+                self.assertTrue((result <= rgb+1.e-15).all())
+                # The bright corona keeps the original gain slope above the ease-in.
+                np.testing.assert_allclose(result[0, 3]-result[0, 2], .48*gains)
+                np.testing.assert_allclose(result[0, 0], sky)
+        np.testing.assert_array_equal(rgb, (sky + signal)[None, ...])
+
+    def test_warmth_sky_protection_boundaries_and_units(self):
+        sky = np.array([.04, .08, .1])
+        rgb = np.array([[sky, sky*.5, [0., 0., 0.], [np.nan]*3,
+                         sky + .2, [-.01, -.02, -.03]]])
+        result = warm_colour(rgb, 1., sky_rgb=sky)
+        np.testing.assert_array_equal(result[0, :3], rgb[0, :3])
+        np.testing.assert_array_equal(result[0, 5], rgb[0, 5])
+        self.assertTrue(np.isnan(result[0, 3]).all())
+        np.testing.assert_allclose(warm_colour(rgb*65535, 1., sky_rgb=sky*65535),
+                                   result*65535, equal_nan=True)
+        np.testing.assert_allclose(warm_colour(rgb, 1., sky_rgb=[0., 0., 0.])[0, 4],
+                                   warm_colour(rgb, 1.)[0, 4])
+        for bad in ([.1, .2], [.1, np.nan, .2], [-.1, .2, .3], [.1, np.inf, .2]):
+            with self.subTest(sky=bad), self.assertRaises(ValueError):
+                warm_colour(rgb, 1., sky_rgb=bad)
+
+    def test_warmth_has_smooth_sky_transition_and_retains_faint_streamers(self):
+        sky = np.array([.04, .08, .1])
+        signal = np.linspace(-.005, .025, 3001)
+        rgb = sky + signal[None, :, None]
+        result = warm_colour(rgb, 1., sky_rgb=sky)
+        slope = np.diff(result[0, :, 2])/np.diff(signal)
+        self.assertLess(np.max(np.abs(np.diff(slope))), .02)
+        # Both sky and corona gradients must remain ordered through the transition.
+        self.assertTrue((np.diff(result, axis=1) > 0).all())
+        np.testing.assert_array_equal(result[0, signal <= 0], rgb[0, signal <= 0])
+        np.testing.assert_allclose(result[0, -1], sky + [.025, .019, .009])
+        faint = warm_colour((sky + [.001, .001, .001])[None, None], 1., sky_rgb=sky)
+        self.assertTrue((faint[0, 0] > sky).all())
+        np.testing.assert_allclose(warm_colour(rgb*1.e-8, 1., sky_rgb=sky*1.e-8),
+                                   result*1.e-8, atol=1.e-24)
+
     def test_gain_only_percentiles_and_integer_white_equivalence(self):
         a, report = neutralize_tse(self.rgb)
         np.testing.assert_allclose(report['ratios'], [1, .5, .25], atol=1e-6)

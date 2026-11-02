@@ -127,10 +127,43 @@ def _set_luminosity(colour, luminance):
     return np.clip(c, 0, 1)
 
 
-def warm_colour(rgb, amount=0.):
-    """Artistic RGB gains, 0 = unchanged, 1 = sunset; preserve missing pixels."""
+def warm_colour(rgb, amount=0., *, sky_rgb=None):
+    """Artistic RGB gains, 0 = unchanged, 1 = sunset; preserve missing pixels.
+
+    Optional sky_rgb is a finite nonnegative (3,) background estimate in the
+    same linear units and colour space as rgb (..., 3). Warm only positive
+    channel excess above that level; retain the background and lower values.
+    Ease in over 10% of the largest sky channel, with continuous slope and
+    monotonic channel output so faint gradients cannot acquire a threshold edge.
+    No normalization or clipping is applied. None retains legacy global gains.
+    """
     if not np.isfinite(amount) or not 0 <= amount <= 1:
         raise ValueError('Warmth must be between 0 and 1')
     if amount == 0:
         return rgb
-    return np.asarray(rgb) * np.array([1., 1.-.3*amount, 1.-.8*amount])
+    gains = np.array([1., 1.-.3*amount, 1.-.8*amount])
+    if sky_rgb is None:
+        return np.asarray(rgb) * gains
+    sky = np.asarray(sky_rgb, dtype=float)
+    if sky.shape != (3,) or not np.isfinite(sky).all() or np.any(sky < 0):
+        raise ValueError('Sky colour must contain three finite nonnegative channel levels')
+    a = np.asarray(rgb)
+    if a.ndim < 1 or a.shape[-1] != 3:
+        raise ValueError('Warmth sky protection needs RGB pixels')
+    width = .1*float(sky.max())
+    def adjust(values):
+        check_cancelled()
+        signal = np.maximum(values-sky, 0)
+        if width > 0:
+            # Integrate a slope rising from zero to one; never reverse a gradient.
+            fraction = np.minimum(signal/width, 1.)
+            signal *= .5*fraction
+            signal += np.maximum(values-sky-width, 0)*.5
+        return values + signal*(gains-1)
+    if a.ndim != 3:
+        return adjust(a)
+    result = np.empty(a.shape, np.float64)
+    # Bound scratch memory while processing full-resolution RGB masters.
+    for first, last in row_strips(a.shape[0]):
+        result[first:last] = adjust(a[first:last])
+    return result

@@ -11,7 +11,7 @@ acceptance tasks. No public release or blanket Windows acceptance pass is claime
 
 Windows 11 build 26200, AMD64, 24 logical CPUs, 63.93 GiB RAM, Python 3.14.7,
 NumPy 2.5.4, SciPy 1.18.1, OpenCV 5.0.0.93, PySide6 6.12.0,
-PyInstaller 6.22.3; application 0.6.0. Baseline:
+PyInstaller 6.22.3; historical pre-0.7.0 application. These checks do not validate a rebuilt 0.7.0 package. Baseline:
 `43907e02f3c9f9438d74947f5d625ab6ecd44237` plus the changes below.
 Existing runtime dependencies were retained; pinned packaging dependencies were
 installed in the project virtual environment.

@@ -144,6 +144,48 @@ class BackgroundGuiTests(unittest.TestCase):
 
     def tearDown(self):close_window(self.w)
 
+    def test_warmth_preview_export_and_sample_cache_invalidation(self):
+        import tempfile, time
+        from pathlib import Path
+        from PySide6.QtTest import QTest
+        from core.warmth import warmth_layer
+        w = self.w
+        w.sl_warmth.setEnabled(True)
+        w.sl_warmth.setValue(100)
+        w.render_matrix_to_screen();wait_for_gui(w)
+        # Warmth is now a display layer; cached calibrated/linear RGB is unchanged.
+        self.assertIs(w._colour_cache[0],w.full_source_rgb)
+        revision = w._colour_revision
+        w.sl_background_radius.setValue(50)
+        wait_for_gui(w)
+        self.assertGreater(w._colour_revision, revision)
+        self.assertIs(w._colour_cache[0], w.full_source_rgb)
+        snapshot = w.background.warmth_parameters()
+        w.background.points = []
+        w.background.invalidate(False);wait_for_gui(w)
+        self.assertIs(w._colour_cache[0], w.full_source_rgb)
+        self.assertIsNone(snapshot['points'])
+        w.background.points = None
+        w.background.invalidate(False);wait_for_gui(w)
+        w.combo_input_state.setCurrentIndex(w.combo_input_state.findData('linear'))
+        w.chk_calibrate_colour.setChecked(True);wait_for_gui(w)
+        self.assertEqual(w._colour_cache[2]['method'], 'gain-only P1/P99-span neutralization')
+        with tempfile.TemporaryDirectory() as tmp:
+            w.chk_export_layers.setChecked(False)
+            with patch('gui.app.QFileDialog.getSaveFileName', return_value=(str(Path(tmp)/'warm.tif'), '')), \
+                 patch('core.export.warmth_layer', wraps=warmth_layer) as warmth:
+                w.export_image_action()
+                deadline = time.monotonic()+30
+                while (w.background.thread is not None or w._export_thread is not None
+                       or w.background.export_pending) and time.monotonic() < deadline:
+                    QTest.qWait(10)
+                self.assertIsNone(w._export_thread)
+                self.app.processEvents();wait_for_gui(w)
+                self.assertIn('Exported', w.status_label.text())
+                args = warmth.call_args.args
+                self.assertEqual(args[2], w.background.warmth_parameters())
+                self.assertEqual(args[1],1.)
+
     def test_enable_disable_prepares_all_layers_and_keeps_original(self):
         w=self.w
         w.chk_background.setChecked(True);w.sl_background_radius.setValue(50)
