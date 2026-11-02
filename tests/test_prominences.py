@@ -9,7 +9,7 @@ import numpy as np
 import tifffile
 from psd_tools import PSDImage
 from psd_tools.constants import ChannelID
-from core.prominences import prominence_settings, prominence_layer, composite_prominences
+from core.prominences import prominence_settings, prominence_layer, composite_prominences, _soften_mask
 from core.export import export_images
 from core.layer_export import to_u16
 
@@ -28,6 +28,26 @@ def scene():
 
 
 class ProminenceTests(unittest.TestCase):
+    def test_soft_highlights_keep_order_at_high_exposure(self):
+        rgb=np.zeros((32,48,3),np.float32)
+        for x,value in enumerate((.25,.5,1.,2.,4.),start=20):rgb[16,x]=np.array([1.,.15,.1])*value
+        image,mask=prominence_layer(rgb,dict(sx=24,sy=16,sr=12),dict(reference=1.,exposure_ev=3.,saturation=.43))
+        peaks=image[16,20:25].max(axis=-1).astype(int)
+        self.assertTrue(np.all(np.diff(peaks)>0),peaks)
+        self.assertLess(peaks.max(),65535)
+        self.assertTrue(mask[16,20:25].all())
+
+    def test_edge_blend_preserves_thin_features_without_expanding_support(self):
+        mask=np.zeros((64,80),np.uint16)
+        mask[5,10:30]=65535;mask[20:55,35:70]=65535
+        softened=_soften_mask(mask)
+        self.assertFalse(softened[mask==0].any())
+        self.assertTrue(np.all(softened<=mask))
+        np.testing.assert_array_equal(softened[5,10:30],mask[5,10:30])
+        self.assertGreater(softened[20,50],0)
+        self.assertLess(softened[20,50],65535)
+        self.assertEqual(softened[35,50],65535)
+
     def test_exposure_limits(self):
         rgb,p=scene()
         for ev in (-3.,3.):
@@ -51,7 +71,7 @@ class ProminenceTests(unittest.TestCase):
         self.assertFalse(mask[r<=20].any())
         self.assertFalse(mask[r>=30].any())
         self.assertEqual(mask[64,104],0)
-        self.assertEqual(mask[64,103],65535)
+        self.assertGreater(mask[64,103],0)
         self.assertFalse(mask[(r>23)&(abs(y-64)>3)].any())
         self.assertTrue(((mask>0)&(mask<65535)).any())
         np.testing.assert_array_equal(rgb,before)
@@ -69,7 +89,7 @@ class ProminenceTests(unittest.TestCase):
         _,mask=prominence_layer(rgb,p,prominence_settings(rgb,p))
         ring[64:66,103]=False
         self.assertFalse(mask[ring].any())
-        self.assertEqual(mask[64,103],65535)
+        self.assertGreater(mask[64,103],0)
         self.assertEqual(mask[65,103],65535)
 
     def test_observed_red_pixels_inside_geometry_are_retained_without_filling_missing_data(self):
@@ -78,7 +98,7 @@ class ProminenceTests(unittest.TestCase):
         rgb[64,80]=[.00001,.000001,.000001]  # Original dark lunar signal stays faint.
         rgb[64,98]=np.nan
         image,mask=prominence_layer(rgb,p,prominence_settings(rgb,p))
-        self.assertEqual(mask[64,99],65535)
+        self.assertGreater(mask[64,99],0)
         self.assertEqual(mask[64,98],0)
         self.assertFalse(image[64,98].any())
         self.assertEqual(mask[64,80],0)
@@ -99,7 +119,8 @@ class ProminenceTests(unittest.TestCase):
         image,mask=prominence_layer(rgb,p,prominence_settings(rgb,p,-2))
         darker,other=prominence_layer(rgb,p,prominence_settings(rgb,p,-3))
         np.testing.assert_array_equal(mask,other)
-        np.testing.assert_allclose(image.astype(float)/2,darker,atol=1)
+        self.assertTrue(np.all(darker <= image))
+        self.assertTrue(np.any(darker < image))
         scaled,scaled_mask=prominence_layer(rgb*1000,p,prominence_settings(rgb*1000,p,-2))
         np.testing.assert_array_equal(image,scaled)
         np.testing.assert_array_equal(mask,scaled_mask)

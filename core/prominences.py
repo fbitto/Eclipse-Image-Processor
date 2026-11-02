@@ -1,5 +1,6 @@
 """Display-only prominence layer from the unprepared original RGB, in input units."""
 import numpy as np
+from scipy.ndimage import distance_transform_edt, maximum_filter
 from .cancellation import check_cancelled
 
 
@@ -40,7 +41,9 @@ def prominence_settings(rgb, geometry, exposure_ev=-2., saturation=1.):
     reference = float(np.percentile(values, 99.5)) if values.size else 1.
     return dict(reference=reference, exposure_ev=float(exposure_ev), saturation=float(saturation),
                 source='original loaded RGB; no background extraction, filters or colour neutralization',
-                method='linear exposure, shared highlight limit; smooth red-excess mask; no lunar-disk exclusion',
+                method='linear exposure then shared soft shoulder; inward red-mask edge blend; no lunar-disk exclusion',
+                highlight_curve='RGB / (1 + peak RGB), after exposure and saturation',
+                mask_edge_width_native_px=3.,
                 red_excess='R-max(G,B)-max(G-B,0)',
                 red_fraction_range=[.05, .25], intensity_range=[.005, .03],
                 outer_radii=[1.3, 1.5], review_required=True)
@@ -82,9 +85,27 @@ def prominence_layer(rgb, geometry, settings):
         exposed = block/reference*2.**ev
         luminance = exposed @ np.array([.299, .587, .114])
         exposed = luminance[..., None] + saturation*(exposed-luminance[..., None])
-        exposed /= np.maximum(1., np.max(exposed, axis=-1))[..., None]
+        exposed /= (1. + np.max(exposed, axis=-1))[..., None]
         image[first:first+len(block)] = np.rint(np.clip(exposed, 0., 1.)*65535).astype(np.uint16)
+    # Work only near the existing selection; no image blur or expansion of mask support.
+    y0, y1 = max(0,int(np.floor(cy-1.5*radius))-1), min(a.shape[0],int(np.ceil(cy+1.5*radius))+2)
+    x0, x1 = max(0,int(np.floor(cx-1.5*radius))-1), min(a.shape[1],int(np.ceil(cx+1.5*radius))+2)
+    if y1 > y0 and x1 > x0:
+        mask[y0:y1,x0:x1] = _soften_mask(mask[y0:y1,x0:x1])
     return image, mask
+
+
+def _soften_mask(mask):
+    """Inward three-native-pixel blend; retain ridges of thin chromosphere features."""
+    if not mask.any():
+        return mask
+    check_cancelled()
+    distance = distance_transform_edt(np.pad(mask > 0, 1))[1:-1,1:-1]
+    # Limit feather width by local thickness so isolated one-pixel detail stays visible.
+    width = np.minimum(3., maximum_filter(distance, size=7, mode='constant'))
+    coverage = _smooth((distance-.5)/np.maximum(width-.5,.5))
+    check_cancelled()
+    return np.rint(mask*coverage).astype(np.uint16)
 
 
 def composite_prominences(base, rgb16, mask16):

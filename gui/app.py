@@ -643,7 +643,7 @@ class EclipseProcessorApp(QMainWindow):
         psb_group.addWidget(self.chk_prominences)
         self.sl_prominence_exposure, _ = create_slider(
             'Prominences (EV)', -300, 300, -200, psb_group, divisor=100,
-            tooltip='Independent exposure relative to original red limb highlights. -1 EV halves their intensity. Does not affect the corona or change the original file.')
+            tooltip='Independent prominence exposure before its soft highlight curve. -1 EV halves the input exposure; the separate curve retains bright detail. Does not affect the corona or change the original file.')
         self.sl_prominence_saturation, _ = create_slider(
             'Prominence saturation (%)', 0, 100, 65, psb_group,
             tooltip='Saturation of the separate original prominence layer: 0 is grayscale; 65 softens intense reds; 100 preserves original saturation. Applies to preview and prominence exports. Leaves the original RGB and mask unchanged; adjust brightness with Prominences (EV).')
