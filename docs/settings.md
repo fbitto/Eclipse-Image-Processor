@@ -46,3 +46,7 @@ RHEF/FNRGF ring-width ticks now denote native pixels. Reopening an older v4 reci
 `chk_statistics_separate_ael` records the opt-in experimental AEL statistics/output policy. Missing fields default off. The mode retains observed positive operator samples while restricting ACHF radial fits and display statistics, rather than reconstructing missing pixels.
 
 Exports now use the PSB presentation for TIFF/JPEG regardless of the viewport toggle. Exposure affects all display products, and GUI export includes a separate float32 working-source package. Existing recipes keep their raw controls but recalculate under this corrected output contract. The optional Larson–Sekanina log input selector defaults to linear when omitted.
+
+## Prominence control compatibility
+
+Prominence contrast is optional in older v4 recipes and restores to 1.0 when omitted. The new-session exposure is 0 EV; legacy recipes preserve saved negative EV values, including the historical −2 EV fallback when the exposure field is absent. Basic exposure edits cover 0…+5 EV, while Advanced permits −3…+5 EV. A saved negative exposure remains active when switching to Basic, with a visible notice; moving the Basic control explicitly replaces it. Mode changes do not alter exposure or hidden contrast. Preview and export use that same saved exposure and contrast.

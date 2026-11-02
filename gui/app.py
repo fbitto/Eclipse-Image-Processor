@@ -285,6 +285,8 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_warmth.setEnabled(False)
         self.sl_warmth.valueChanged.connect(self.on_colour_changed)
         add_advanced_mode(self, top_header_layout)
+        self.chk_advanced.toggled.connect(self._update_prominence_mode)
+        self._update_prominence_mode()
         top_header_layout.addWidget(self.lbl_colour_hint)
         self.sl_wow_scales.valueChanged.connect(lambda _: self.update_wow_controls())
         self.update_wow_controls()
@@ -642,8 +644,27 @@ class EclipseProcessorApp(QMainWindow):
         self.chk_prominences.setToolTip('Use the originally loaded RGB, before background extraction, color calibration, Warm and filters. Adjust its display with Prominences (EV) and Prominence saturation. Save a separate dark TIFF and mask; add an editable masked layer when Photoshop layers are exported. Requires RGB. Review the automatic red-excess mask.')
         psb_group.addWidget(self.chk_prominences)
         self.sl_prominence_exposure, _ = create_slider(
-            'Prominences (EV)', -300, 300, -200, psb_group, divisor=100,
+            'Prominences (EV)', -300, 500, 0, psb_group, divisor=100,
             tooltip='Independent prominence exposure before its soft highlight curve. -1 EV halves the input exposure; the separate curve retains bright detail. Does not affect the corona or change the original file.')
+        # Keep one recipe value; the Basic editor never clamps a saved negative exposure.
+        self.prominence_exposure_basic, _ = create_slider(
+            'Prominences (EV)', 0, 500, 0, psb_group, divisor=100,
+            tooltip='Prominence exposure from 0 to +5 EV. Advanced mode also permits negative exposure.')
+        self.lbl_prominence_ev_retained = QLabel()
+        self.lbl_prominence_ev_retained.setWordWrap(True)
+        self.lbl_prominence_ev_retained.setToolTip('A saved negative prominence exposure remains active in Basic mode. Move the Basic slider to choose a nonnegative value, or use Advanced mode to edit the negative value.')
+        self.lbl_prominence_ev_retained.setStyleSheet('color: #aaaaaa; font-size: 10px;')
+        psb_group.addWidget(self.lbl_prominence_ev_retained)
+        self.sl_prominence_contrast, _ = create_slider(
+            'Prominence contrast', 10, 40, 20, psb_group, divisor=20,
+            tooltip='Separate tonal contrast from 0.5 to 2.0, in 0.05 steps. One preserves the standard soft shoulder. Higher values emphasize bright/dark differences and can emphasize noise. Exposure controls brightness; the selection mask is unchanged.')
+        self.prominence_exposure_basic.valueChanged.connect(self.sl_prominence_exposure.setValue)
+        self.prominence_exposure_basic.sliderReleased.connect(
+            lambda: self.sl_prominence_exposure.setValue(self.prominence_exposure_basic.value()))
+        self.prominence_exposure_basic.value_label.editingFinished.connect(
+            lambda: self.sl_prominence_exposure.setValue(self.prominence_exposure_basic.value()))
+        self.sl_prominence_exposure.valueChanged.connect(self._update_prominence_mode)
+        self.sl_prominence_contrast.valueChanged.connect(self._on_prominence_changed)
         self.sl_prominence_saturation, _ = create_slider(
             'Prominence saturation (%)', 0, 100, 65, psb_group,
             tooltip='Saturation of the separate original prominence layer: 0 is grayscale; 65 softens intense reds; 100 preserves original saturation. Applies to preview and prominence exports. Leaves the original RGB and mask unchanged; adjust brightness with Prominences (EV).')
@@ -1559,6 +1580,7 @@ class EclipseProcessorApp(QMainWindow):
                 export_prominences=self.chk_prominences.isEnabled() and self.chk_prominences.isChecked(),
                 prominence_exposure_ev=self.sl_prominence_exposure.value()/100,
                 prominence_saturation=self.sl_prominence_saturation.value()/100,
+                prominence_contrast=self.sl_prominence_contrast.value()/20,
                 warmth=self.sl_warmth.value()/100,
                 calibrate_colour=self.chk_calibrate_colour.isChecked(), white=self.source_rgb_white,
                 export_layers=self.chk_export_layers.isChecked(), layers_format=self.combo_layers_format.currentData(),
@@ -1658,6 +1680,7 @@ class EclipseProcessorApp(QMainWindow):
                 prominences_enabled=self.chk_prominences.isChecked() and not self.show_original_mode,
                 prominence_exposure_ev=self.sl_prominence_exposure.value()/100,
                 prominence_saturation=self.sl_prominence_saturation.value()/100,
+                prominence_contrast=self.sl_prominence_contrast.value()/20,
                 warmth=self.sl_warmth.value()/100,
                 prominence_view=self.prominence_view.currentData(),
                 calibrate=self.chk_calibrate_colour.isChecked(),
@@ -1679,10 +1702,27 @@ class EclipseProcessorApp(QMainWindow):
         else:
             self.lbl_psb_presentation.setText(f'Auto scale + {self.sl_psb_exposure.value()/100:+.2f} EV · Asinh 10')
 
+    def _update_prominence_mode(self, *_):
+        advanced = hasattr(self,'chk_advanced') and self.chk_advanced.isChecked()
+        value = self.sl_prominence_exposure.value()
+        self.sl_prominence_exposure.parameter_row.setVisible(advanced)
+        self.prominence_exposure_basic.parameter_row.setVisible(not advanced)
+        self.sl_prominence_contrast.parameter_row.setVisible(advanced)
+        with QSignalBlocker(self.prominence_exposure_basic):
+            self.prominence_exposure_basic.setValue(max(0,value))
+        update_slider_display(self.prominence_exposure_basic)
+        self.prominence_exposure_basic.value_label.setReadOnly(value < 0)
+        self.lbl_prominence_ev_retained.setText(
+            f'Advanced exposure {value/100:+.2f} EV is active. Move the slider to select 0 to +5 EV, or use Advanced mode.')
+        self.lbl_prominence_ev_retained.setVisible(not advanced and value < 0 and self.chk_prominences.isChecked())
+
     def _on_prominence_changed(self, *_):
         enabled=self.chk_prominences.isEnabled() and self.chk_prominences.isChecked()
         self.sl_prominence_exposure.parameter_row.setEnabled(enabled)
         self.sl_prominence_saturation.parameter_row.setEnabled(enabled)
+        self.prominence_exposure_basic.parameter_row.setEnabled(enabled)
+        self.sl_prominence_contrast.parameter_row.setEnabled(enabled)
+        self._update_prominence_mode()
         self.prominence_view.setEnabled(enabled)
         self.presentation_timer.start(100)
 

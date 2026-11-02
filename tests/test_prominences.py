@@ -48,13 +48,35 @@ class ProminenceTests(unittest.TestCase):
         self.assertLess(softened[20,50],65535)
         self.assertEqual(softened[35,50],65535)
 
+    def test_contrast_changes_curve_shape_without_changing_mask(self):
+        rgb=np.zeros((32,48,3),np.float32)
+        for x,value in enumerate((.25,.5,1.,2.,4.),start=20):rgb[16,x]=np.array([1.,.15,.1])*value
+        rgb[0,0]=np.nan;before=rgb.copy();p=dict(sx=24,sy=16,sr=12)
+        settings=dict(reference=1.,exposure_ev=0.,saturation=1.)
+        normal,mask=prominence_layer(rgb,p,settings)
+        unity,unity_mask=prominence_layer(rgb,p,dict(settings,contrast=1.))
+        stronger,strong_mask=prominence_layer(rgb,p,dict(settings,contrast=2.))
+        softer,_=prominence_layer(rgb,p,dict(settings,contrast=.5))
+        self.assertGreater(softer[16,21,0],normal[16,21,0])
+        np.testing.assert_array_equal(unity,normal)
+        np.testing.assert_array_equal(unity_mask,mask)
+        np.testing.assert_array_equal(strong_mask,mask)
+        self.assertLess(stronger[16,21,0],normal[16,21,0])
+        np.testing.assert_array_equal(stronger[16,22],normal[16,22])
+        self.assertGreater(stronger[16,23,0],normal[16,23,0])
+        self.assertEqual(strong_mask[0,0],0)
+        np.testing.assert_array_equal(rgb,before)
+        for bad in (.49,2.01,np.nan):
+            with self.assertRaises(ValueError):prominence_settings(rgb,p,contrast=bad)
+            with self.assertRaises(ValueError):prominence_layer(rgb,p,dict(settings,contrast=bad))
+
     def test_exposure_limits(self):
         rgb,p=scene()
-        for ev in (-3.,3.):
+        for ev in (-3.,5.):
             settings=prominence_settings(rgb,p,ev)
             image,mask=prominence_layer(rgb,p,settings)
             self.assertTrue(mask.any())
-        for ev in (-3.01,3.01,np.nan):
+        for ev in (-3.01,5.01,np.nan):
             with self.assertRaises(ValueError):
                 prominence_settings(rgb,p,ev)
             with self.assertRaises(ValueError):
@@ -127,7 +149,7 @@ class ProminenceTests(unittest.TestCase):
         neutral=np.ones_like(rgb)
         _,empty=prominence_layer(neutral,p,prominence_settings(neutral,p))
         self.assertFalse(empty.any())
-        for bad in (np.nan,4,-4):
+        for bad in (np.nan,6,-4):
             with self.assertRaises(ValueError):prominence_settings(rgb,p,bad)
         with self.assertRaises(ValueError):prominence_settings(rgb[...,0],p)
         with self.assertRaises(ValueError):prominence_settings(rgb,dict(p,sr=0))
@@ -137,7 +159,7 @@ class ProminenceTests(unittest.TestCase):
         source=np.nan_to_num(rgb @ np.array([.299,.587,.114]),nan=0).astype(np.float32)
         # The corona working RGB is deliberately different from the original.
         prepared=np.repeat(source[...,None],3,axis=-1)*np.array([.7,1.,1.2])
-        expected,mask=prominence_layer(rgb,p,prominence_settings(rgb,p))
+        expected,mask=prominence_layer(rgb,p,prominence_settings(rgb,p,5,contrast=2.))
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             for correction in (False,True):
@@ -145,7 +167,7 @@ class ProminenceTests(unittest.TestCase):
                 export_images(source,p,{},str(target),'original.tif',source_rgb=prepared,
                               original_rgb=rgb,export_prominences=True,export_layers=True,
                               layers_format='psb',processed=source,psb_preview_jpeg=True,
-                              color_correction=correction)
+                              color_correction=correction,prominence_exposure_ev=5,prominence_contrast=2.)
                 doc=PSDImage.open(root/f'final{correction}_PS_layers.psb')
                 layer=doc[-1]
                 self.assertEqual(layer.name,'Prominences and chromosphere')
@@ -229,7 +251,7 @@ class ProminenceGuiTests(unittest.TestCase):
             w.chk_calibrate_colour.setChecked(False);w.on_input_state_changed()
             w.chk_prominences.setChecked(True);w.prominence_view.setCurrentIndex(2)
             w.render_matrix_to_screen();wait_for_gui(w)
-            image,mask=prominence_layer(rgb,p,prominence_settings(rgb,p,saturation=.65))
+            image,mask=prominence_layer(rgb,p,prominence_settings(rgb,p,0,saturation=.65))
             expected=resize_observed(mask.astype(np.float32)/65535.,(64,64))
             self.assertGreater(float(expected.max()),.005)
             np.testing.assert_allclose(w.last_preview_presentation,expected,atol=1e-7)
@@ -238,6 +260,36 @@ class ProminenceGuiTests(unittest.TestCase):
             native=composite_prominences(np.zeros(mask.shape),image,mask)
             expected_rgb=np.stack([resize_observed(native[...,c],(64,64)) for c in range(3)],axis=-1)
             np.testing.assert_allclose(w.last_preview_presentation,expected_rgb,atol=1e-7)
+        finally:close_window(w)
+
+    def test_basic_ev_preserves_negative_recipes_and_advanced_contrast(self):
+        w=EclipseProcessorApp();w.auto_calculate=False
+        try:
+            rgb,p=scene();w.original_source_rgb=w.full_source_rgb=rgb
+            w.full_raw_image=w.raw_image=w.preview_image=np.nan_to_num(rgb[...,0])
+            w.txt_x.setText('80');w.txt_y.setText('64');w.txt_r.setText('20')
+            w.chk_prominences.setEnabled(True);w.chk_prominences.setChecked(True)
+            self.assertEqual(w.sl_prominence_exposure.value(),0)
+            self.assertEqual((w.prominence_exposure_basic.minimum(),w.prominence_exposure_basic.maximum()),(0,500))
+            self.assertTrue(w.sl_prominence_contrast.parameter_row.isHidden())
+            w.chk_advanced.setChecked(True);w.sl_prominence_exposure.setValue(-200)
+            w.sl_prominence_contrast.setValue(40);saved=capture_settings(w)
+            self.assertNotIn('prominence_exposure_basic',saved['controls'])
+            w.chk_advanced.setChecked(False)
+            self.assertEqual(w.sl_prominence_exposure.value(),-200)
+            self.assertEqual(w.sl_prominence_contrast.value(),40)
+            self.assertFalse(w.lbl_prominence_ev_retained.isHidden())
+            w.prominence_exposure_basic.sliderReleased.emit()
+            self.assertEqual(w.sl_prominence_exposure.value(),0)
+            self.assertTrue(w.lbl_prominence_ev_retained.isHidden())
+            restore_settings(w,saved)
+            self.assertEqual(w.sl_prominence_exposure.value(),-200)
+            self.assertEqual(w.sl_prominence_contrast.value(),40)
+            saved['controls'].pop('sl_prominence_contrast');saved['controls']['chk_advanced']['value']=False
+            restore_settings(w,saved)
+            self.assertEqual(w.sl_prominence_contrast.value(),20)
+            self.assertEqual(w.sl_prominence_exposure.value(),-200)
+            self.assertFalse(w.lbl_prominence_ev_retained.isHidden())
         finally:close_window(w)
 
     def test_load_preserves_original_through_working_changes_and_preview_export(self):
@@ -251,7 +303,7 @@ class ProminenceGuiTests(unittest.TestCase):
                 with patch('gui.app.QFileDialog.getOpenFileName',return_value=(str(original),'')), \
                      patch.object(w,'detect_lunar_limb',return_value=(80,64,20)):
                     w.load_image_action();wait_for_gui(w)
-                self.assertEqual((w.sl_prominence_exposure.minimum(),w.sl_prominence_exposure.maximum()),(-300,300))
+                self.assertEqual((w.sl_prominence_exposure.minimum(),w.sl_prominence_exposure.maximum()),(-300,500))
                 self.assertTrue(w.chk_prominences.isEnabled())
                 np.testing.assert_array_equal(w.original_source_rgb,rgb)
                 # Replace the working source exactly as background preparation does.
@@ -259,9 +311,10 @@ class ProminenceGuiTests(unittest.TestCase):
                 w.chk_calibrate_colour.setChecked(False)
                 w.chk_prominences.setChecked(True)
                 w.sl_prominence_exposure.setValue(-300)
+                w.sl_prominence_contrast.setValue(40)
                 w.prominence_view.setCurrentIndex(1)
                 w.render_matrix_to_screen();wait_for_gui(w)
-                image,mask=prominence_layer(rgb,p,prominence_settings(rgb,p,-3,saturation=.65))
+                image,mask=prominence_layer(rgb,p,prominence_settings(rgb,p,-3,saturation=.65,contrast=2.))
                 np.testing.assert_allclose(w.last_preview_presentation,composite_prominences(np.zeros(mask.shape),image,mask),atol=1e-7)
                 w.prominence_view.setCurrentIndex(2)
                 w.render_matrix_to_screen();wait_for_gui(w)
@@ -287,6 +340,7 @@ class ProminenceGuiTests(unittest.TestCase):
                     self.assertTrue(export.call_args.kwargs['export_prominences'])
                     self.assertEqual(export.call_args.kwargs['warmth'],.7)
                     self.assertEqual(export.call_args.kwargs['prominence_saturation'],.65)
+                    self.assertEqual(export.call_args.kwargs['prominence_contrast'],2.)
                 # Mono input must turn the feature off, with no fabricated red image.
                 w.original_source_rgb=None;w.on_input_state_changed()
                 self.assertFalse(w.chk_prominences.isChecked())
@@ -296,9 +350,11 @@ class ProminenceGuiTests(unittest.TestCase):
                 saved['controls'].pop('sl_prominence_exposure')
                 saved['controls'].pop('sl_warmth')
                 saved['controls'].pop('sl_prominence_saturation')
+                saved['controls'].pop('sl_prominence_contrast')
                 restore_settings(w,saved)
                 self.assertFalse(w.chk_prominences.isChecked())
                 self.assertEqual(w.sl_prominence_exposure.value(),-200)
                 self.assertEqual(w.sl_warmth.value(),0)
                 self.assertEqual(w.sl_prominence_saturation.value(),65)
+                self.assertEqual(w.sl_prominence_contrast.value(),20)
         finally:close_window(w)

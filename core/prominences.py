@@ -15,7 +15,7 @@ def _red_excess(rgb):
     return red-np.maximum(green, blue)-np.maximum(green-blue, 0.)
 
 
-def prominence_settings(rgb, geometry, exposure_ev=-2., saturation=1.):
+def prominence_settings(rgb, geometry, exposure_ev=-2., saturation=1., contrast=1.):
     """Native reference shared by preview/export; no corona filters or colour gains.
 
     The red-excess selection is a presentation heuristic, not an H-alpha measurement.
@@ -25,10 +25,12 @@ def prominence_settings(rgb, geometry, exposure_ev=-2., saturation=1.):
     if a.ndim != 3 or a.shape[-1] != 3 or not a.size:
         raise ValueError('Prominences require the original RGB image')
     cx, cy, radius = (float(geometry[k]) for k in ('sx', 'sy', 'sr'))
-    if not np.isfinite([cx, cy, radius, exposure_ev]).all() or radius <= 0 or not -3 <= exposure_ev <= 3:
-        raise ValueError('Prominences need finite geometry, positive radius and exposure from -3 to +3 EV')
+    if not np.isfinite([cx, cy, radius, exposure_ev]).all() or radius <= 0 or not -3 <= exposure_ev <= 5:
+        raise ValueError('Prominences need finite geometry, positive radius and exposure from -3 to +5 EV')
     if not np.isfinite(saturation) or not 0 <= saturation <= 1:
         raise ValueError('Prominence saturation must be between 0 and 1')
+    if not np.isfinite(contrast) or not .5 <= contrast <= 2.:
+        raise ValueError('Prominence contrast must be between 0.5 and 2.0')
     stride = max(1, int(np.ceil(max(a.shape[:2])/2048)))
     sample = np.asarray(a[::stride, ::stride], dtype=np.float64)
     y, x = np.ogrid[:sample.shape[0], :sample.shape[1]]
@@ -39,10 +41,10 @@ def prominence_settings(rgb, geometry, exposure_ev=-2., saturation=1.):
     candidates = good & (red > .05*peak)
     values = peak[candidates] if candidates.any() else peak[good]
     reference = float(np.percentile(values, 99.5)) if values.size else 1.
-    return dict(reference=reference, exposure_ev=float(exposure_ev), saturation=float(saturation),
+    return dict(reference=reference, exposure_ev=float(exposure_ev), saturation=float(saturation), contrast=float(contrast),
                 source='original loaded RGB; no background extraction, filters or colour neutralization',
                 method='linear exposure then shared soft shoulder; inward red-mask edge blend; no lunar-disk exclusion',
-                highlight_curve='RGB / (1 + peak RGB), after exposure and saturation',
+                highlight_curve='peak**contrast / (1 + peak**contrast), common RGB gain after exposure and saturation',
                 mask_edge_width_native_px=3.,
                 red_excess='R-max(G,B)-max(G-B,0)',
                 red_fraction_range=[.05, .25], intensity_range=[.005, .03],
@@ -52,7 +54,8 @@ def prominence_settings(rgb, geometry, exposure_ev=-2., saturation=1.):
 def prominence_layer(rgb, geometry, settings):
     """Return unmasked RGB16 and mask16 on the same canvas; never modify source.
 
-    Mask is independent of EV. No geometric lunar-disk exclusion is applied.
+    Mask is independent of EV/contrast. Contrast 1 retains the original soft curve.
+    No geometric lunar-disk exclusion is applied.
     Negative/missing samples cannot contribute. Saturation is a display adjustment; the selection uses original RGB.
     """
     a = np.asarray(rgb)
@@ -60,11 +63,14 @@ def prominence_layer(rgb, geometry, settings):
         raise ValueError('Prominences require the original RGB image')
     cx, cy, radius = (float(geometry[k]) for k in ('sx', 'sy', 'sr'))
     reference, ev = float(settings['reference']), float(settings['exposure_ev'])
-    if not np.isfinite([cx, cy, radius, reference, ev]).all() or min(radius, reference) <= 0 or not -3 <= ev <= 3:
+    if not np.isfinite([cx, cy, radius, reference, ev]).all() or min(radius, reference) <= 0 or not -3 <= ev <= 5:
         raise ValueError('Invalid prominence geometry, reference scale or exposure')
     saturation = settings.get('saturation', 1.)
     if not np.isfinite(saturation) or not 0 <= saturation <= 1:
         raise ValueError('Prominence saturation must be between 0 and 1')
+    contrast = float(settings.get('contrast', 1.))
+    if not np.isfinite(contrast) or not .5 <= contrast <= 2.:
+        raise ValueError('Prominence contrast must be between 0.5 and 2.0')
     image = np.empty(a.shape, np.uint16)
     mask = np.empty(a.shape[:2], np.uint16)
     x = np.arange(a.shape[1], dtype=float)[None, :]-cx
@@ -85,7 +91,14 @@ def prominence_layer(rgb, geometry, settings):
         exposed = block/reference*2.**ev
         luminance = exposed @ np.array([.299, .587, .114])
         exposed = luminance[..., None] + saturation*(exposed-luminance[..., None])
-        exposed /= (1. + np.max(exposed, axis=-1))[..., None]
+        peak_exposed = np.max(exposed, axis=-1)
+        if contrast == 1.:
+            exposed /= (1. + peak_exposed)[..., None]
+        else:
+            power = peak_exposed**contrast
+            mapped = power/(1.+power)
+            factor = np.divide(mapped,peak_exposed,out=np.zeros_like(peak_exposed),where=peak_exposed>0)
+            exposed *= factor[..., None]
         image[first:first+len(block)] = np.rint(np.clip(exposed, 0., 1.)*65535).astype(np.uint16)
     # Work only near the existing selection; no image blur or expansion of mask support.
     y0, y1 = max(0,int(np.floor(cy-1.5*radius))-1), min(a.shape[0],int(np.ceil(cy+1.5*radius))+2)

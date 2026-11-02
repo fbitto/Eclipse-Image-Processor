@@ -1,5 +1,7 @@
 # Prominence detail and mask correction — 2 November 2026
 
+Current controls: Basic EV 0…+5, Advanced EV −3…+5, Advanced contrast 0.5…2.0 (default 1.0). See the implemented-controls section for compatibility and final validation; earlier comparisons below record the decision process.
+
 The owner reported flat prominence highlights and a conspicuous mask boundary on the supplied margin--2px master, at prominence +3 EV and saturation 43%. After reviewing before/after crops and a full-canvas candidate, the owner approved option C: smooth highlights and a softer existing mask boundary, with thin-feature retention checked.
 
 ## Cause and correction
@@ -29,3 +31,47 @@ A native export with the original RGB, +3 EV and 43% saturation exercised TIFF/J
 Focused tests cover ordered bright values at high EV, inward-only alpha, thin one-pixel retention, opaque interiors, missing/negative input handling, mask independence, unit rescaling, preview reduction and exact PSB/TIFF-package pixels/masks. Earlier tests requiring completely opaque edge pixels were updated to require retained positive coverage under the deliberately softer boundary; brightness/EV tests now check monotonic exposure rather than obsolete linear output scaling.
 
 Local review artifacts remain outside Git under `/tmp/eclipse-prominence-review/`: `stretch-comparison.png`, `stretch-measurements.json`, `native/before-after.png`, native measurements, exports and logs. No private image was committed.
+
+## Follow-up: EV range and independent contrast control
+
+Evaluated the same native prominence crop at 43% saturation with a fixed mask. The current −3…+3 EV range is safe, but its upper endpoint is restrictive after the new shoulder:
+
+| EV | Peak median | Peak P90 | P90 − P10 |
+| --- | ---: | ---: | ---: |
+| −6 | 0.0035 | 0.0064 | 0.0048 |
+| −3 | 0.0273 | 0.0488 | 0.0365 |
+| 0 | 0.1831 | 0.2910 | 0.2005 |
+| +2 | 0.4727 | 0.6214 | 0.3369 |
+| +3 | 0.6420 | 0.7665 | 0.3235 |
+| +4 | 0.7820 | 0.8678 | 0.2538 |
+| +5 | 0.8776 | 0.9292 | 0.1684 |
+| +6 | 0.9348 | 0.9633 | 0.0992 |
+
+Recommendation: extend the slider to **−3…+5 EV**, retaining its 0.01 EV steps and existing saved/default values. This is a practical range for the tested image, not a universal photographic limit. +6 did not hard-clip numerically, but 29% of selected pixels exceeded 95% display brightness and contrast visibly compressed. Extending the negative side to −6 offered little practical benefit on this source.
+
+A separate **Prominence contrast** control could be useful in Advanced mode. Unlike another Asinh stage, a generalized shared shoulder `y = x^c / (1 + x^c)` adjusts the slope around mid-brightness, while EV shifts the input exposure. Here `x` is the saturation-adjusted peak after exposure, and the same `y/x` factor scales all channels; zero maps to zero. `c=1` reproduces the approved curve exactly. This is a diagnostic proposal, not an implemented setting.
+
+At matched median output 0.642, to separate curve shape from simple brightness changes:
+
+| Contrast c | Matched EV | P90 − P10 | Change from current |
+| --- | ---: | ---: | ---: |
+| 1.00 | +3.00 | 0.3235 | — |
+| 1.25 | +2.83 | 0.3989 | +23% |
+| 1.50 | +2.72 | 0.4700 | +45% |
+
+Initial proposed control: **0.5…1.5**, default **1.0**, step **0.05**. This supplies independent global tonal contrast, not sharpening or recovered spatial detail. Higher contrast can exaggerate texture/noise, so start at 1.0; 1.25 is worth trying on this crop. A future implementation must keep masks independent of EV/contrast and use the same curve for preview, TIFF and PSB, with omitted legacy settings defaulting to 1.0.
+
+That evaluation did not change application code or defaults; the subsequently approved implementation is described below. It uses one supplied source and an earlier fixed corona presentation, not independent observational validation. Review artifacts are `/tmp/eclipse-prominence-range-review/exposure-range.png`, `contrast-matched.png` and `measurements.json`.
+
+
+## Implemented controls
+
+The owner approved an upper contrast limit of **2.0**, with Basic EV **0…+5** and Advanced EV **−3…+5**. The implementation uses 0.05 contrast steps, default **1.0**, and retains exact approved-curve pixels at contrast 1. New sessions start at **0 EV**; existing negative recipes and the old omitted-exposure fallback are preserved. Switching to Basic cannot silently clamp those values: a notice identifies the active negative exposure until the user explicitly replaces it. Higher contrast remains active when hidden in Basic mode, like other Advanced parameters.
+
+The new contrast recipe field is optional; old recipes default to 1.0. Original RGB, reference estimation, mask and geometry are independent of contrast. Preview, main TIFF/JPEG, standalone prominence image, editable PSB and TIFF layer package use the shared numerical helper. Settings metadata records the curve and contrast.
+
+Targeted checks passed **15 tests**, including contrast endpoints, unity exactness, a fixed-midpoint shape change (independent of exposure), unchanged masks, new EV bounds, mode-switch preservation and legacy JSON defaults. The GUI test exercises negative EV and contrast 2.0 through preview and export request; editable PSB tests exercise +5 EV/contrast 2.0.
+
+A full-native export at **+5 EV and contrast 2.0** on the supplied master passed PSB channel/mask verification; the standalone mask was exact, mask bytes matched contrast 1.0, all 226,939 missing pixels remained excluded and source SHA-256 was unchanged. Basic, retained-negative and Advanced layout captures were visually checked under `/tmp/eclipse-prominence-range-review/ui-*.png`. These are offscreen UI checks, not Windows acceptance. Native exports and logs are in `native-controls/` under that directory.
+
+Final complete regression suite: **425 tests passed in 183.381 seconds**. The refreshed macOS app passed strict/deep signature verification and its DMG checksum verified. The source hash and new upper-setting native export were checked separately. No Windows run or native Photoshop rendering at contrast 2.0 is claimed.
