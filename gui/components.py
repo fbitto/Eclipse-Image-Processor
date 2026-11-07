@@ -19,6 +19,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QToolTip,
+    QStyle,
+    QStyleOptionSlider,
+    QStylePainter,
 )
 
 
@@ -61,6 +64,61 @@ class ScrollSafeSlider(QSlider):
 
     def wheelEvent(self, event):
         _scroll_sidebar(self, event)
+
+
+class OpacitySlider(ScrollSafeSlider):
+    """Keep percentage values canonical; pointer travel follows opacity = x**1.5."""
+
+    def _position_option(self):
+        option = QStyleOptionSlider()
+        self.initStyleOption(option)
+        option.subControls = QStyle.SubControl.SC_SliderGroove | QStyle.SubControl.SC_SliderHandle
+        option.minimum, option.maximum = 0, 10000
+        option.sliderPosition = option.sliderValue = round(10000*(self.value()/100)**(2/3))
+        return option
+
+    def paintEvent(self, event):
+        painter = QStylePainter(self)
+        painter.drawComplexControl(QStyle.ComplexControl.CC_Slider, self._position_option())
+
+    def _move_to(self, point):
+        option = self._position_option()
+        style = self.style()
+        groove = style.subControlRect(QStyle.ComplexControl.CC_Slider, option,
+                                      QStyle.SubControl.SC_SliderGroove, self)
+        handle = style.subControlRect(QStyle.ComplexControl.CC_Slider, option,
+                                      QStyle.SubControl.SC_SliderHandle, self)
+        span = max(1, groove.width()-handle.width())
+        position = round(point.x()-groove.x()-handle.width()/2-self._drag_offset)
+        tick = QStyle.sliderValueFromPosition(0, 10000, position, span, option.upsideDown)
+        self.setValue(round(100*(tick/10000)**1.5))
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return super().mousePressEvent(event)
+        option = self._position_option()
+        handle = self.style().subControlRect(QStyle.ComplexControl.CC_Slider, option,
+                                            QStyle.SubControl.SC_SliderHandle, self)
+        self._drag_offset = event.position().x()-handle.center().x() if handle.contains(event.position().toPoint()) else 0
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        self.setSliderDown(True)
+        self._move_to(event.position())
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self.isSliderDown():
+            self._move_to(event.position())
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.isSliderDown():
+            self._move_to(event.position())
+            self.setSliderDown(False)
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
 
 
 class ScrollSafeComboBox(QComboBox):
@@ -230,12 +288,12 @@ CHECKBOX_STYLE = """
                     width: 13px;
                     height: 13px;
                     border-radius: 2px;
-                    border: 1px solid #4a4a4a;
-                    background-color: #1e1e1e;
+                    border: 1px solid #888888;
+                    background-color: #303030;
                 }
                 QCheckBox::indicator:hover {
-                    border: 1px solid #707070;
-                    background-color: #282828;
+                    border: 1px solid #aaaaaa;
+                    background-color: #3a3a3a;
                 }
                 QCheckBox::indicator:checked {
                     background-color: #e5a00d;

@@ -64,6 +64,7 @@ class EclipseProcessorApp(QMainWindow):
         self.setWindowTitle(f"Eclipse Image Processor v{APP_VERSION}")
         self.resize(1180, 780)
         self.setMinimumSize(960, 600)
+        self.setAcceptDrops(True)
 
         self.setWindowIcon(QIcon(application_icon_path()))
 
@@ -1387,6 +1388,40 @@ class EclipseProcessorApp(QMainWindow):
 
         return int(round(init_cx)), int(round(init_cy)), int(round(init_r))
 
+    def _dropped_file(self, mime):
+        if self._closing or self._load_thread is not None or not self.control_sidebar.isEnabled():
+            return None
+        urls = mime.urls()
+        if len(urls) != 1 or not urls[0].isLocalFile():
+            return None
+        path = urls[0].toLocalFile()
+        if os.path.isfile(path) and path.lower().endswith(('.json', '.tiff', '.tif', '.fits', '.fit', '.fts', '.xisf', '.png', '.jpg', '.jpeg', '.bmp')):
+            return path
+        return None
+
+    def dragEnterEvent(self, event):
+        if self._dropped_file(event.mimeData()) is not None:
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        path = self._dropped_file(event.mimeData())
+        if path is None:
+            event.ignore()
+            return
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+        if self.full_raw_image is not None and QMessageBox.question(
+                self, 'Replace current image?',
+                f'Open "{os.path.basename(path)}" and replace the current image?\n'
+                'Save your settings first if you want to keep them.',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        self.open_file(path)
+
     def load_image_action(self):
         """Load an astronomical image (FITS, XISF, TIFF, etc)."""
         file_filter = (
@@ -1401,7 +1436,10 @@ class EclipseProcessorApp(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open Image / Settings", "", file_filter)
         if not file_path:
             return
+        self.open_file(file_path)
 
+    def open_file(self, file_path):
+        """Open an image or recipe through the shared asynchronous loader."""
         if self._load_thread is not None or self._closing:
             return
         try:

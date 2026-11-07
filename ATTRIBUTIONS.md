@@ -6,7 +6,8 @@ Eclipse Image Processor 0.7.0 is developed by Francisco Bitto. Third-party imple
 
 - **Author:** Pere Guerra Serra (`PeterWar` / Peter War).
 - **Project:** [Agentic Eclipse Library](https://github.com/PeterWar/Agentic-Eclipse-Library).
-- **Source version used for the bundled filter ports, tone curve and PSB writer:** AEL 1.3.3, confirmed from the installed runtime metadata (`pyproject.toml`). This identifies the source used, not a claim about the latest upstream release.
+- **Most recent AEL source used:** AEL **1.4.2**, for the bundled NAFE operator and residual-noise estimator. Component-specific origins are retained below.
+- **Original source version used for the bundled filter ports, tone curve and PSB writer:** AEL 1.3.3, confirmed from the installed runtime metadata (`pyproject.toml`). This identifies the source used, not a claim about the latest upstream release.
 - **Updated WOW operator and ACHF display:** AEL 1.3.5, commit `9a391b6ab5ec325efb98ea8d9e18d14ff54de9b6` (2026-10-28); other ports retain their stated source versions.
 - **Updated NRGF partial-annulus statistics:** AEL 1.4.1 `radial.py`, commit `17029c9284748c087adcd0d40241f7e3faf8d778` (2026-10-31), including shared-angle chaining and its cut-corona regression control.
 - **NAFE operator and residual-noise estimator:** AEL 1.4.2 `filters.py` (`nafe_neighbourhood`, `nafe`) and `filterbank.py` (`nafe_noise_sigma`), from the installed plugin 1.1.6 runtime. Local changes add validation, stable input-unit scaling, cooperative cancellation, bounded two-level concurrency with shared FFT budgets and independent-layer integration.
@@ -15,7 +16,7 @@ Eclipse Image Processor 0.7.0 is developed by Francisco Bitto. Third-party imple
 
 ### Citation
 
-**Pere Guerra Serra (2026). Agentic Eclipse Library, version 1.3.3.**
+**Pere Guerra Serra (2026). Agentic Eclipse Library, versions 1.3.3–1.4.2 (component-specific sources listed above).**
 
 The NRGF, NAFE, AEL bilateral WOW, ACHF ISO 01/ISO 04/Angular implementations, presentation tone curve and low-level 16-bit PSB writer in this application contain code copied and adapted from this work. Original authorship and copyright remain with Pere Guerra Serra. The code is used under the MIT license, whose full notice is retained in this repository.
 
@@ -34,6 +35,8 @@ Local adaptations include cooperative cancellation, tiled angular processing, ed
 The AEL-derived ACHF code is included in the application. The upstream Python package is not needed to run these variants. Synthetic fixtures in `tests/fixtures/ael_achf_*.npz` were generated from AEL 1.3.3 to verify equivalence; their provenance is documented in [the fixture notes](tests/fixtures/ael_achf_iso04.md).
 
 ### Additional bundled AEL adaptations
+
+- [core/ael_nafe.py](core/ael_nafe.py) copies and adapts AEL 1.4.2 `filters.py` fuzzy neighbourhood equalization and `filterbank.py` residual-noise estimation. Local adaptations provide validation, stable input-unit scaling, cooperative cancellation, bounded parallel levels and independent-layer integration. Frozen upstream fixtures and their provenance are documented in [the NAFE oracle notes](tests/fixtures/ael_nafe_142.md).
 
 - [core/radial_continuous.py](core/radial_continuous.py) adapts current AEL 1.4.1 (17029c9) global radial quantile interpolation/inversion for the application reference-precision path. The independent float64 numerical path and custom support/quantile controls remain local extensions. Synthetic current-runtime fixtures retain upstream attribution. ACHF ISO/angular operators are also verified through that current revision.
 

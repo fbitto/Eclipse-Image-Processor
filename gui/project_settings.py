@@ -49,13 +49,13 @@ def initialize_filter_defaults(window):
     names=filter_widgets(window)
     values={name:record for name,record in settings['controls'].items() if name in names}
     for name in ORDER+('achf',):
-        values['sl_'+name+'_opacity']['value']=75 if name == 'larson_sekanina' else 19 if name == 'achf' else 20
+        values['sl_'+name+'_opacity']['value']=75 if name == 'larson_sekanina' else 10 if name in ('achf','tangential') else 20
     values['sl_larson_sekanina_str']['value']=25
     for variant in window.achf_ael_controls:
         values[f'achf_ael_controls.{variant}.opacity']['value']=10
         values[f'achf_ael_controls.{variant}.enabled']['value']=False
     values['chk_achf_adaptive']['value']=False
-    for name,opacity in (('nrgf',40),('wow',10)):
+    for name,opacity in (('nrgf',40),('wow',10),('nafe',40)):
         values['sl_'+name+'_opacity']['value']=opacity
     values['sl_wow_scales']['value']=8
     values['sl_wow_noise_floor']['value']=30

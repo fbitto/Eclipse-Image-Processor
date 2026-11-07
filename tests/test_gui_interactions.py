@@ -6,20 +6,100 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
+from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtTest import QTest, QSignalSpy
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from gui.app import EclipseProcessorApp
 
 
 class GuiInteractionTests(unittest.TestCase):
+    def test_drop_opens_one_local_image_or_recipe_and_rejects_invalid_drops(self):
+        from pathlib import Path
+        import tempfile
+        w = self.window
+        def events(urls):
+            mime = QMimeData()
+            mime.setUrls(urls)
+            args = (Qt.DropAction.CopyAction, mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+            enter = QDragEnterEvent(QPoint(10, 10), *args)
+            drop = QDropEvent(QPointF(10, 10), *args)
+            w.dragEnterEvent(enter)
+            w.dropEvent(drop)
+            return enter.isAccepted(), drop.isAccepted()
+        with tempfile.TemporaryDirectory() as tmp, patch.object(w, 'open_file') as opened, \
+             patch('gui.app.QMessageBox.question', return_value=QMessageBox.StandardButton.Yes) as confirm:
+            image = Path(tmp)/'eclipse.TIFF'
+            recipe = Path(tmp)/'settings.json'
+            image.touch(); recipe.touch()
+            for path in (image, recipe):
+                self.assertEqual(events([QUrl.fromLocalFile(str(path))]), (True, True))
+                opened.assert_called_with(str(path))
+            self.assertEqual(confirm.call_count, 2)
+            opened.reset_mock()
+            confirm.return_value = QMessageBox.StandardButton.No
+            original = w.full_raw_image
+            revision = w._preview_revision
+            self.assertEqual(events([QUrl.fromLocalFile(str(image))]), (True, True))
+            opened.assert_not_called()
+            self.assertIs(w.full_raw_image, original)
+            self.assertEqual(w._preview_revision, revision)
+            self.assertEqual(confirm.call_args.args[-1], QMessageBox.StandardButton.No)
+            confirm.reset_mock()
+            w.full_raw_image = None
+            self.assertEqual(events([QUrl.fromLocalFile(str(image))]), (True, True))
+            opened.assert_called_once_with(str(image))
+            confirm.assert_not_called()
+            w.full_raw_image = original
+            opened.reset_mock()
+            local = QUrl.fromLocalFile(str(image))
+            for urls in ([], [local, local], [QUrl('https://example.com/image.tif')],
+                         [QUrl.fromLocalFile(tmp)], [QUrl.fromLocalFile(str(image)+'.missing')]):
+                self.assertEqual(events(urls), (False, False))
+            unsupported = Path(tmp)/'notes.txt'; unsupported.touch()
+            self.assertEqual(events([QUrl.fromLocalFile(str(unsupported))]), (False, False))
+            w.control_sidebar.setEnabled(False)
+            self.assertEqual(events([local]), (False, False))
+            w.control_sidebar.setEnabled(True)
+            with patch.object(w, '_load_thread', object()):
+                self.assertEqual(events([local]), (False, False))
+            opened.assert_not_called()
+
+    def test_dropped_image_uses_async_loader_without_file_dialog(self):
+        from pathlib import Path
+        import tempfile
+        import tifffile
+        w = self.window
+        w.auto_calculate = False
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)/'dropped.tif'
+            pixels = np.full((64,64), 2., np.float32)
+            tifffile.imwrite(source, pixels)
+            mime = QMimeData(); mime.setUrls([QUrl.fromLocalFile(str(source))])
+            event = QDropEvent(QPointF(10,10), Qt.DropAction.CopyAction, mime,
+                               Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+            with patch('gui.app.QFileDialog.getOpenFileName') as dialog, \
+                 patch('gui.app.QMessageBox.question', return_value=QMessageBox.StandardButton.Yes), \
+                 patch.object(w, 'detect_lunar_limb', return_value=(32,32,4)):
+                enter = QDragEnterEvent(QPoint(10,10), Qt.DropAction.CopyAction, mime,
+                                        Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+                QApplication.sendEvent(w.image_label, enter)
+                self.assertTrue(enter.isAccepted())
+                QApplication.sendEvent(w.image_label, event)
+                self.assertTrue(event.isAccepted())
+                wait_for_gui(w)
+                dialog.assert_not_called()
+            self.assertEqual(w.source_path, str(source))
+            np.testing.assert_array_equal(w.full_raw_image, pixels)
+
     @classmethod
     def setUpClass(cls):
         cls.application = QApplication.instance() or QApplication([])
 
     def setUp(self):
         self.window = EclipseProcessorApp()
+        self.window.ui_level.setCurrentIndex(1)
         self.window.request_processing_signal.disconnect()
         self.requests = []
         self.window.request_processing_signal.connect(lambda a, p: self.requests.append(p))
@@ -482,13 +562,13 @@ class GuiInteractionTests(unittest.TestCase):
             self.assertEqual(set(params['achf_variants']),set(variants)|{'adaptive'})
             self.assertEqual(params['achf_adaptive_strength'],100)
         w.combo_achf_variant.setCurrentIndex(0)
-        self.assertEqual(w.sl_achf_opacity.value(),19)
+        self.assertEqual(w.sl_achf_opacity.value(),10)
 
     def test_achf_starts_with_full_background_retention(self):
         w = self.window
         self.assertFalse(hasattr(w, "sl_achf_background"))
         self.assertFalse(w.sec_achf.is_filter_active())
-        self.assertEqual(w.sl_achf_opacity.value(),19)
+        self.assertEqual(w.sl_achf_opacity.value(),10)
         for shape in (w.raw_image.shape, w.full_raw_image.shape):
             self.assertEqual(w.collect_filter_parameters(shape)['achf_background'], 100)
 

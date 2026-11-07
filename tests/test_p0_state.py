@@ -79,6 +79,7 @@ class ReliableStateTests(unittest.TestCase):
 
     def test_recipe_uses_loaded_image_limits_instead_of_previous_image(self):
         w=self.w
+        w.ui_level.setCurrentIndex(1)
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);source=root/'large.tif'
             image=np.ones((320,384),np.float32);tifffile.imwrite(source,image)

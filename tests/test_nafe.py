@@ -276,6 +276,9 @@ class NAFEGuiTests(unittest.TestCase):
         try:
             a=np.ones((32,40),np.float32);w.full_raw_image=w.raw_image=w.preview_image=a
             self.assertFalse(w.sec_nafe.is_filter_active())
+            self.assertEqual(w.sl_nafe_opacity.value(),40)
+            self.assertEqual(w.sl_nafe_opacity.property('reset_value'),40)
+            self.assertTrue(w.sec_nafe.isVisibleTo(w))
             w.ui_level.setCurrentIndex(2)
             w.sec_nafe.chk_active.setChecked(True)
             w.combo_nafe_sigma.setCurrentIndex(1);w.sl_nafe_sigma.setValue(40000)
@@ -289,7 +292,16 @@ class NAFEGuiTests(unittest.TestCase):
             self.assertTrue(w.sl_nafe_sigma.parameter_row.isHidden())
             self.assertEqual(w.combo_nafe_window.currentData(),257)
             w.ui_level.setCurrentIndex(0)
-            self.assertFalse(w.sec_nafe.is_filter_active());self.assertTrue(w.sec_nafe.isHidden())
+            self.assertTrue(w.sec_nafe.is_filter_active());self.assertFalse(w.sec_nafe.isHidden())
+            self.assertTrue(w.sec_nafe.isVisibleTo(w))
+            self.assertFalse(w.sec_rhef.isVisibleTo(w))
+            self.assertFalse(w.sl_nafe_opacity.parameter_row.isHidden())
+            self.assertTrue(w.sl_nafe_sigma.parameter_row.isHidden())
+            self.assertTrue(w.combo_nafe_window.isHidden())
+            basic=capture_settings(w)
+            restore_settings(w,basic)
+            self.assertTrue(w.sec_nafe.is_filter_active())
+            self.assertEqual(w.ui_level.currentData(),'basic')
             self.assertEqual(w.combo_nafe_window.currentData(),257)
             old=json.loads(json.dumps(saved));old['sections'].pop('sec_nafe')
             old['controls']={k:v for k,v in old['controls'].items() if '_nafe_' not in k}

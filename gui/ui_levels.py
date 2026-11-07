@@ -56,8 +56,8 @@ def add_ui_levels(window, header_layout):
     label.setBuddy(window.ui_level)
     for title,value in [('Basic','basic'),('Standard','standard'),('Expert','expert')]:
         window.ui_level.addItem(title,value)
-    window.ui_level.setCurrentIndex(1)
-    window.ui_level.setToolTip('Basic: NRGF, MGN, AEL edge-aware WOW, ACHF ISO 04 and Angular; other filters are switched off. Standard: all filters with common controls. Expert: all parameters. Parameter values are retained when hidden.')
+    window.ui_level.setCurrentIndex(0)
+    window.ui_level.setToolTip('Basic: NRGF, NAFE, MGN, AEL edge-aware WOW, ACHF ISO 04 and Angular; other filters are switched off. Standard: all filters with common controls. Expert: all parameters. Parameter values are retained when hidden.')
     label.setToolTip(window.ui_level.toolTip())
     row.addWidget(label);row.addWidget(window.ui_level,1)
     header_layout.insertLayout(1,row)
@@ -88,7 +88,7 @@ def apply_ui_level(window, *, recalculate=True):
         elif widget is not window.combo_achf_variant:widget.setVisible(True)
     with QSignalBlocker(window.chk_advanced):window.chk_advanced.setChecked(expert)
     window.update_detail_visibility(expert)
-    excluded=('nafe','fnrgf','rhef','tangential','larson_sekanina')
+    excluded=('fnrgf','rhef','tangential','larson_sekanina')
     disabled=[];changed=False
     if basic:
         changes=[(getattr(window,'sec_'+name).chk_active,False,name.upper()) for name in excluded]
@@ -113,8 +113,6 @@ def apply_ui_level(window, *, recalculate=True):
             elif widget is not window.combo_achf_variant and not hasattr(widget,'isChecked'):
                 widget.hide()
     for name in excluded:getattr(window,'sec_'+name).setVisible(not basic)
-    # Hide the empty RHEF group including its header.
-    window.sec_rhef.parentWidget().parentWidget().setVisible(not basic)
     for variant,card in window.achf_cards.items():
         card.setVisible(not basic or variant in ('ael_iso_04','ael_angular_4'))
     window.sec_achf.hide();window.combo_achf_variant.hide()

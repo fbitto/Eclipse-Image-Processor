@@ -38,6 +38,7 @@ def create_slider(
     on_release_callback=None,
     divisor=1,
     formatter=None,
+    slider_class=ScrollSafeSlider,
 ) -> Tuple[QSlider, QLineEdit]:
     """Create one compact row with a physical-value editor and slider."""
     row = QHBoxLayout()
@@ -52,7 +53,7 @@ def create_slider(
 
     row.addWidget(lbl_name)
 
-    slider = ScrollSafeSlider(Qt.Orientation.Horizontal)
+    slider = slider_class(Qt.Orientation.Horizontal)
     slider.setRange(min_v, max_v)
     slider.setValue(default_v)
     if tooltip:

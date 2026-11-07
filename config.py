@@ -120,7 +120,7 @@ LIGHTROOM_QSS = '''
     QCheckBox::indicator {
         width: 16px;
         height: 16px;
-        border: 1px solid #555555;
+        border: 1px solid #888888;
         border-radius: 2px;
         background-color: #444444;
     }

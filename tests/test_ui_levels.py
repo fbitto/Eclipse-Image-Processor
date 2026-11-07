@@ -25,7 +25,7 @@ class UILevelTests(unittest.TestCase):
         w=self.w
         self.assertEqual([w.combo_input_state.itemData(i) for i in range(w.combo_input_state.count())],['linear','nonlinear'])
         self.assertEqual(w.combo_input_state.currentData(),'linear')
-        self.assertEqual(w.ui_level.currentData(),'standard')
+        self.assertEqual(w.ui_level.currentData(),'basic')
         self.assertTrue(w.chk_advanced.isHidden())
         layout=w.appearance_layout
         self.assertLess(layout.indexOf(w.chk_calibrate_colour),layout.indexOf(w.sl_warmth.parameter_row))
@@ -37,6 +37,7 @@ class UILevelTests(unittest.TestCase):
 
     def test_basic_uses_ael_preserves_on_off_and_disables_excluded_filters_once(self):
         w=self.w
+        w.ui_level.setCurrentIndex(1)
         for name in ('fnrgf','rhef','tangential','larson_sekanina','mgn'):
             getattr(w,'sec_'+name).chk_active.setChecked(True)
         w.sec_nrgf.chk_active.setChecked(False);w.sec_wow.chk_active.setChecked(True)

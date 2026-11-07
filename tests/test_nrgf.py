@@ -272,6 +272,7 @@ class NRGFGuiTests(unittest.TestCase):
 
     def test_order_controls_and_partial_filter_settings_round_trip(self):
         w=EclipseProcessorApp();w.auto_calculate=False
+        w.ui_level.setCurrentIndex(1)
         try:
             w.full_raw_image=w.raw_image=w.preview_image=corona()
             w.txt_x.setText('47');w.txt_y.setText('40');w.txt_r.setText('8')

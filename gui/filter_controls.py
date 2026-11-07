@@ -1,6 +1,6 @@
 """Additional numerical controls with explicit physical units and conversions."""
 from PySide6.QtWidgets import QCheckBox, QLabel
-from .components import ScrollSafeComboBox
+from .components import OpacitySlider, ScrollSafeComboBox
 from .factories import create_slider_float, create_slider, update_slider_display, set_parameter_title
 
 # attribute, recipe key, title, min, max, default, divisor, help
@@ -262,6 +262,7 @@ def add_achf_variants(window):
         controls['enabled'].toggled.connect(lambda _: window.on_filter_slider_released(window.sec_achf))
         layout.addWidget(controls['enabled'])
         controls['opacity'], _=create_slider('Opacity (%)',0,100,50,layout,
+            slider_class=OpacitySlider,
             tooltip='Overlay opacity; changing this only recomposes cached layers.')
         controls['opacity'].setProperty('mix_only',True)
         controls['opacity'].valueChanged.connect(window.on_layer_mix_changed)
@@ -313,6 +314,7 @@ def add_layer_opacities(window):
                 control.setToolTip(help_text)
         mode='Multiply' if name in ('nrgf', 'fnrgf') else 'Linear Light' if name == 'larson_sekanina' else 'Overlay'
         slider,_=create_slider('Opacity (%)',0,100,40 if name == 'nrgf' else 50,layout,
+            slider_class=OpacitySlider,
             tooltip=f'{mode} layer opacity. Changes only the composition; preserves calculated filters.')
         slider.setProperty('mix_only',True)
         slider.valueChanged.connect(window.on_layer_mix_changed)

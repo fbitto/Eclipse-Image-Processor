@@ -63,3 +63,9 @@
 - Prominence edge softness uses native pixels and must travel in both presentation jobs and export requests; optional recipe fields restore the historical 3-pixel feather. Keep the slider in both UI modes and gate it with the RGB prominence checkbox.
 
 - Reparent canonical ACHF controls into independent cards rather than duplicating parameter state. Restore card expansion independently from canonical include flags so saved section activation cannot enable an omitted variant. Apply Basic restrictions after recipe restoration and source defaults, batching signals into one pipeline request. Persist UI levels by stable string; translate legacy combo text/index pairs before strict validation.
+
+- File drops and the open dialog share EclipseProcessorApp.open_file and its asynchronous TaskThread loader. Accept one existing local image/JSON only; reject drops while loading, closing or the sidebar is disabled.
+
+- Fresh windows start in Basic; saved ui_mode and legacy Advanced-to-Standard/Expert mapping still govern recipe restoration. Tests exercising all-filter controls must select Standard explicitly.
+
+- OpacitySlider keeps QSlider values/signals in integer percentages for recipes, reset and keyboard/accessibility; custom painting and pointer mapping alone apply the 1.5 travel curve. All filter and ACHF opacity factories use it; Gain remains linear.

@@ -8,7 +8,7 @@ Input is an already stacked linear HDR, using the same immutable working mono as
 
 Druckmüller (2013), ApJS 207, 25, equations 11–14: for each target, calculate the neighborhood-weighted mean of `Phi((I_target - I_neighbor)/sigma)`, where Phi is the Gaussian CDF and only observed operator samples contribute. This is the equalized image E in [0,1], float32, with a constant mapping to 0.5. The odd support kernel contains twelve Gaussians, sigma `2^(m/2)` target pixels for m=1…12, all c_m=1, normalized to centre 1. Sigma is an intensity-noise gate, distinct from spatial kernel sigma.
 
-E is encoded directly as an independent Overlay layer with separate unassociated alpha; it is not MAD/tanh remapped. Overlay is an application presentation choice, not the paper's linear gamma/E mixture. Layer order places NAFE after NRGF and before FNRGF; all numerical branches still read the same source. New sessions leave NAFE disabled, at 20% opacity. Basic hides/disables it; Standard offers activation and opacity; Expert exposes its parameters. Leaving Expert retains hidden parameter values.
+E is encoded directly as an independent Overlay layer with separate unassociated alpha; it is not MAD/tanh remapped. Overlay is an application presentation choice, not the paper's linear gamma/E mixture. Layer order places NAFE after NRGF and before FNRGF; all numerical branches still read the same source. New sessions leave NAFE disabled, at 40% opacity. Basic and Standard offer activation and opacity; Expert exposes its parameters. Leaving Expert retains hidden parameter values.
 
 ## Noise and units
 

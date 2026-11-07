@@ -66,6 +66,7 @@ class ProjectSettingsTests(unittest.TestCase):
         from gui.filter_controls import collect_controls
         from core.pipeline import prepare_parameters
         w=EclipseProcessorApp();w.auto_calculate=False
+        w.ui_level.setCurrentIndex(1)
         try:
             w.txt_x.setText('24');w.txt_y.setText('16');w.txt_r.setText('5')
             w.sec_larson_sekanina.chk_active.setChecked(True)
@@ -155,7 +156,7 @@ class ProjectSettingsTests(unittest.TestCase):
                     w.load_image_action();wait_for_gui(w)
                 self.assertEqual(w.source_path,str(source),w.status_label.text())
                 for name in ('fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
-                    self.assertEqual(getattr(w,'sl_'+name+'_opacity').value(),10 if name=='wow' else 75 if name=='larson_sekanina' else 19 if name=='achf' else 20)
+                    self.assertEqual(getattr(w,'sl_'+name+'_opacity').value(),10 if name in ('wow','achf','tangential') else 75 if name=='larson_sekanina' else 20)
                 for variant,controls in w.achf_ael_controls.items():
                     self.assertEqual(controls['opacity'].value(),10)
                 w.chk_advanced.setChecked(True)

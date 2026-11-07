@@ -89,7 +89,7 @@ class LoadingDefaultsTests(unittest.TestCase):
         with np.load(Path(__file__).parent/'fixtures/ael_achf_iso04.npz') as f:
             self.image=f['image']
         self.source=self.root/'source.tif';tifffile.imwrite(self.source,self.image)
-        self.window=EclipseProcessorApp();self.window.auto_calculate=False
+        self.window=EclipseProcessorApp();self.window.ui_level.setCurrentIndex(1);self.window.auto_calculate=False
         self.window.request_processing_signal.disconnect()
 
     def tearDown(self):
@@ -127,7 +127,7 @@ class LoadingDefaultsTests(unittest.TestCase):
         self.assertNotIn('strength',display)
         for name in ('fnrgf','rhef','mgn','tangential','larson_sekanina','achf'):
             self.assertEqual(p[name+'_str'],25 if name == 'larson_sekanina' else 100)
-            self.assertEqual(getattr(w,'sl_'+name+'_opacity').value(),75 if name == 'larson_sekanina' else 19 if name == 'achf' else 20)
+            self.assertEqual(getattr(w,'sl_'+name+'_opacity').value(),75 if name == 'larson_sekanina' else 10 if name in ('achf','tangential') else 20)
         self.assertEqual((p['nrgf_str'],p['nrgf_opacity'],p['nrgf_bin_px']),(100,40,2.))
         self.assertEqual((p['wow_mode'],p['wow_scales'],p['wow_noise_floor'],p['wow_str'],p['wow_opacity']),
                          ('ael_bilateral',8,3.,100,10))

@@ -4,24 +4,24 @@
 
 ## Layer order and initial controls
 
-These are the prepared defaults for the first direct image load in Standard or Expert. Basic disables FNRGF and every filter outside its five-card selection, without automatically activating NRGF. Geometry-dependent filter heuristics are evaluated for that image; this table is not a universal numerical recipe.
+These are the prepared defaults for the first direct image load in Standard or Expert. Basic disables FNRGF and every filter outside its six-card selection, without automatically activating NRGF. Geometry-dependent filter heuristics are evaluated for that image; this table is not a universal numerical recipe.
 
 | Layer | Fixed mode | Initially active/included | Opacity | Gain |
 | --- | --- | --- | ---: | ---: |
 | NRGF | Multiply | No | 40% | — |
-| NAFE (AEL) | Overlay | No | 20% | — |
+| NAFE (AEL) | Overlay | No | 40% | — |
 | FNRGF | Multiply | Yes | 20% | — |
 | RHEF | Overlay | No | 20% | — |
 | MGN | Overlay | Yes | 20% | — |
 | WOW (AEL guided edge-aware) | Overlay | Yes | 10% | — |
-| Tangential Detail | Overlay | No | 20% | — |
+| Tangential Detail | Overlay | No | 10% | — |
 | Larson–Sekanina | Linear Light | No | 75% | 25% |
-| ACHF Adaptive | Overlay | No | 19% | — |
+| ACHF Adaptive | Overlay | No | 10% | — |
 | ACHF ISO 01 | Overlay | No | 10% | — |
 | ACHF ISO 04 | Overlay | Yes | 10% | — |
 | ACHF Angular | Overlay | Yes | 10% | — |
 
-Larson–Sekanina exposes Gain from 0 to 200%; tangential detail and adaptive ACHF also retain their operator-specific gain controls. The Larson–Sekanina radial increment is fixed at zero and angular increment starts at 3°. Other numerical branches run at internal strength 100 and expose opacity rather than redundant strength sliders. Opacity mixes a cached layer; Gain changes Larson–Sekanina encoding before Linear Light clipping and therefore invalidates that layer.
+Larson–Sekanina exposes Gain from 0 to 200%; tangential detail and adaptive ACHF also retain their operator-specific gain controls. The Larson–Sekanina radial increment is fixed at zero and angular increment starts at 3°. Other numerical branches run at internal strength 100 and expose opacity rather than redundant strength sliders. Opacity sliders map track position x to 100 × x^1.5 percent; displayed, typed and saved values stay in actual percentage units. Opacity mixes a cached layer; Gain changes Larson–Sekanina encoding before Linear Light clipping and therefore invalidates that layer.
 
 ACHF variants have separate Active cards with independent parameters and opacity. Basic shows ISO 04 and Angular; Standard and Expert expose all four variants. Expanding a card does not activate it.
 
