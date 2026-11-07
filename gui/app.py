@@ -266,7 +266,7 @@ class EclipseProcessorApp(QMainWindow):
         self.background.build(self.preparation_layout)
         self._build_filters_section(control_layout)
         add_layer_opacities(self)
-        for section in (self.sec_nrgf, self.sec_fnrgf, self.sec_mgn, self.sec_wow, self.sec_rhef,
+        for section in (self.sec_nrgf, self.sec_nafe, self.sec_fnrgf, self.sec_mgn, self.sec_wow, self.sec_rhef,
                         self.sec_tangential, self.sec_larson_sekanina, self.sec_achf):
             for slider in section.findChildren(QSlider):
                 if slider.property("mix_only"):
@@ -297,6 +297,7 @@ class EclipseProcessorApp(QMainWindow):
         section_help = {
             self.sec_geo: "Set the disk center and reference radius in native image pixels for radial filtering and the circle overlay.",
             self.sec_nrgf: "Normalizing Radial Graded Filter (AEL): continuous annular brightness and spread on linear input; independent Multiply layer. Undefined annuli stay transparent.",
+            self.sec_nafe: "AEL NAFE: noise-adaptive fuzzy equalization of linear input; independent Overlay layer. Expert exposes noise and support controls. Fast preview is approximate; export calculates natively.",
             self.sec_fnrgf: "Fourier Normalizing Radial Gradient Filter: model annular brightness and spread as functions of angle.",
             self.sec_mgn: "Multi-scale Gaussian Normalization: combine local contrast at several scales with a global gamma image.",
             self.sec_wow: "Wavelets Optimized Whitening: normalize multiscale contrast with optional noise suppression.",
@@ -509,6 +510,14 @@ class EclipseProcessorApp(QMainWindow):
         )
         self.sec_rhef.toggled_active.connect(self.on_filter_toggled)
         histogram_group.addWidget(self.sec_rhef)
+
+        self.sec_nafe = CollapsibleSection('NAFE (AEL)', has_checkbox=True, is_expanded=False, is_active=False)
+        self.sec_nafe.toggled_active.connect(self.on_filter_toggled)
+        nafe_note = QLabel('Linear HDR input. Fast preview is approximate; export recalculates at native resolution. Noise and window controls are in Expert.')
+        nafe_note.setWordWrap(True)
+        nafe_note.setToolTip('NAFE reads the shared linear HDR. Preview window scaling does not scale the twelve internal Gaussians; inspect native results before choosing opacity.')
+        self.sec_nafe.content_layout.addWidget(nafe_note)
+        histogram_group.addWidget(self.sec_nafe)
 
         multiscale_group = create_filter_group("MULTI-SCALE / WAVELETS", layout)
         self.sec_mgn = CollapsibleSection("MGN", has_checkbox=True, is_expanded=False, is_active=False)
@@ -983,6 +992,8 @@ class EclipseProcessorApp(QMainWindow):
         """Snapshot UI once; prepare the same recipe for preview or export."""
         wow_scales = self.sl_wow_scales.value() or (8 if self.combo_wow_bilateral.currentIndex() == 2 else self.sl_wow_scales.maximum())
         params = {
+            'nafe_enabled': self.sec_nafe.is_filter_active(),
+            'nafe_str': 100,
             "nrgf_enabled": self.sec_nrgf.is_filter_active(),
             "nrgf_str": 100,
             "nrgf_rad": self.sl_nrgf_rad.value(),
@@ -1035,7 +1046,7 @@ class EclipseProcessorApp(QMainWindow):
         }
         variants = collect_achf_variants(self)
         params['layer_display'] = composition_settings(self.collect_display_parameters())
-        for name in ('nrgf','fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
+        for name in ('nrgf','nafe','fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
             params[name+'_opacity'] = getattr(self,'sl_'+name+'_opacity').value()
         variants['adaptive'] = dict(enabled=self.chk_achf_adaptive.isChecked(),
                                     opacity=self.sl_achf_opacity.value(),strength=100)

@@ -9,6 +9,7 @@ These are the prepared defaults for the first direct image load in Standard or E
 | Layer | Fixed mode | Initially active/included | Opacity | Gain |
 | --- | --- | --- | ---: | ---: |
 | NRGF | Multiply | No | 40% | — |
+| NAFE (AEL) | Overlay | No | 20% | — |
 | FNRGF | Multiply | Yes | 20% | — |
 | RHEF | Overlay | No | 20% | — |
 | MGN | Overlay | Yes | 20% | — |
@@ -38,11 +39,19 @@ Missing/nonfinite display pixels are black. A two-native-pixel smoothstep transi
 
 ## Filter-specific conventions
 
+[NAFE](nafe-ael.md) uses AEL 1.4.2 fuzzy equalization directly as an Overlay layer. It starts disabled; Standard exposes opacity and Expert exposes automatic/manual gate sigma and native support window. Fast preview scales the window but retains internal target-pixel Gaussians, so native export is recalculated. Noise gate sigma uses working linear input units. Statistical exclusions remove actual NAFE kernel samples, independently of the experimental AEL support-separation toggle.
+
 NRGF adapts AEL continuous radial statistics through 1.4.1: initial annuli 2 native pixels, median/MAD, minimum 12 samples and no profile smoothing. Its inner radius starts at one reference-disk radius; there is no outer-radius cutoff. Sparse/constant annuli without measurable angular spread remain transparent. Profile smoothing and minimum samples are advanced controls. Signed input is supported. It is independent of FNRGF; both can be active.
 
 MGN sigmas are **1.25, 2.5, 5, 10, 20, 40 native pixels**, weights 1, gamma 3.2, k 0.7, h 0.7 and truncation 3. Preview scales sigmas down internally; sliders retain native units. Both complete and masked paths rescale extreme input units before local normalization and clipping; masked transport values never set that scale.
 
-NRGF layers use AEL 1.4.1 shared-angle chaining: when neighboring annuli cover different angular cells, profile and spread changes are measured on their common observed angles. Complete annuli retain the previous result. Missing pixels remain undefined. The direct `nrgf_normalize` API keeps `partial_annuli='observed'` by default; application layers explicitly select `'chain'` and record it in their mapping metadata.
+NRGF layers use AEL 1.4.1 shared-angle chaining: when neighboring annuli cover different angular cells, profile and spread changes are measured on their common observed angles. Runs containing only complete annuli retain the observed-annulus result; partial annuli earlier in a run can introduce an accumulated offset in legacy chaining. Missing pixels remain undefined. The direct `nrgf_normalize` API keeps `partial_annuli='observed'` by default; application layers explicitly select `'chain'` and record it in their mapping metadata.
+
+Expert offers an opt-in **Anchored shared-angle chain (EIP)** variant (`chain_anchored`). In each contiguous usable run, it subtracts the cumulative chain correction at the first genuinely complete annulus, separately for the brightness profile and residual spread. Eligibility requires complete coverage flags and statistical samples in all 360 angular sectors; sparse-annulus coverage flags alone cannot establish an anchor. With no eligible annulus, the run retains legacy chaining. Runs without a positive, finite correction statistic retain the existing uncorrected model for that statistic. Mapping metadata records `operator_revision=eip-chain-anchor-1`, per-run anchor bins (target-pixel radius divided by ring width), correction-term validity, and the legacy fallback. Empty/short unusable runs do not produce anchor records.
+
+This extension uses only the already stacked linear HDR, reference geometry and statistical mask. Output-only targets cannot select an anchor, observed validity remains separate, and missing radiance is never filled. It does not process individual exposures or change the master, other numerical branches, prominence RGB/alpha, or blend masks. Anchored output intentionally differs from upstream AEL chaining; it is not a claim of recovered resolution or scientific detail. Legacy chaining remains the new-session and omitted-parameter default. Fast preview and native export use the same selected mode, but resampling can change anchor availability and statistics, so preview is approximate. Changing the mode invalidates only the NRGF numerical layer; opacity only recomposes.
+
+Validation on 5 November 2026: all 458 repository tests passed, including 15 focused NRGF tests. The native 5801 × 4596 handoff HDR green-channel result matched the isolated experimental anchor exactly, with the source SHA-256 unchanged; the complete-annulus anchor was bin 152 at 2 native pixels per bin. Synthetic PSB channel/composite verification and an offscreen Expert-selector layout check also passed. This is numerical integration validation, not native GUI/Photoshop acceptance or independent scientific-detail certification.
 
 FNRGF uses a separate Fourier model. Legacy mode retains reference coefficients on complete annuli, but fits only measured sector statistics on partial annuli instead of treating absent sectors as zeros. Its fitted order is bounded by the number of populated sectors; fewer than three sectors remain undefined. Continuous mode applies the same support bound and leaves harmonics k ≤ 2 unpenalized so smooth angular sky trends can be fitted even at low coverage. Higher harmonics retain coverage-dependent regularization. Existing attenuation controls still deliberately retain part of the modeled trend. These changes do not reconstruct missing radiance or make the Fourier and annular operators interchangeable.
 

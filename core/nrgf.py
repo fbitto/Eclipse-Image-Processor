@@ -109,11 +109,20 @@ def _covered_cells(geometry, center, m, bin_px, nb=360):
     return (whole & ((seen > 0) | (inside == 0))) | sparse[:, None], cell
 
 
-def _chain_terms(sets, covered, statistic):
+def _chain_anchor(sets, covered):
+    """First genuinely sampled whole annulus; sparse coverage flags alone are insufficient."""
+    for i, (_, cells) in enumerate(sets):
+        check_cancelled()
+        if covered[i].all() and np.unique(cells).size == covered.shape[1]:
+            return i
+    return None
+
+
+def _chain_terms(sets, covered, statistic, anchor=None):
     """For each annulus after the first of a run: how much the step of ``statistic`` (in logarithm) from the annulus
     before changes when it is measured on the position-angle cells both annuli cover, instead of on all their pixels.
     Zero where the covered cells do not change, so a run of whole annuli is left exactly as it is; ``None`` if a
-    statistic is not positive."""
+    statistic is not positive. Optional anchor fixes the cumulative constant at that node."""
     terms = np.zeros(len(sets))
     for i in range(1, len(sets)):
         check_cancelled()
@@ -128,11 +137,13 @@ def _chain_terms(sets, covered, statistic):
         if not all(np.isfinite(s)) or min(s) <= 0:
             return None
         terms[i] = (np.log(s[0]) - np.log(s[1])) - (np.log(s[2]) - np.log(s[3]))
+    if anchor is not None:
+        terms[0] -= np.cumsum(terms)[anchor]
     return terms
 
 
 
-def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=12, smooth_bins=0., partial_annuli='observed', targets=None):
+def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=12, smooth_bins=0., partial_annuli='observed', targets=None, diagnostics=None):
     """Evaluate annular mean/spread at the actual radius, without image smoothing.
 
     Statistical nodes are measured annulus by annulus and interpolated separately across each contiguous run of
@@ -149,8 +160,10 @@ def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=
     clipping, integers coarser than the noise); an annulus whose residuals vary with radius only (no angular spread
     above a float32 step of its own values). Nodes are smoothed only if ``smooth_bins`` > 0.
     """
-    if partial_annuli not in ('observed', 'chain'):
-        raise ValueError("partial_annuli must be 'observed' or 'chain'")
+    if partial_annuli not in ('observed', 'chain', 'chain_anchored'):
+        raise ValueError("partial_annuli must be 'observed', 'chain' or 'chain_anchored'")
+    if diagnostics is not None:
+        diagnostics['anchor_runs'] = []
     a = np.asarray(img, np.float32)
     m = np.asarray(valid, bool) & np.isfinite(a)
     out = np.full(a.shape, np.nan, np.float32)
@@ -172,7 +185,7 @@ def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=
     extra_r=r.ravel()[extra];extra_bins=bins.ravel()[extra]
     extra_residual=np.full(len(extra),np.nan)
     covered = cellof = None
-    if partial_annuli == 'chain':
+    if partial_annuli in ('chain', 'chain_anchored'):
         covered, cell = _covered_cells(geometry, 'sun', m, bin_px)
         cellof = cell.ravel()[pos]
     # 1.3.2. Each annulus gives a node at the mean radius of its own pixels (a node placed at the annulus' centre would
@@ -319,7 +332,10 @@ def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=
         if covered is not None:
             here = cellof[lo:hi]
             pieces = [slice(cuts[k]-lo, cuts[k+1]-lo) for k in run]
-            terms = _chain_terms([(au[s], here[s]) for s in pieces], covered[run], np.median if robust else np.mean)
+            sets = [(au[s], here[s]) for s in pieces]
+            anchor = _chain_anchor(sets, covered[run]) if partial_annuli == 'chain_anchored' else None
+            terms = _chain_terms(sets, covered[run], np.median if robust else np.mean, anchor)
+            profile_defined = terms is not None
             if terms is not None and terms.any():
                 nd = fwd(tr, inv(tr, nd)*np.exp(np.cumsum(terms)))
                 s1 = _node_derivatives(nd, anchors[run])[0]
@@ -327,7 +343,11 @@ def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=
                 res = au-along(y, run, ru, tr, s1 if smooth_bins == 0 else _node_derivatives(y, anchors[run])[0])
                 sp, _ = spread(res, run)
             spread_of = ((lambda z: 1.4826*np.median(np.abs(z-np.median(z)))) if robust else np.std)
-            terms = _chain_terms([(res[s], here[s]) for s in pieces], covered[run], spread_of)
+            terms = _chain_terms([(res[s], here[s]) for s in pieces], covered[run], spread_of, anchor)
+            if diagnostics is not None and partial_annuli == 'chain_anchored':
+                diagnostics['anchor_runs'].append(dict(first_bin=int(run[0]), last_bin=int(run[-1]),
+                    anchor_bin=None if anchor is None else int(run[anchor]),
+                    profile_defined=profile_defined, spread_defined=terms is not None))
             if terms is not None and terms.any():
                 sp = sp*np.exp(np.cumsum(terms))
         evaluate=np.flatnonzero((extra_bins>=run[0]) & (extra_bins<=run[-1]))
@@ -355,13 +375,16 @@ def _continuous_nrgf(img, valid, geometry, *, bin_px=2., robust=True, min_count=
     return out
 
 def nrgf_normalize(image, cx, cy, radius, valid=None, *, bin_px=2., min_count=12,
-                   robust=True, smooth_bins=0., inner_radius=1., partial_annuli='observed', target_valid=None):
+                   robust=True, smooth_bins=0., inner_radius=1., partial_annuli='observed', target_valid=None, diagnostics=None):
     """Return signed dimensionless NRGF on a 2D linear image; widths are target px.
 
     Uses finite observed samples outside max(1, inner_radius) disk radii.
     Negative/zero sky-subtracted radiance is allowed. No missing data is filled.
     The numerical API retains observed-annulus statistics by default; GUI layers
     use AEL 1.4.1 shared-angle chaining to stabilize partial annuli.
+    Opt-in chain_anchored references each run to its first genuinely complete
+    annulus, falling back to chain when absent. Optional diagnostics receives
+    per-run anchor bins (target-pixel radius divided by bin_px) and term validity.
     """
     a = np.asarray(image, dtype=np.float32)
     if a.ndim != 2 or not a.size:
@@ -386,7 +409,8 @@ def nrgf_normalize(image, cx, cy, radius, valid=None, *, bin_px=2., min_count=12
     geometry = SimpleNamespace(shape=a.shape, center=lambda _: (cx, cy), radius_map=lambda: r)
     return _continuous_nrgf(a, mask, geometry, bin_px=bin_px, min_count=min_count,
                             robust=robust, smooth_bins=smooth_bins, partial_annuli=partial_annuli,
-                            targets=None if target_valid is None else np.asarray(target_valid,bool) & np.isfinite(a) & (r>max(1.,inner_radius)*radius))
+                            targets=None if target_valid is None else np.asarray(target_valid,bool) & np.isfinite(a) & (r>max(1.,inner_radius)*radius),
+                            diagnostics=diagnostics)
 
 
 def nrgf_layer(image, params, valid=None, targets=None):
@@ -394,19 +418,24 @@ def nrgf_layer(image, params, valid=None, targets=None):
     scale = float(params.get('nrgf_scale', 1.))
     if not np.isfinite(scale) or scale <= 0:
         raise ValueError('NRGF scale must be finite and positive')
+    mode = params.get('nrgf_partial_annuli', 'chain')
+    diagnostics = {}
     q = nrgf_normalize(image, params['sx'], params['sy'], params['sr'], valid,
                        bin_px=params.get('nrgf_bin_px', 2.)*scale,
                        min_count=params.get('nrgf_min_count', 12),
                        robust=params.get('nrgf_robust', True),
                        smooth_bins=params.get('nrgf_smooth_bins', 0.),
-                       inner_radius=params.get('nrgf_rad', 10)/10., partial_annuli='chain',target_valid=targets)
+                       inner_radius=params.get('nrgf_rad', 10)/10., partial_annuli=mode,target_valid=targets,
+                       diagnostics=diagnostics)
     good = np.isfinite(q)
-    info = dict(input='linear luminance', partial_annuli='chain', upstream_version='1.4.1',
+    info = dict(input='linear luminance', partial_annuli=mode, upstream_version='1.4.1',
                 upstream_commit='17029c9284748c087adcd0d40241f7e3faf8d778',
                 bin_px=params.get('nrgf_bin_px', 2.), target_scale=scale,
                 min_count=params.get('nrgf_min_count', 12), robust=params.get('nrgf_robust', True),
                 smooth_bins=params.get('nrgf_smooth_bins', 0.),
                 profile_evaluation='local cubic Hermite; spread about continuous profile')
+    if mode == 'chain_anchored':
+        info.update(operator_revision='eip-chain-anchor-1', anchor_fallback='legacy chain', **diagnostics)
     if not good.any():
         return q, dict(info, undefined=True)
     layer, mapping = display_detail(q, good, statistics=valid if targets is not None else None)

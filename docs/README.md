@@ -13,6 +13,7 @@ Current implementation: Eclipse Image Processor 0.7.0. Updated 3 November 2026 f
 | [Settings JSON](settings.md) | Version 4 schema, restoration and source paths |
 | [Control levels](ui-levels-20261103.md) | Layout, Basic AEL filters and project compatibility |
 | [PSB export](psb-export.md) | Presentation, layer files, verification, colour correction and limits |
+| [AEL NAFE](nafe-ael.md) | Fuzzy equalization, noise units, approximate preview and independent Overlay export |
 | [AEL ACHF](achf-ael.md) | ISO 01, ISO 04 and Angular implementation |
 | [Larson–Sekanina](larson-sekanina.md) | Rotational residual, Gain and Linear Light encoding |
 | [Continuous RHEF](rhef-continuous.md) | Quantile interpolation and support rules |

@@ -80,7 +80,7 @@ Fast preview, native verification and export share normalization levels measured
 
 **Background model** selects **Plane (degree 1)**, the default, or **Quadratic (degree 2)** for smooth curvature. Changing the model keeps your sky samples and updates the preview when automatic calculation is enabled. The correction robustly fits each RGB channel (or mono) to native patch medians, requiring at least 6 samples for a plane or 12 for a quadratic surface, distributed over both axes. It subtracts spatial variation only, preserving the fitted mean sky level; it does not make the sky black or subtract a constant colour cast. Original source arrays remain available when disabled. All enhancement layers, colour calibration and export use the corrected linear working input. The model and sample positions are saved in JSON; they are regenerated for a new image. NaNs and explicit missing-data masks remain excluded; finite zeros are measurements. Sky samples containing faint corona can bias either fitted model: inspect and edit them. Method references: [Siril background extraction](https://siril.readthedocs.io/en/stable/processing/background.html) and [Seti Astro ABE](https://github.com/setiastro/setiastrosuitepro/blob/main/src/setiastro/saspro/abe.py).
 
-Default opacities are NRGF 40%, WOW and all AEL ACHF variants 10%, FNRGF/MGN/RHEF/Tangential 20%, Adaptive ACHF 19%, and Larson–Sekanina 75% with Gain 25%.
+Default opacities are NRGF 40%, WOW and all AEL ACHF variants 10%, FNRGF/NAFE/MGN/RHEF/Tangential 20%, Adaptive ACHF 19%, and Larson–Sekanina 75% with Gain 25%.
 
 The first direct image load enables FNRGF, MGN, AEL guided edge-aware WOW, ACHF ISO 04 and ACHF Angular. Other filters start disabled/excluded. Later direct image loads preserve all filter edits and activation states; a JSON load restores its own settings and leaves omitted filters disabled. See the [complete defaults table](docs/layer-composition.md#layer-order-and-initial-controls).
 
@@ -107,6 +107,7 @@ Every filter starts from the **shared working mono input**, including optional b
 | Layer | Blend mode | Main use |
 | --- | --- | --- |
 | NRGF | Multiply | Continuous annular normalization adapted from AEL; median/MAD or mean/STD statistics. |
+| NAFE (AEL) | Overlay | Noise-adaptive fuzzy equalization of linear HDR; disabled by default, Expert noise/window controls. |
 | FNRGF | Multiply | Fourier radial normalization; check radial bounds, angular order and reference geometry. |
 | RHEF | Overlay | Radial histogram equalization; compatible or continuous mode, with Upsilon redistribution. |
 | MGN | Overlay | Local contrast at six Gaussian scales plus a global gamma component. |
@@ -121,7 +122,7 @@ ACHF cards independently enable any combination of variants. Each retains its ow
 
 Each filter has its own **Opacity**; there is no global Reveal slider. Increase enhancement cautiously: more contrast can reveal noise and processing artifacts as well as structure.
 
-Current guides: [technical documentation index](docs/README.md), [layer composition and cache](docs/layer-composition.md), [continuous RHEF](docs/rhef-continuous.md), [Larson–Sekanina](docs/larson-sekanina.md), [AEL ACHF](docs/achf-ael.md), and [validation evidence and limits](docs/validation.md). Historical CPU measurements are indexed separately.
+Current guides: [technical documentation index](docs/README.md), [layer composition and cache](docs/layer-composition.md), [continuous RHEF](docs/rhef-continuous.md), [Larson–Sekanina](docs/larson-sekanina.md), [AEL ACHF](docs/achf-ael.md), [AEL NAFE](docs/nafe-ael.md), and [validation evidence and limits](docs/validation.md). Historical CPU measurements are indexed separately.
 
 ## Presentation
 

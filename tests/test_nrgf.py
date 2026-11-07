@@ -8,11 +8,12 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import tifffile
 from PySide6.QtWidgets import QApplication
 from core.filters import FilterWorker
-from core.nrgf import nrgf_normalize, nrgf_layer
+from core.nrgf import nrgf_normalize, nrgf_layer, _chain_anchor, _chain_terms
 from core.layer_engine import LayerEngine, requests
 from core.pipeline import apply_filter, execute_pipeline, prepare_parameters
 from core.export import export_images
@@ -61,6 +62,77 @@ class NRGFTests(unittest.TestCase):
             _,info=nrgf_layer(self.image,self.p)
         self.assertEqual(operator.call_args.kwargs['partial_annuli'],'chain')
         self.assertEqual(info['partial_annuli'],'chain')
+
+    def test_anchor_recovers_complete_annuli_and_concurrent_modes_are_isolated(self):
+        y,x=np.mgrid[:801,:801]
+        r=np.hypot(x-400,y-400);theta=np.arctan2(y-400,x-400)
+        image=(1e5*np.maximum(r/150,1)**-3*(1+.08*np.cos(3*theta))*
+               (1+np.random.default_rng(519).normal(0,.001,r.shape))).astype(np.float32)
+        valid=(np.hypot(x-435,y-395)>185)&(r<360)
+        def evaluate(mode, support=valid, **kw):
+            return nrgf_normalize(image,400,400,150,support,partial_annuli=mode,**kw)
+        observed=evaluate('observed')
+        legacy=evaluate('chain')
+        receipt={}
+        anchored=evaluate('chain_anchored',diagnostics=receipt)
+        compare=valid&(r>260)&(r<330)&np.isfinite(observed)&np.isfinite(legacy)&np.isfinite(anchored)
+        self.assertGreater(np.median(abs(legacy[compare]-observed[compare])),1e-3)
+        self.assertLess(np.median(abs(anchored[compare]-observed[compare])),1e-4)
+        self.assertTrue(any(row['anchor_bin'] is not None for row in receipt['anchor_runs']))
+        self.assertTrue(np.isnan(anchored[~valid]).all())
+        whole=(r>235)&(r<360)
+        old=evaluate('chain',whole);new=evaluate('chain_anchored',whole)
+        compare=whole&(r>260)&(r<330)&np.isfinite(old)&np.isfinite(new)
+        np.testing.assert_allclose(new[compare],old[compare],atol=1e-4)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results=list(pool.map(evaluate,('chain','chain_anchored')))
+        np.testing.assert_array_equal(results[0],legacy)
+        np.testing.assert_array_equal(results[1],anchored)
+        # Output-only targets must not enter the anchor's statistical population.
+        target=np.isfinite(image)&(r>150)&(r<360)
+        extended_receipt={}
+        extended=evaluate('chain_anchored',target_valid=target,diagnostics=extended_receipt)
+        np.testing.assert_array_equal(extended[valid],anchored[valid])
+        self.assertEqual(extended_receipt,receipt)
+        changed=image.copy();changed[target&~valid]=1e8
+        altered_receipt={}
+        altered=nrgf_normalize(changed,400,400,150,valid,partial_annuli='chain_anchored',
+                               target_valid=target,diagnostics=altered_receipt)
+        np.testing.assert_array_equal(altered[valid],anchored[valid])
+        self.assertEqual(altered_receipt,receipt)
+
+    def test_sparse_flags_cannot_anchor_and_absent_anchor_retains_legacy(self):
+        covered=np.ones((2,4),bool)
+        sparse=[(np.ones(12),np.zeros(12,dtype=int))]*2
+        self.assertIsNone(_chain_anchor(sparse,covered))
+        complete=(np.ones(12),np.tile(np.arange(4),3))
+        self.assertEqual(_chain_anchor([sparse[0],complete],covered),1)
+        # A known shared-sector step has a nonzero accumulated offset.
+        cells=np.tile(np.arange(4),12)
+        sets=[(np.where(cells==0,2.,1.),cells),(np.ones(48),cells)]
+        coverage=np.array([[True,False,False,False],[True,True,True,True]])
+        terms=_chain_terms(sets,coverage,np.mean)
+        self.assertNotEqual(terms.sum(),0)
+        anchored=_chain_terms(sets,coverage,np.mean,anchor=1)
+        self.assertAlmostEqual(np.cumsum(anchored)[1],0)
+        receipt={}
+        old=nrgf_normalize(self.image,47.3,39.7,8.,partial_annuli='chain')
+        new=nrgf_normalize(self.image,47.3,39.7,8.,partial_annuli='chain_anchored',diagnostics=receipt)
+        np.testing.assert_array_equal(new,old)
+        self.assertTrue(receipt['anchor_runs'])
+        self.assertTrue(all(row['anchor_bin'] is None for row in receipt['anchor_runs']))
+
+    def test_anchor_cache_identity_and_layer_receipt(self):
+        engine=LayerEngine();worker=FilterWorker()
+        p=dict(self.p,nrgf_partial_annuli='chain_anchored')
+        with patch('core.nrgf.nrgf_layer',wraps=nrgf_layer) as calculation:
+            engine.layer(worker,self.image,self.p,'nrgf')
+            layer=engine.layer(worker,self.image,p,'nrgf')
+            self.assertIs(layer,engine.layer(worker,self.image,dict(p,nrgf_opacity=80),'nrgf'))
+            self.assertEqual(calculation.call_count,2)
+        self.assertEqual(layer['mapping']['partial_annuli'],'chain_anchored')
+        self.assertEqual(layer['mapping']['operator_revision'],'eip-chain-anchor-1')
+        self.assertEqual(layer['mapping']['anchor_fallback'],'legacy chain')
 
     def test_matches_bundled_ael_133_oracles(self):
         y,x=np.indices(self.image.shape,dtype=float)
@@ -126,11 +198,12 @@ class NRGFTests(unittest.TestCase):
 
     def test_cancellation_inside_annular_measurement_does_not_cache_partial_layer(self):
         from core.cancellation import ProcessingCancelled
-        engine=LayerEngine()
-        with patch('core.nrgf.check_cancelled',side_effect=[None,None,ProcessingCancelled()]):
-            with self.assertRaises(ProcessingCancelled):
-                engine.layer(FilterWorker(),self.image,self.p,'nrgf')
-        self.assertIsNone(engine.layer(FilterWorker(),self.image,self.p,'nrgf',calculate=False))
+        for mode in ('chain','chain_anchored'):
+            engine=LayerEngine();p=dict(self.p,nrgf_partial_annuli=mode)
+            with patch('core.nrgf.check_cancelled',side_effect=[None,None,ProcessingCancelled()]):
+                with self.assertRaises(ProcessingCancelled):
+                    engine.layer(FilterWorker(),self.image,p,'nrgf')
+            self.assertIsNone(engine.layer(FilterWorker(),self.image,p,'nrgf',calculate=False))
 
     def test_cached_multiply_layer_and_independent_fnrgf_order(self):
         engine=LayerEngine();worker=FilterWorker()
@@ -157,7 +230,7 @@ class NRGFTests(unittest.TestCase):
         prepared=prepare_parameters(self.p,(160,192),(80,96),(80,96))
         self.assertEqual(prepared['nrgf_bin_px'],2.)
         self.assertEqual(prepared['nrgf_scale'],.5)
-        p=dict(self.p,layered_model=True,valid_mask=np.isfinite(self.image))
+        p=dict(self.p,layered_model=True,valid_mask=np.isfinite(self.image),nrgf_partial_annuli='chain_anchored')
         worker=FilterWorker()
         expected=execute_pipeline(worker,self.image,p)
         with tempfile.TemporaryDirectory() as tmp:
@@ -173,6 +246,9 @@ class NRGFTests(unittest.TestCase):
             np.testing.assert_array_equal(result,tifffile.imread(package/recipe['combined']))
             self.assertEqual([r['filter'] for r in recipe['layers']],['linear_reference','base','nrgf'])
             self.assertEqual(recipe['layers'][2]['mode'],'Multiply')
+            self.assertEqual(recipe['layers'][2]['normalization']['partial_annuli'],'chain_anchored')
+            self.assertEqual(recipe['layers'][2]['normalization']['operator_revision'],'eip-chain-anchor-1')
+            self.assertEqual(recipe['parameters']['nrgf_partial_annuli'],'chain_anchored')
             self.assertEqual(tifffile.imread(package/recipe['layers'][2]['file']).dtype,np.uint16)
 
     def test_layer_package_uses_the_declared_multiply_equation(self):
@@ -203,6 +279,7 @@ class NRGFGuiTests(unittest.TestCase):
             self.assertLess(layout.indexOf(w.sec_nrgf),layout.indexOf(w.sec_fnrgf))
             self.assertFalse(w.sec_nrgf.is_filter_active())
             self.assertEqual(w.sl_nrgf_opacity.value(),40)
+            self.assertEqual(w.combo_nrgf_partial_annuli.currentData(),'chain')
             self.assertFalse(hasattr(w,'sl_nrgf_str'))
             self.assertEqual(w.sec_nrgf.content_layout.indexOf(w.sl_nrgf_opacity.parameter_row),0)
             old=capture_settings(w)
@@ -211,12 +288,19 @@ class NRGFGuiTests(unittest.TestCase):
             w.sec_nrgf.chk_active.setChecked(True)
             w.sec_fnrgf.chk_active.setChecked(True)
             w.sl_nrgf_opacity.setValue(61);w.sl_nrgf_bin_px.setValue(35)
+            w.combo_nrgf_partial_annuli.setCurrentIndex(1)
             saved=capture_settings(w)
             restore_settings(w,saved)
             self.assertEqual(capture_settings(w),saved)
             p=w.collect_filter_parameters(w.raw_image.shape)
             self.assertTrue(p['nrgf_enabled'] and p['fnrgf_enabled'])
             self.assertEqual(p['nrgf_bin_px'],3.5)
+            self.assertEqual(p['nrgf_partial_annuli'],'chain_anchored')
+            self.assertTrue(w.combo_nrgf_partial_annuli.isHidden())
+            legacy=capture_settings(w)
+            legacy['controls'].pop('combo_nrgf_partial_annuli')
+            restore_settings(w,legacy)
+            self.assertEqual(w.combo_nrgf_partial_annuli.currentData(),'chain')
             restore_settings(w,old)
             self.assertFalse(w.sec_nrgf.is_filter_active())
             self.assertEqual(w.sl_nrgf_opacity.value(),40)
@@ -224,4 +308,5 @@ class NRGFGuiTests(unittest.TestCase):
             self.assertTrue(w.sl_nrgf_min_count.parameter_row.isHidden())
             w.chk_advanced.setChecked(True)
             self.assertFalse(w.sl_nrgf_min_count.parameter_row.isHidden())
+            self.assertFalse(w.combo_nrgf_partial_annuli.isHidden())
         finally:close_window(w)

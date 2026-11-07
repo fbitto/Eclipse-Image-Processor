@@ -53,8 +53,14 @@ RHEF/FNRGF ring-width ticks now denote native pixels. Reopening an older v4 reci
 
 `chk_statistics_separate_ael` records the opt-in experimental AEL statistics/output policy. Missing fields default off. The mode retains observed positive operator samples while restricting ACHF radial fits and display statistics, rather than reconstructing missing pixels.
 
+The optional Expert `combo_nrgf_partial_annuli` selector stores legacy shared-angle chaining (index 0, `chain`) or the EIP anchored variant (index 1, `chain_anchored`). New sessions and older v4 recipes without this control use legacy chaining, even if the preceding image used anchoring. Hiding Expert controls retains the selected algorithm. The numerical receipt records `nrgf_partial_annuli`; layer normalization receipts also identify the anchored revision and per-run fallback. The settings envelope remains version 4.
+
 Exports now use the PSB presentation for TIFF/JPEG regardless of the viewport toggle. Exposure affects all display products, and GUI export includes a separate float32 working-source package. Existing recipes keep their raw controls but recalculate under this corrected output contract. The optional Larson–Sekanina log input selector defaults to linear when omitted.
 
 ## Prominence control compatibility
 
 Prominence contrast is optional in older v4 recipes and restores to 1.0 when omitted. The new-session exposure is 0 EV; legacy recipes preserve saved negative EV values, including the historical −2 EV fallback when the exposure field is absent. Basic and Standard exposure edits cover 0…+5 EV, while Expert permits −3…+5 EV. A saved negative exposure remains active when switching to Basic or Standard, with a visible notice; moving the limited-range control explicitly replaces it. Mode changes do not alter exposure or hidden contrast. Preview and export use that same saved exposure and contrast.
+
+## NAFE compatibility
+
+The optional `sec_nafe`, `combo_nafe_sigma`, `combo_nafe_window` and `sl_nafe_*` controls use the existing version-4 envelope. Older recipes without them restore NAFE disabled, automatic residual-MAD sigma, multiplier 12, noise region 4 reference radii, residual guide sigma 4 native pixels and window 129. Manual `nafe_sigma` uses working linear input units; automatic mode records null in the parameter snapshot and the effective measured sigma in the layer receipt. `nafe_scale` identifies target/native resolution for the window and residual guide. Hidden Expert values persist. See [NAFE](nafe-ael.md) for noise fallbacks and the approximate-preview contract.

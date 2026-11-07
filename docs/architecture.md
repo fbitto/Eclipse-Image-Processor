@@ -17,7 +17,7 @@ This guide describes the active 0.7.0 implementation. See the [documentation ind
 | `core/warmth.py` | Enhanced-streamer sky/noise mask and editable presentation warmth layer |
 | `core/pipeline.py`, `core/layer_engine.py` | Resolution adaptation, independent numerical branches and composition |
 | `core/filters.py`, `core/masked_filters.py` | Numerical operators, support-aware paths and persistent `FilterWorker` |
-| `core/nrgf.py`, `core/ael_wow.py`, `core/ael_achf.py` | Bundled AEL-derived filters |
+| `core/nrgf.py`, `core/ael_nafe.py`, `core/ael_wow.py`, `core/ael_achf.py` | Bundled AEL-derived filters |
 | `core/presentation.py` | PSB tone mapping, un-stretched base and display edge treatment |
 | `core/prominences.py` | Independent exposure and editable red-limb mask from original loaded RGB |
 | `core/export.py`, `core/layer_package.py`, `core/psb_export.py` | Export orchestration, layer-package writing and PSB serialization |

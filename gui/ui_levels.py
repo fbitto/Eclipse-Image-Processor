@@ -88,7 +88,7 @@ def apply_ui_level(window, *, recalculate=True):
         elif widget is not window.combo_achf_variant:widget.setVisible(True)
     with QSignalBlocker(window.chk_advanced):window.chk_advanced.setChecked(expert)
     window.update_detail_visibility(expert)
-    excluded=('fnrgf','rhef','tangential','larson_sekanina')
+    excluded=('nafe','fnrgf','rhef','tangential','larson_sekanina')
     disabled=[];changed=False
     if basic:
         changes=[(getattr(window,'sec_'+name).chk_active,False,name.upper()) for name in excluded]

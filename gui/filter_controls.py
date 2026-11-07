@@ -5,6 +5,11 @@ from .factories import create_slider_float, create_slider, update_slider_display
 
 # attribute, recipe key, title, min, max, default, divisor, help
 CONTROLS = {
+    'nafe': [
+        ('nafe_sigma', 'nafe_sigma', 'Gate sigma (working units)', 1, 1000000, 10000, 1000000., 'Manual intensity-noise gate in the normalized linear working input units, not detector DN. Keep sigma proportional when changing input units; no EV or tone curve enters NAFE.'),
+        ('nafe_noise_multiple', 'nafe_noise_multiple', 'Noise multiplier', 20, 120, 120, 10., 'Automatic sigma = this multiple of the measured residual noise; AEL default 12.'),
+        ('nafe_noise_region', 'nafe_noise_region', 'Noise region starts (R)', 10, 100, 40, 10., 'Estimate noise outside this reference radius. Fewer than 20,000 region samples selects the outermost fifth of observed radii; the receipt records this fallback.'),
+        ('nafe_noise_smooth', 'nafe_noise_smooth', 'Noise residual sigma (native px)', 10, 320, 40, 10., 'Normalized-Gaussian guide for the residual MAD estimate. Not an internal NAFE kernel scale; the native width is scaled for preview.')],
     'nrgf': [
         ('nrgf_min_count', 'nrgf_min_count', 'Minimum samples per ring', 2, 128, 12, 1., 'Annuli with fewer observed samples remain undefined; at least four consecutive usable annuli are needed.'),
         ('nrgf_smooth_bins', 'nrgf_smooth_bins', 'Profile smoothing (rings)', 0, 100, 0, 10., 'Optional local quadratic smoothing of radial model nodes, never image pixels. AEL default is zero; smoothing may bias curved profiles.')],
@@ -36,6 +41,28 @@ CONTROLS = {
 
 
 def add_controls(window):
+    window.combo_nafe_sigma = ScrollSafeComboBox()
+    window.combo_nafe_sigma.addItem('Automatic noise sigma (AEL)', 'auto')
+    window.combo_nafe_sigma.addItem('Manual sigma in working units', 'manual')
+    window.combo_nafe_sigma.setAccessibleName('NAFE noise sigma source')
+    window.combo_nafe_sigma.setToolTip('Automatic mode measures residual noise in a declared outer region. Manual mode uses gate sigma in working linear input units; measured values and fallbacks are recorded in layer receipts.')
+    window.combo_nafe_sigma.currentIndexChanged.connect(lambda _: window.on_filter_slider_released(window.sec_nafe))
+    window.sec_nafe.content_layout.addWidget(window.combo_nafe_sigma)
+    window.combo_nafe_window = ScrollSafeComboBox()
+    for n in (65,129,257,513):
+        window.combo_nafe_window.addItem(f'{n} × {n} native-pixel window',n)
+    window.combo_nafe_window.setCurrentIndex(1)
+    window.combo_nafe_window.setAccessibleName('NAFE native support window')
+    window.combo_nafe_window.setToolTip('Only the support window scales for preview. The twelve internal Gaussian sigmas remain 1.414–64 target pixels; preview is approximate, not native parity.')
+    window.combo_nafe_window.currentIndexChanged.connect(lambda _: window.on_filter_slider_released(window.sec_nafe))
+    window.sec_nafe.content_layout.addWidget(window.combo_nafe_window)
+    window.combo_nrgf_partial_annuli = ScrollSafeComboBox()
+    window.combo_nrgf_partial_annuli.addItem('Legacy shared-angle chain', 'chain')
+    window.combo_nrgf_partial_annuli.addItem('Anchored shared-angle chain (EIP)', 'chain_anchored')
+    window.combo_nrgf_partial_annuli.setAccessibleName('NRGF partial-annulus algorithm')
+    window.combo_nrgf_partial_annuli.setToolTip('Opt-in EIP variant: reference profile and spread corrections to the first annulus with all 360 observed angular sectors. Without a complete annulus, retain legacy chaining. Uses only the loaded linear HDR and statistical mask; no missing samples are filled. Retained when hidden.')
+    window.combo_nrgf_partial_annuli.currentIndexChanged.connect(lambda _: window.on_filter_slider_released(window.sec_nrgf))
+    window.sec_nrgf.content_layout.addWidget(window.combo_nrgf_partial_annuli)
     for family, specs in CONTROLS.items():
         section = getattr(window, 'sec_'+family)
         for attr, key, label, minimum, maximum, default, divisor, help_text in specs:
@@ -49,6 +76,12 @@ def add_controls(window):
                                                 on_release_callback=lambda section=section: window.on_filter_slider_released(section))
             slider.setObjectName('sl_'+attr)
             setattr(window, 'sl_'+attr, slider)
+    def update_nafe_controls():
+        manual = window.combo_nafe_sigma.currentData() == 'manual'
+        for attr, *_ in CONTROLS['nafe']:
+            getattr(window,'sl_'+attr).parameter_row.setEnabled(manual if attr=='nafe_sigma' else not manual)
+    window.combo_nafe_sigma.currentIndexChanged.connect(update_nafe_controls)
+    update_nafe_controls()
     window.combo_larson_input=ScrollSafeComboBox()
     window.combo_larson_input.addItem('Linear input (compatible)','linear')
     window.combo_larson_input.addItem('Log intensity (HDR detail)','log')
@@ -111,10 +144,14 @@ def add_controls(window):
 
 def collect_controls(window):
     params = {'larson_sekanina_radial': 0.}
+    params['nrgf_partial_annuli'] = window.combo_nrgf_partial_annuli.currentData()
     for specs in CONTROLS.values():
         for attr, key, label, minimum, maximum, default, divisor, help_text in specs:
             value = getattr(window, 'sl_'+attr).value()/divisor
             params[key] = int(value) if divisor == 1 else value
+    params['nafe_window'] = window.combo_nafe_window.currentData()
+    if window.combo_nafe_sigma.currentData() == 'auto':
+        params['nafe_sigma'] = None
     params['rhef_upsilon_high'] = window.sl_rhef_upsilon_high.value()
     if window.chk_rhef_symmetric.isChecked():
         params['rhef_upsilon_high'] = window.sl_rhef_upsilon.value()
@@ -158,7 +195,8 @@ def add_advanced_mode(window, header_layout):
     header_layout.addWidget(window.lbl_advanced_values)
     advanced = [window.sl_mgn_trunc, *window.sl_mgn_sigmas, *window.sl_mgn_weights,
                 window.sl_wow_scales, *window.sl_wow_denoise,
-                window.sl_wow_bilateral,
+                window.sl_wow_bilateral, window.combo_nrgf_partial_annuli,
+                window.combo_nafe_sigma, window.combo_nafe_window,
                 window.combo_rhef_mode, window.sl_rhef_rad, window.sl_rhef_bin,
                 window.chk_rhef_symmetric, window.chk_tangential_outer,
                 window.sl_achf_boost,
@@ -265,7 +303,7 @@ def collect_achf_variants(window):
 def add_layer_opacities(window):
     """Opacity controls composition; only Linear Light retains a separate Gain."""
     from .factories import create_slider
-    for name in ('nrgf','fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
+    for name in ('nrgf','nafe','fnrgf','rhef','mgn','wow','tangential','larson_sekanina','achf'):
         layout=(window.achf_adaptive_panel.layout() if name == 'achf'
                 else getattr(window,'sec_'+name).content_layout)
         if name == 'larson_sekanina':

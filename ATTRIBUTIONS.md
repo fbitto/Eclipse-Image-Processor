@@ -9,6 +9,7 @@ Eclipse Image Processor 0.7.0 is developed by Francisco Bitto. Third-party imple
 - **Source version used for the bundled filter ports, tone curve and PSB writer:** AEL 1.3.3, confirmed from the installed runtime metadata (`pyproject.toml`). This identifies the source used, not a claim about the latest upstream release.
 - **Updated WOW operator and ACHF display:** AEL 1.3.5, commit `9a391b6ab5ec325efb98ea8d9e18d14ff54de9b6` (2026-10-28); other ports retain their stated source versions.
 - **Updated NRGF partial-annulus statistics:** AEL 1.4.1 `radial.py`, commit `17029c9284748c087adcd0d40241f7e3faf8d778` (2026-10-31), including shared-angle chaining and its cut-corona regression control.
+- **NAFE operator and residual-noise estimator:** AEL 1.4.2 `filters.py` (`nafe_neighbourhood`, `nafe`) and `filterbank.py` (`nafe_noise_sigma`), from the installed plugin 1.1.6 runtime. Local changes add validation, stable input-unit scaling, cooperative cancellation, bounded two-level concurrency with shared FFT budgets and independent-layer integration.
 - **Copyright:** Copyright (c) 2026 Pere Guerra Serra.
 - **License:** MIT. The original full copyright, permission and disclaimer text is retained in [docs/third-party/AEL-MIT.txt](docs/third-party/AEL-MIT.txt).
 
@@ -16,7 +17,7 @@ Eclipse Image Processor 0.7.0 is developed by Francisco Bitto. Third-party imple
 
 **Pere Guerra Serra (2026). Agentic Eclipse Library, version 1.3.3.**
 
-The NRGF, AEL bilateral WOW, ACHF ISO 01/ISO 04/Angular implementations, presentation tone curve and low-level 16-bit PSB writer in this application contain code copied and adapted from this work. Original authorship and copyright remain with Pere Guerra Serra. The code is used under the MIT license, whose full notice is retained in this repository.
+The NRGF, NAFE, AEL bilateral WOW, ACHF ISO 01/ISO 04/Angular implementations, presentation tone curve and low-level 16-bit PSB writer in this application contain code copied and adapted from this work. Original authorship and copyright remain with Pere Guerra Serra. The code is used under the MIT license, whose full notice is retained in this repository.
 
 ### Copied and adapted ACHF implementation
 

@@ -17,10 +17,10 @@ from .image_data import observed_image
 from .result_cache import parameter_signature
 from .presentation import normalized_base
 
-ORDER = ('nrgf', 'fnrgf', 'rhef', 'mgn', 'wow', 'tangential', 'larson_sekanina')
+ORDER = ('nrgf', 'nafe', 'fnrgf', 'rhef', 'mgn', 'wow', 'tangential', 'larson_sekanina')
 # Relative native cost of each layer, measured on a 10551x7506 frame; only the order in
-# which a batch starts its layers depends on it (longest first), never a result.
-COSTS = dict(wow=10, tangential=6, mgn=4, fnrgf=3, rhef=3, nrgf=2, larson_sekanina=1,
+# which a batch starts its layers depends on it (longest first), never a result. NAFE is an estimated first-start hint.
+COSTS = dict(nafe=12, wow=10, tangential=6, mgn=4, fnrgf=3, rhef=3, nrgf=2, larson_sekanina=1,
              adaptive=6, ael_angular_4=4, ael_iso_04=2, ael_iso_01=2)
 VARIANTS = ('adaptive', 'ael_iso_01', 'ael_iso_04', 'ael_angular_4')
 LABELS = dict(adaptive='ACHF_ADAPTIVE', ael_iso_01='ACHF_AEL_ISO_01',
@@ -212,6 +212,9 @@ class LayerEngine:
         if name == 'nrgf':
             from .nrgf import nrgf_layer
             values, mapping = nrgf_layer(prepared, p, valid & statistics,targets=valid)
+        elif name == 'nafe':
+            from .ael_nafe import nafe_layer
+            values, mapping = nafe_layer(prepared,p,valid & statistics,targets=valid)
         elif ael_wow:
             from .ael_wow import ael_wow_layer
             values, mapping = ael_wow_layer(prepared,p,ael_support,statistics=statistics if separate_ael else None)
@@ -232,7 +235,7 @@ class LayerEngine:
                     filtered-float(p.get('achf_background',10))/100*prepared if name == 'achf' else filtered)
         filter_seconds=time.perf_counter()-filter_start
         encoding_start=time.perf_counter()
-        domain=branch_domain(source.shape,p,name) & valid
+        domain=valid.copy() if name == 'nafe' else branch_domain(source.shape,p,name) & valid
         model_targets = not (ael or ael_wow) or separate_ael
         if not model_targets:
             domain &= statistics
@@ -244,7 +247,7 @@ class LayerEngine:
         mode='Multiply' if name in ('nrgf', 'fnrgf') else 'Linear Light' if name == 'larson_sekanina' else 'Overlay'
         if name == 'nrgf':
             image=np.where(domain, values, 1.)
-        elif ael or ael_wow or name == 'rhef':
+        elif ael or ael_wow or name in ('rhef', 'nafe'):
             image=np.where(domain,values,.5)
             if name == 'rhef':
                 mapping=dict(encoding='Upsilon-curved ranks; no display renormalization')

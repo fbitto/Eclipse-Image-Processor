@@ -25,6 +25,7 @@ def prepare_parameters(parameters, full_shape, preview_shape, target_shape):
     p["spatial_scale"] = scale
     p["achf_ael_scale"] = float(np.sqrt(sx * sy))
     p["nrgf_scale"] = float(np.sqrt(sx * sy))
+    p['nafe_scale'] = float(np.sqrt(sx * sy))
     for key in ("achf_kernel",
                 "fnrgf_smooth", "fnrgf_fade", "tangential_fade", "larson_sekanina_radial", "statistics_guard_px"):
         if key in p:
@@ -88,6 +89,8 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
     if len(active) > 1:
         raise ValueError('Numerical dispatch accepts only one filter; use independent layer composition')
     name = active[0] if active else None
+    if name == 'nafe':
+        raise ValueError('NAFE returns dimensionless E; use independent layer composition or core.ael_nafe.nafe')
     from .filters import finite_image, CPU_CORES
     check_cancelled()
     if raw_image is None:
