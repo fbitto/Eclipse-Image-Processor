@@ -559,7 +559,7 @@ class FilterWorker(QObject):
         min_pixels_per_sector=1, clip_pct=0.0,
         mean_attenuation_range=(1.0, 0.0), std_attenuation_range=(1.0, 0.0),
         valid=None, mode='legacy', radial_smooth=8., ridge=.01,
-        width_floor=.05, robust_iterations=2, boundary_fade=0., operator_output=False, statistics_valid=None,
+        width_floor=.05, robust_iterations=2, boundary_fade=0., operator_output=False, statistics_valid=None, revised=False,
     ) -> np.ndarray:
         """Fourier Normalizing Radial Gradient Filter plus optional display mix.
 
@@ -602,7 +602,7 @@ class FilterWorker(QObject):
                 width_function=width_function, valid=(valid if statistics_valid is None else statistics_valid),
                 target_valid=(np.isfinite(a) if valid is None else valid) if operator_output else None,
                 smooth_px=radial_smooth, ridge=ridge, width_floor=width_floor,
-                robust_iterations=robust_iterations, min_pixels=min_pixels_per_sector,
+                robust_iterations=robust_iterations, min_pixels=min_pixels_per_sector, revised=revised,
                 mean_tail=mean_attenuation_range[1], width_tail=std_attenuation_range[1])
         else:
             filtered = fnrgf_normalize(

@@ -148,7 +148,7 @@ class BackgroundGuiTests(unittest.TestCase):
         import tempfile, time
         from pathlib import Path
         from PySide6.QtTest import QTest
-        from core.warmth import warmth_layer
+        from core.warmth import colour_layers
         w = self.w
         w.sl_warmth.setEnabled(True)
         w.sl_warmth.setValue(100)
@@ -173,7 +173,7 @@ class BackgroundGuiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             w.chk_export_layers.setChecked(False)
             with patch('gui.app.QFileDialog.getSaveFileName', return_value=(str(Path(tmp)/'warm.tif'), '')), \
-                 patch('core.export.warmth_layer', wraps=warmth_layer) as warmth:
+                 patch('core.export.colour_layers', wraps=colour_layers) as warmth:
                 w.export_image_action()
                 deadline = time.monotonic()+30
                 while (w.background.thread is not None or w._export_thread is not None
@@ -182,9 +182,9 @@ class BackgroundGuiTests(unittest.TestCase):
                 self.assertIsNone(w._export_thread)
                 self.app.processEvents();wait_for_gui(w)
                 self.assertIn('Exported', w.status_label.text())
-                args = warmth.call_args.args
-                self.assertEqual(args[2], w.background.warmth_parameters())
-                self.assertEqual(args[1],1.)
+                kwargs = warmth.call_args.kwargs
+                self.assertEqual(kwargs['background'], w.background.warmth_parameters())
+                self.assertEqual(kwargs['warmth'],1.)
 
     def test_enable_disable_prepares_all_layers_and_keeps_original(self):
         w=self.w

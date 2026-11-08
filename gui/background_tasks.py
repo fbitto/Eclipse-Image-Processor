@@ -164,9 +164,12 @@ def render_snapshot(job):
         if rgb is not None:
             final=job['set_luminosity'](colour_display(rgb,source,composition_settings(display)),final)
     if rgb is not None:
-        from core.warmth import warmth_layer, blend_warmth
-        final = blend_warmth(final, warmth_layer(final, job.get('warmth',0.), job.get('warmth_background'),
-                            native_shape=job['rgb'].shape[:2], valid=np.isfinite(source)))
+        from core.warmth import colour_layers, blend_warmth
+        for _, layer in colour_layers(final, warmth=job.get('warmth',0.),
+                general_warmth=job.get('general_warmth',0.), reduce_green_sky=job.get('reduce_green_sky',False),
+                green_reduction=job.get('green_reduction',.75),
+                background=job.get('warmth_background'), native_shape=job['rgb'].shape[:2], valid=np.isfinite(source)):
+            final = blend_warmth(final, layer)
     final = finish_presentation(final, engine.edge_alpha(source, params))
     if job.get('prominences_enabled') and job.get('original_rgb') is not None:
         from core.prominences import prominence_settings, prominence_layer
@@ -180,7 +183,7 @@ def render_snapshot(job):
         view=job.get('prominence_view','composition')
         if view=='mask':
             final=resize_observed(coverage,size) if reduced else coverage
-        elif view=='image' or job.get('psb_preview'):
+        else:
             black=np.empty((*source.shape,3),np.float32)
             for c in range(3):
                 channel=image[...,c].astype(np.float32)/65535.*coverage

@@ -22,7 +22,7 @@ class ColourTests(unittest.TestCase):
         rgb=np.array([[[.5,.5,.5],[0.,0.,0.],[np.nan]*3]])
         self.assertIs(warm_colour(rgb,0),rgb)
         result=warm_colour(rgb,1)
-        np.testing.assert_allclose(result[0,0],[.5,.35,.1])
+        np.testing.assert_allclose(result[0,0],[.5,.275,.025])
         np.testing.assert_array_equal(result[0,1],0)
         self.assertTrue(np.isnan(result[0,2]).all())
         self.assertEqual(rgb[0,0,1],.5)
@@ -34,7 +34,7 @@ class ColourTests(unittest.TestCase):
         signal = np.array([0., .001, .02, .5])[:, None]
         rgb = (sky + signal)[None, ...]
         for amount in (0., .5, 1.):
-            gains = np.array([1., 1.-.3*amount, 1.-.8*amount])
+            gains = np.array([1., 1.-.45*amount, 1.-.95*amount])
             with self.subTest(amount=amount):
                 # The old global gains lower sky B/G: a cyan sky becomes greener.
                 legacy = warm_colour(rgb, amount)
@@ -74,7 +74,7 @@ class ColourTests(unittest.TestCase):
         # Both sky and corona gradients must remain ordered through the transition.
         self.assertTrue((np.diff(result, axis=1) > 0).all())
         np.testing.assert_array_equal(result[0, signal <= 0], rgb[0, signal <= 0])
-        np.testing.assert_allclose(result[0, -1], sky + [.025, .019, .009])
+        np.testing.assert_allclose(result[0, -1], sky + [.025, .016, .006])
         faint = warm_colour((sky + [.001, .001, .001])[None, None], 1., sky_rgb=sky)
         self.assertTrue((faint[0, 0] > sky).all())
         np.testing.assert_allclose(warm_colour(rgb*1.e-8, 1., sky_rgb=sky*1.e-8),

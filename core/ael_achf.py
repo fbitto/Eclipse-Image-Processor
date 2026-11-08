@@ -56,12 +56,12 @@ def normalized_gaussian(img: np.ndarray, valid: np.ndarray | None, sigma: float,
     return (out, den) if return_support else out
 
 
-def radial_log_residual(luminance, valid, geometry, statistics=None):
+def radial_log_residual(luminance, valid, geometry, statistics=None, *, revised=False):
     """Subtract a smooth cubic spline in ln r BEFORE isotropic high-pass.
 
     Ring medians are observations for a smooth fit, never a stepwise image to
     subtract. An off-centre Moon or a rectangular boundary cannot introduce a
-    discontinuity in this profile. No output is produced outside observed data.
+    discontinuity in this profile. Bias from partial coverage can remain. No output is produced outside observed data.
 
     The spline is evaluated over chunks of rows (same values), with a
     cancellation point between chunks, so the GUI thread never waits long.
@@ -79,10 +79,9 @@ def radial_log_residual(luminance, valid, geometry, statistics=None):
     bins=np.flatnonzero(cnt>=12)
     if len(bins)<8: raise ValueError('radial spline needs at least eight populated annuli')
     med=np.array([np.median(values[cuts[i]:cuts[i+1]]) for i in bins])
-    # Use the measured mean ln(r), not ln(bin+.5): exact for power-law nulls even
-    # where only a small angular fraction of an annulus is observed.
+    # Revised pairs medians consistently; compatibility retains the upstream mean radius.
     lr_values=np.log(r[m].astype(np.float64))[order]
-    lr=np.array([np.mean(lr_values[cuts[i]:cuts[i+1]]) for i in bins])
+    lr=np.array([(np.median if revised else np.mean)(lr_values[cuts[i]:cuts[i+1]]) for i in bins])
     candidates=np.log(geometry.sun_radius_px*np.array([1.03,1.06,1.10,1.15,1.22,1.32,1.45,1.65,1.95,2.4,3,3.8,4.8,6]))
     knots=[v for v in candidates if lr[3]<v<lr[-4]]
     # Avoid overparameterised/singular splines on small images, preserving a
@@ -100,6 +99,10 @@ def radial_log_residual(luminance, valid, geometry, statistics=None):
         supported=(rings<len(cnt)) & (cnt[np.minimum(rings,len(cnt)-1)]>=12)
         targets=m | (observed & supported)
     low, high = np.exp(lr[0]), np.exp(lr[-1])
+    if revised:
+        # Fit representatives are not support boundaries: avoid a flat half-annulus at each end.
+        selected_r=r[m]
+        low=float(np.min(selected_r[ri==bins[0]]));high=float(np.max(selected_r[ri==bins[-1]]))
     out=np.empty(a.shape,np.float32)
     rows=max(1,SPLINE_CHUNK_SAMPLES//max(1,a.shape[1]))
     for y0 in range(0,a.shape[0],rows):
@@ -111,10 +114,10 @@ def radial_log_residual(luminance, valid, geometry, statistics=None):
         out[y0:y1]=np.where(mm,ln-profile,np.nan)
     return out,dict(method='cubic spline in ln r fitted to annular log-luminance medians',
                     knots_rsun=(np.exp(knots)/geometry.sun_radius_px).tolist(),
-                    annuli=len(bins),fit_rms=float(np.sqrt(np.mean((med-fit(lr))**2))))
+                    revised=revised,annuli=len(bins),fit_rms=float(np.sqrt(np.mean((med-fit(lr))**2))))
 
 
-def achf_isotropic(luminance, valid, geometry, *, sigmas=(1,2,4,8,16), outer_sigma=1.5, statistics=None):
+def achf_isotropic(luminance, valid, geometry, *, sigmas=(1,2,4,8,16), outer_sigma=1.5, statistics=None, revised=False):
     """Mean over the bands of (residual - normalised Gaussian).
 
     Two band means are in flight at a time (cv2 and NumPy release the GIL) and
@@ -122,7 +125,7 @@ def achf_isotropic(luminance, valid, geometry, *, sigmas=(1,2,4,8,16), outer_sig
     a time.
     """
     check_cancelled()
-    residual, info=radial_log_residual(luminance,valid,geometry,statistics=statistics)
+    residual, info=radial_log_residual(luminance,valid,geometry,statistics=statistics,revised=revised)
     m=np.isfinite(residual)
     detail=np.zeros(residual.shape,np.float32)
     in_flight=2 if filter_cpu_budget()>=2 else 1
@@ -202,6 +205,25 @@ def display_detail_rings(detail, valid, geometry, *, width_px=2., min_count=50, 
                     ring_smooth_annuli=smooth,display_annuli=int(len(sel)),tanh=2.5)
 
 
+def signed_detail_layer(detail, valid, scale, gain=1., *, curve='tanh'):
+    """Fixed, zero-centered display in stated detail units; no fitted annular levels/spreads."""
+    if not np.isfinite([scale,gain]).all() or scale<=0 or not 0<=gain<=5:
+        raise ValueError('Signed detail needs a positive scale and gain in [0,5]')
+    if np.ndim(detail)!=2 or not np.size(detail) or np.shape(valid)!=np.shape(detail):
+        raise ValueError('Signed detail requires nonempty matching 2D data and validity')
+    if curve not in ('tanh','algebraic'):raise ValueError('Unknown signed detail curve')
+    good=np.asarray(valid,bool)&np.isfinite(detail)
+    if curve=='algebraic':
+        numerator=gain*np.where(good,detail,0).astype(float)
+        encoded=np.where(good,.5+.5*numerator/np.hypot(2.5*scale,numerator),np.nan).astype(np.float32)
+        return encoded,dict(display='bounded signed algebraic contrast',center=0.,scale=float(scale),denominator=2.5,gain=float(gain),gain_inside_curve=True,formula='0.5 + 0.5*z/hypot(1,z); z=gain*detail/(2.5*scale)')
+    encoded=np.where(good,.5+.5*np.tanh(gain*np.asarray(detail,dtype=float)/(2.5*scale)),np.nan).astype(np.float32)
+    return encoded,dict(display='signed fixed-scale detail',center=0.,scale=float(scale),tanh=2.5,gain=float(gain),gain_inside_tanh=True)
+
+
+BOUNDED_CONTRAST_LIMITS = {'ael_iso_01':2., 'ael_iso_04':4., 'ael_angular_4':4.}
+
+
 AEL_PRESETS = {
     'ael_iso_01': dict(sigmas=(2.,4.,8.,16.,32.), outer_sigma=3., strength=100),
     'ael_iso_04': dict(sigmas=(1.,2.,4.,8.,16.), outer_sigma=1.5, strength=100),
@@ -210,7 +232,7 @@ AEL_PRESETS = {
 
 
 def ael_achf_layer(image, cx, cy, radius, valid=None, scale=1.,
-                   variant='ael_iso_04', parameters=None, statistics=None):
+                   variant='ael_iso_04', parameters=None, statistics=None, revised=False):
     """AEL encoded Overlay layer; scales are native pixels times target/full scale."""
     a = np.asarray(image, dtype=np.float32)
     if a.ndim != 2 or not a.size:
@@ -233,6 +255,12 @@ def ael_achf_layer(image, cx, cy, radius, valid=None, scale=1.,
         raise ValueError('Unknown AEL ACHF variant')
     settings = dict(AEL_PRESETS[variant])
     settings.update(parameters or {})
+    encoding=settings.get('encoding','normalization')
+    if encoding not in ('normalization','bounded'):raise ValueError('Unknown AEL ACHF contrast mapping')
+    contrast=settings.get('contrast',BOUNDED_CONTRAST_LIMITS[variant])
+    if encoding=='bounded' and (not np.isfinite(contrast) or not 1<=contrast<=BOUNDED_CONTRAST_LIMITS[variant]):
+        raise ValueError(f'Bounded {variant} contrast must be in [1,{BOUNDED_CONTRAST_LIMITS[variant]:g}]')
+    profile_revised=revised or encoding=='bounded'
     outer = float(settings['outer_sigma'])
     if not np.isfinite(outer) or not 0 <= outer <= 64:
         raise ValueError('AEL outer sigma must be in [0,64] native pixels')
@@ -252,23 +280,30 @@ def ael_achf_layer(image, cx, cy, radius, valid=None, scale=1.,
         target_sigmas=scale*sigmas
         resolved=np.ones(len(sigmas),bool) if scale >= 1 else target_sigmas >= .5
         detail, info = achf_isotropic(a, mask, geometry,
-                                     sigmas=tuple(target_sigmas[resolved]), outer_sigma=outer*scale,statistics=statistics)
+                                     sigmas=tuple(target_sigmas[resolved]), outer_sigma=outer*scale,statistics=statistics,revised=profile_revised)
         info['omitted_sigmas_px']=target_sigmas[~resolved].tolist()
         info.update(native_sigmas=sigmas.tolist(), native_outer_sigma=outer)
-    layer, display = display_detail_rings(detail, mask, geometry, width_px=2.*scale,statistics=statistics)
+    if encoding=='bounded':
+        layer,display=signed_detail_layer(detail,mask,.05,float(contrast),curve='algebraic')
+        display.update(scale_units='natural-log intensity contrast',operator_revision='EIP bounded AEL ACHF 2026-11-08',radial_profile='revised' if variant!='ael_angular_4' else 'not used')
+    elif revised:
+        layer,display=signed_detail_layer(detail,mask,.05)
+        display['scale_units']='natural-log intensity contrast'
+    else:
+        layer, display = display_detail_rings(detail, mask, geometry, width_px=2.*scale,statistics=statistics)
     return layer, dict(info, **display, variant=variant, target_scale=scale, upstream_version='1.4.1', upstream_commit='17029c9284748c087adcd0d40241f7e3faf8d778',
                        support_mode='experimental statistics separation' if statistics is not None else 'compatibility')
 
 
 def apply_ael_achf(image, strength, cx, cy, radius, valid=None, scale=1.,
-                   variant='ael_iso_04', parameters=None):
+                   variant='ael_iso_04', parameters=None, revised=False):
     """Blend AEL's Overlay in normalized input units; preserve excluded samples."""
     a = np.asarray(image, dtype=np.float32)
     if not np.isfinite(strength) or not 0 <= strength <= 100:
         raise ValueError('AEL ACHF strength must be in [0, 100]')
     if strength == 0:
         return a.copy()
-    layer, _ = ael_achf_layer(a, cx, cy, radius, valid, scale, variant, parameters)
+    layer, _ = ael_achf_layer(a, cx, cy, radius, valid, scale, variant, parameters,revised=revised)
     use = np.isfinite(layer)
     low, high = float(a[use].min()), float(a[use].max())
     if high == low:

@@ -141,7 +141,7 @@ def warm_colour(rgb, amount=0., *, sky_rgb=None):
         raise ValueError('Warmth must be between 0 and 1')
     if amount == 0:
         return rgb
-    gains = np.array([1., 1.-.3*amount, 1.-.8*amount])
+    gains = np.array([1., 1.-.45*amount, 1.-.95*amount])
     if sky_rgb is None:
         return np.asarray(rgb) * gains
     sky = np.asarray(sky_rgb, dtype=float)

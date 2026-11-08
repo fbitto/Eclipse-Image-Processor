@@ -146,6 +146,8 @@ class LayerEngine:
         controls={k:v for k,v in params.items() if
                   k in shared or k.startswith('statistics_') or
                   (k.startswith(name+'_') and not k.endswith(('_enabled','_opacity')))}
+        if name=='achf' or name=='tangential' and params.get('tangential_encoding','normalization')=='normalization' or name=='fnrgf' and params.get('fnrgf_mode')=='continuous':
+            controls['normalization_mode']=params.get('normalization_mode','compatible')
         for key in ('achf_variants','achf_adaptive_strength','achf_variant'):
             controls.pop(key,None)
         if name == 'achf':
@@ -156,6 +158,10 @@ class LayerEngine:
             if variant != 'adaptive':
                 settings=dict(params.get('achf_ael_parameters',{}))
                 settings.pop('opacity',None); settings.pop('enabled',None)
+                if settings.get('encoding','normalization')=='normalization':
+                    settings.pop('encoding',None);settings.pop('contrast',None)
+                elif settings.get('encoding')=='bounded':
+                    controls.pop('normalization_mode',None)
                 controls={'settings':settings, 'strength':params['achf_str'],
                           **{k:v for k,v in controls.items() if not k.startswith('achf_')}}
                 controls['achf_ael_scale']=params.get('achf_ael_scale',1.)
@@ -184,6 +190,9 @@ class LayerEngine:
         from .pipeline import apply_filter
         from .statistics_support import statistics_support
         from .layer_export import branch_domain, neutral_layer, linear_detail_layer
+        normalization=params.get('normalization_mode','compatible')
+        if normalization not in ('compatible','revised'):raise ValueError('Unknown filter normalization')
+        revised=normalization=='revised'
         prepared,valid=observed_image(source,params.get('valid_mask'))
         prepared=prepared.astype(np.float32)
         statistics=statistics_support(prepared,params,valid)
@@ -222,7 +231,7 @@ class LayerEngine:
             from .ael_achf import ael_achf_layer
             values,mapping=ael_achf_layer(prepared,p['sx'],p['sy'],p['sr'],ael_support,
                 p.get('achf_ael_scale',1.),variant,p.get('achf_ael_parameters'),
-                statistics=statistics if separate_ael else None)
+                statistics=statistics if separate_ael else None,revised=revised)
         elif name == 'larson_sekanina':
             from .filters import larson_sekanina_residual
             values=larson_sekanina_residual(prepared,p['sx'],p['sy'],p['sr'],
@@ -245,7 +254,28 @@ class LayerEngine:
         if name == 'larson_sekanina' and p.get('larson_sekanina_mode') == 'log':
             domain &= prepared>0
         mode='Multiply' if name in ('nrgf', 'fnrgf') else 'Linear Light' if name == 'larson_sekanina' else 'Overlay'
-        if name == 'nrgf':
+        if name=='tangential' and params.get('tangential_encoding','normalization') not in ('normalization','source_relative'):
+            raise ValueError('Unknown Tangential contrast mapping')
+        if name=='tangential' and params.get('tangential_encoding')=='source_relative':
+            from .tangential_encoding import source_relative_detail
+            image,mapping=source_relative_detail(values,prepared,valid & statistics,domain,params['sx'],params['sy'],params['sr'],gain=float(params.get('tangential_gain',1.)))
+            image=np.where(domain,image,.5)
+        elif revised and (name in ('tangential','achf') and not ael):
+            from .ael_achf import signed_detail_layer
+            limits=params.get('layer_display',{}).get('normalization_range')
+            if limits is not None and (len(limits)!=2 or not np.isfinite(limits).all() or limits[1]<limits[0]):
+                raise ValueError('Signed detail needs a finite ordered native normalization range')
+            reference_range=float(limits[1]-limits[0]) if limits is not None else float(np.ptp(prepared[valid].astype(float)))
+            gain=float(params.get('tangential_gain',1.) if name=='tangential' else params.get('achf_boost',20)/10)
+            image,mapping=signed_detail_layer(values,domain,max(reference_range*.01,np.finfo(np.float32).tiny),gain)
+            image=np.where(domain,image,.5)
+            mapping.update(scale_units='working linear intensity',reference='native normalization range' if limits is not None else 'observed input range')
+        elif revised and name=='fnrgf' and p.get('fnrgf_mode')=='continuous':
+            from .ael_achf import signed_detail_layer
+            image,mapping=signed_detail_layer(values,domain,1.)
+            image=np.where(domain,image,1.)
+            mapping.update(scale_units='dimensionless FNRGF contrast',radial_interpolation='cubic; bounded to populated model runs',constant=bool(np.ptp(values[domain])==0) if domain.any() else True)
+        elif name == 'nrgf':
             image=np.where(domain, values, 1.)
         elif ael or ael_wow or name in ('rhef', 'nafe'):
             image=np.where(domain,values,.5)
@@ -313,6 +343,8 @@ class LayerEngine:
             yy,xx=np.ogrid[:source.shape[0],:source.shape[1]]
             r=np.hypot(xx-params['sx'],yy-params['sy'])/params['sr']
             alpha*=1-float(params['fnrgf_apply_mask'])/100*np.clip(1-np.abs(r-1)/.05,0,1)
+        if revised and (name=='achf' and (not ael or p.get('achf_ael_parameters',{}).get('encoding','normalization')=='normalization') or name=='tangential' and params.get('tangential_encoding','normalization')=='normalization' or name=='fnrgf' and p.get('fnrgf_mode')=='continuous'):
+            mapping=dict(mapping,normalization_revision='EIP revised 2026-11-08',compatibility='original implementation remains available')
         from .presentation import quantize_u16
         result=dict(image=quantize_u16(image),alpha=quantize_u16(alpha),mode=mode,mapping=mapping)
         result['image'].setflags(write=False)

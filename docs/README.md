@@ -1,12 +1,18 @@
 # Technical documentation
 
-Current implementation: Eclipse Image Processor 0.7.0. Updated 3 November 2026 from the application source. The guides below describe the active pipeline; dated reports record earlier experiments and do not override these guides.
+Current implementation: Eclipse Image Processor 0.7.1. Updated 8 November 2026 from the application source. See the [v0.7.1 release notes](release-notes-0.7.1.md). The guides below describe the active pipeline; dated reports record earlier experiments and do not override these guides.
 
 ## Current guides
 
 | Guide | Scope |
 | --- | --- |
 | [Application README](../README.md) | Installation, workflow, initial settings, outputs and scientific credits |
+| [v0.7.1 release notes](release-notes-0.7.1.md) | Basic starter, contrast mappings, color controls and UI changes |
+| [Revised normalization](revised-filter-normalization.md) | Optional contrast policy and radial-model corrections |
+| [Bounded ACHF contrast](achf-bounded-contrast.md) | Independent contrast mapping and gain per AEL variant |
+| [Source-relative Tangential](tangential-source-relative.md) | Source-based contrast reference and empirical noise floor |
+| [WOW noise reduction](wow-noise-reduction.md) | Optional AEL guided suppression and faint-detail tradeoffs |
+| [Color controls](sky-colour-proposal.md) | General warmth, additive Corona warmth and sky green reduction |
 | [Architecture](architecture.md) | Modules, working data, threads, cancellation and resolution handling |
 | [Layer composition](layer-composition.md) | Independent filters, blend modes, controls and caches |
 | [Background extraction](background-extraction.md) | Sky samples, robust plane fitting and slope subtraction |

@@ -14,7 +14,7 @@
 # ]
 # ///
 """
-Eclipse Image Processor v0.7.0 - Application entry point
+Eclipse Image Processor v0.7.1 - Application entry point
 CPU threading limits are installed before loading numerical libraries.
 """
 

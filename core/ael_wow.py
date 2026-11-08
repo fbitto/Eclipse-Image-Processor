@@ -135,7 +135,8 @@ def _paired_b3_step(c, m, step, bilateral=False, guide=None, rows=128, workers=N
     return out, compl, pair
 
 
-def wow_edge_aware(img, valid, *, n_scales=8, guided=True, completeness=(.6, .995)):
+def wow_edge_aware(img, valid, *, n_scales=8, guided=True, completeness=(.6, .995),
+                   noise_reduction=0., noise_valid=None, return_reference=False):
     """Edge-aware WOW, the default WOW layer since 1.3.5 (called WOW bilateral up to 1.3.4): the operator of the edge-aware
     WOW layer of the author's 2026 image, with the cure of issue #4. Edge-aware is the name Auchère et al. (2023) give to the
     variant of WOW whose smoothing uses range weights, a bilateral filter, to avoid halos at spikes and edges.
@@ -151,8 +152,17 @@ def wow_edge_aware(img, valid, *, n_scales=8, guided=True, completeness=(.6, .99
     does not contain the detail of that scale (the same step without range weights) and the mean still comes from the
     data. Measured: docs/VALIDATION_1.3.4.md and docs/VALIDATION_1.3.5.md. ``guided=False`` is the author's operator as it
     ran in 2026."""
+    # EIP extension: optional smooth significance gate; zero retains upstream arithmetic.
+    # return_reference supplies the original detail and per-band estimates for display/export receipts.
     import cv2
+    if not np.isfinite(noise_reduction) or not 0 <= noise_reduction <= 5:
+        raise ValueError('WOW noise reduction must be in [0,5]')
     a = np.asarray(img, np.float32); m = valid & np.isfinite(a)
+    if noise_valid is not None and np.shape(noise_valid) != a.shape:
+        raise ValueError('WOW noise statistics must match image')
+    noise_samples = m if noise_valid is None else m & np.asarray(noise_valid,bool)
+    estimates = []
+    reference = np.zeros_like(a) if noise_reduction else None
     c = np.where(m, a, 0).astype(np.float32); out = np.zeros_like(c); lo, hi = completeness
     h = c.shape[0]
     total = 3 * n_scales
@@ -186,6 +196,21 @@ def wow_edge_aware(img, valid, *, n_scales=8, guided=True, completeness=(.6, .99
         report(3 * s + 2, total, f'WOW scale {s + 1}/{n_scales}: whitening')
         power = _b3_normalized(square, m, step)
         del square
+        noise_sigma = 0.
+        if noise_reduction:
+            check_cancelled()
+            population = noise_samples & (compl >= .999) & (pair > 0)
+            fallback = int(population.sum()) < 64
+            if fallback:
+                population = m & (compl >= .999) & (pair > 0)
+            values = wave[population]
+            if values.size < 64:
+                raise ValueError('WOW noise reduction needs at least 64 fully supported samples per scale; reduce scales or set noise reduction to zero')
+            noise_sigma = float(1.4826*np.median(np.abs(values-np.median(values))))
+            estimates.append(dict(scale=s+1,sigma=noise_sigma,samples=int(values.size),
+                                  region='all fully supported observed samples' if fallback else 'outer observed statistics',
+                                  fallback=fallback))
+            del values,population
         g = np.empty_like(c); w = np.empty_like(c); wp = np.empty_like(c); whole = np.empty(c.shape, bool)
         def whiten(y0, y1):
             ms, cm = m[y0:y1], compl[y0:y1]
@@ -197,7 +222,9 @@ def wow_edge_aware(img, valid, *, n_scales=8, guided=True, completeness=(.6, .99
             wp[y0:y1] = w[y0:y1] * pair[y0:y1]
             whole[y0:y1] = ms & (cm >= .999)
         _run_blocks(whiten, h, 128)
-        del power, wave
+        del power
+        if not noise_reduction:
+            del wave
         mean = float(np.mean(g[whole], dtype=np.float64)) if whole.any() else 0.
         del whole
         weighted = np.empty_like(c)
@@ -214,15 +241,27 @@ def wow_edge_aware(img, valid, *, n_scales=8, guided=True, completeness=(.6, .99
         del wp
         def accumulate(y0, y1):
             level = num[y0:y1] / np.maximum(den[y0:y1], 1e-6)
-            out[y0:y1] += w[y0:y1] * (g[y0:y1] - pair[y0:y1] * level)
+            residual = w[y0:y1] * (g[y0:y1] - pair[y0:y1] * level)
+            if noise_reduction:
+                reference[y0:y1] += residual
+                if noise_sigma > 0:
+                    ratio = wave[y0:y1].astype(np.float64)/(noise_reduction*noise_sigma)
+                    gain = -np.expm1(-.5*ratio*ratio)
+                    residual = residual*gain
+            out[y0:y1] += residual
         _run_blocks(accumulate, h, 128)
         del num, den, g, w, pair, compl
+        if noise_reduction:
+            del wave
         c = nxt
     report(total, total, 'WOW done')
     result = np.empty_like(out)
     def finish(y0, y1):
         result[y0:y1] = np.where(m[y0:y1], out[y0:y1], np.nan)
     _run_blocks(finish, h, 128)
+    if return_reference:
+        baseline = result if reference is None else np.where(m,reference,np.nan).astype(np.float32)
+        return result,baseline,estimates
     return result
 
 
@@ -251,10 +290,19 @@ def ael_wow_layer(image, params, valid=None, statistics=None):
     y,x=np.ogrid[:a.shape[0],:a.shape[1]]
     r=np.hypot(x-cx,y-cy).astype(np.float32)
     check_cancelled()
-    detail=wow_edge_aware(a,mask,n_scales=count)
     samples=mask if statistics is None else mask & np.asarray(statistics,bool)
+    outer=samples & (r>=4*radius)
+    reduction=params.get('wow_noise_reduction',0.)
+    detail,reference,estimates=wow_edge_aware(a,mask,n_scales=count,noise_reduction=reduction,
+        noise_valid=outer,return_reference=True)
     region=samples & (r>=1.1*radius) & (r<2*radius)
-    encoded,mapping=display_detail(detail,mask,scale_region=region,statistics=statistics)
+    encoded,mapping=display_detail(reference,mask,scale_region=region,statistics=statistics)
+    if reduction:
+        # Anchor contrast to the original layer so display scaling cannot undo suppression.
+        encoded=np.where(mask,.5+.5*np.tanh(detail/(2.5*mapping['scale'])),np.nan).astype(np.float32)
+        mapping.update(noise_reduction=float(reduction),noise_estimates=estimates,
+            noise_method='EIP smooth coefficient significance; gain=1-exp(-0.5*(wave/(strength*sigma))^2)',
+            noise_scale_anchor='unsuppressed WOW detail',noise_estimator='per-band 1.4826 MAD; empirical, not calibrated uncertainty')
     mapping['scale_region']='1.1–2 reference-disk radii' if region.sum()>=1000 else 'all observed pixels'
     return encoded,dict(mapping,operator='AEL edge-aware WOW',input='linear luminance',
                         support_mode='experimental statistics separation' if statistics is not None else 'compatibility',

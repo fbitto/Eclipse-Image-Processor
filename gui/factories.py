@@ -254,6 +254,7 @@ def create_filter_group(group_title: str, control_layout: QVBoxLayout) -> QVBoxL
         'PREPARATION':'Declare the input type, set solar geometry and prepare sky samples before enhancement.',
         'APPEARANCE':'Exposure, color calibration, warmth and original prominences for preview and presented exports.',
         'EXPORT':'Choose output formats and optional editable layers, or save the processing settings.',
+        'FILTER STATISTICS & NORMALIZATION':'Choose samples used to estimate filter models and how signed detail is displayed. Statistical exclusions do not replace missing-data validity. Per-filter contrast choices can override global normalization. Hidden in Basic; values are retained.',
         'RADIAL ENHANCEMENT':'Radial normalization uses the configured reference disk geometry.',
         'RADIAL HISTOGRAM EQUALIZATION':'Adjust contrast by ranking working-input intensities within radial distributions.',
         'MULTI-SCALE / WAVELETS':'Extract contrast at multiple spatial scales from the shared working input, including enabled background equalization.',

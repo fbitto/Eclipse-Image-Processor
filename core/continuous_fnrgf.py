@@ -25,7 +25,7 @@ def stable_key_order(keys):
 def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
                      cutoff=0, width_function='std', valid=None, smooth_px=8.,
                      ridge=.01, width_floor=.05, robust_iterations=2,
-                     min_pixels=1, mean_tail=0., width_tail=0., target_valid=None):
+                     min_pixels=1, mean_tail=0., width_tail=0., target_valid=None, revised=False):
     a = np.asarray(image, dtype=float)
     r, theta, edges = np.asarray(radii), np.asarray(angles), np.asarray(edges)
     if a.ndim != 2 or r.shape != a.shape or theta.shape != a.shape:
@@ -103,11 +103,18 @@ def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
         for j in range(segments):
             check_cancelled()
             key = b*segments+j
-            values = unit.ravel()[ids[cuts[key]:cuts[key+1]]]
+            selected_ids=ids[cuts[key]:cuts[key+1]]
+            values = unit.ravel()[selected_ids]
             if values.size < min_pixels:
                 continue
             population[j] = values.size
             means[j] = values.mean()
+            if revised and values.size>=6:
+                # A cell average is not its center value on a steep or partially observed radial law.
+                offset=(r.ravel()[selected_ids]-centers[b])/(edges[b+1]-edges[b])
+                if np.ptp(offset)>.25:
+                    coefficients,_,rank,_=np.linalg.lstsq(np.vander(offset,3,increasing=True),values,rcond=None)
+                    if rank==3:means[j]=coefficients[0]
             widths[j] = values.std() if width_function == 'std' else 1.4826*np.median(np.abs(values-np.median(values)))
         if np.count_nonzero(population) < 3:
             continue
@@ -135,7 +142,11 @@ def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
                 for k in range(local.shape[-1]):
                     check_cancelled()
                     local[family, :, k] = _local_quadratic(
-                        local[family, :, k], smooth_px/spacing, centers[run]/spacing)
+                        local[family, :, k], smooth_px/spacing, centers[run]/spacing,degree=4 if revised else 2)
+        spline=None
+        if revised and len(run)>1:
+            from scipy.interpolate import CubicSpline
+            spline=CubicSpline(centers[run],local,axis=1)
         target = target_mask & (bins >= run[0]) & (bins <= run[-1])
         targets = np.flatnonzero(target)
         attenuation = np.array([np.linspace(1., mean_tail, order+1),
@@ -152,6 +163,8 @@ def continuous_fnrgf(image, radii, angles, edges, order=6, segments=64,
             nodes = centers[run]
             if len(run) == 1:
                 coefficients = np.broadcast_to(local[:, :1, :], (2, rr.size, local.shape[-1]))
+            elif spline is not None:
+                coefficients=spline(rr)
             else:
                 position = np.clip(rr, nodes[0], nodes[-1])
                 left = np.clip(np.searchsorted(nodes, position, side='right')-1, 0, len(nodes)-2)

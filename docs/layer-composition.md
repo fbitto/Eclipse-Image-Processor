@@ -1,10 +1,12 @@
 # Independent filter composition
 
+AEL ACHF's optional [bounded signed contrast](achf-bounded-contrast.md) uses a zero-centered algebraic display curve with independent per-variant gain. It preserves signed raw detail and coverage, uses the revised isotropic profile, and overrides global normalization for that variant. Follow filter normalization remains the default; Adaptive ACHF is unaffected.
+
 `core/pipeline.execute_pipeline` always uses `LayerEngine.render`. Every branch starts from the same immutable working mono source, optionally background-corrected, at its target resolution. `apply_filter` is a numerical dispatcher for zero or one active operator and rejects multiple active filters. There is no sequential enhancement chain.
 
 ## Layer order and initial controls
 
-These are the prepared defaults for the first direct image load in Standard or Expert. Basic disables FNRGF and every filter outside its six-card selection, without automatically activating NRGF. Geometry-dependent filter heuristics are evaluated for that image; this table is not a universal numerical recipe.
+These are the prepared defaults for the first direct image load in Standard or Expert. Basic uses the reviewed six-layer starter described below. Geometry-dependent filter heuristics are evaluated for that image; this table is not a universal numerical recipe.
 
 | Layer | Fixed mode | Initially active/included | Opacity | Gain |
 | --- | --- | --- | ---: | ---: |
@@ -26,6 +28,12 @@ Larson–Sekanina exposes Gain from 0 to 200%; tangential detail and adaptive AC
 ACHF variants have separate Active cards with independent parameters and opacity. Basic shows ISO 04 and Angular; Standard and Expert expose all four variants. Expanding a card does not activate it.
 
 Directly opening another image preserves all filter parameters, activations and inclusion flags, including settings restored from JSON. Geometry is detected again; initial filter heuristics are not reapplied. Loading current JSON instead resets/restores its controls; absent filters remain disabled. See [settings](settings.md).
+
+### Basic first-load starter
+
+Basic enables NAFE original at 40%, Reference-compatible FNRGF at 15%, AEL guided WOW at 10%, Source-relative Tangential at 10%, and ISO04/Angular Bounded contrast 3 at 10% each. FNRGF uses 2-native-pixel rings, inner radius 1 R, outer radius 12.6 R, Fourier order 16 and 64 sectors. WOW uses eight scales and noise reduction 3; experimental AEL statistics separation is on. Other numerical controls retain their prepared defaults. NRGF/MGN remain available but off; RHEF, ISO01, adaptive ACHF and Larson–Sekanina remain excluded in Basic.
+
+This applies once after first-image heuristics, only for a direct image load in Basic. Later image loads, eligible mode switches and saved recipes retain their controls. Geometry is measured from the loaded image; no reviewed-master coordinates or source paths are installed. Native-preview selection remains a viewport choice. This recipe was visually accepted on one master, with slight noise distraction and a visible but acceptable limb ring; it is not general multi-image qualification.
 
 ## Encoding and presentation
 
@@ -88,3 +96,20 @@ Local item-33 support: MGN and standard/adjustable WOW now estimate neighborhood
 **Experimental AEL support separation** is opt-in and saved in recipes; older recipes default off. The compatibility path still uses the common statistical mask as operator support. In experimental mode, AEL angular and guided WOW retain observed positive operator samples and use exclusions for display-scale statistics; isotropic ACHF also excludes them from radial-profile fitting. New radial targets need a populated model annulus. This preserves the original operators’ sampled observations instead of interpreting statistical exclusions as missing data. Bright excluded structures can still affect neighboring kernel responses, so this mode is not a halo-removal guarantee. Missing/nonpositive inputs stay outside AEL operator support.
 
 Same-mask image/alpha parity passes for all three AEL ACHF variants and guided WOW. A fixed faint-detail injection has positive response in the restored sector; independent-noise correlations there were 0.090, 0.017, 0.186 and 0.019 for ISO 01, ISO 04, angular and WOW. These controls qualify an experiment on one synthetic scene, not an astrophysical or native-camera validation; the default remains compatibility mode.
+
+## Presentation colour layers
+
+Above the RGB Color layer, General warmth provides an RGB-wide baseline,
+Corona warmth adds enhanced coronal excess, and Reduce green sky suppresses
+an adjustable 0–100% (default 75%) of positive G − (R+B)/2 only in supported sky. All use Normal RGB16 targets
+with separate editable alpha16 masks. Coverage is measured before tinting and
+is independent of warmth strengths. Unsupported sky sampling disables the
+masked stages, while general warmth remains available. Original prominence
+RGB and masks are composed afterward and keep their independent colours.
+Neutral/off settings retain the historical layer list and corona-only pixels.
+
+## Optional revised normalization
+
+The global Filter Statistics & Normalization selector keeps Compatible as default. Revised (experimental) uses fixed zero-centered signed detail for ACHF/Tangential and revised continuous FNRGF model/encoding. Layer order, blend modes and missing-data alpha remain unchanged. Contrast differs; other filters and reference-compatible FNRGF retain their original paths. See [method and extensive validation](revised-filter-normalization.md).
+
+Tangential can independently select [source-relative signed contrast](tangential-source-relative.md). It reuses the original operator and alpha, replaces only encoding, and overrides global normalization for this layer. Neither opacity nor unrelated normalization toggles recompute an unchanged source-relative result.

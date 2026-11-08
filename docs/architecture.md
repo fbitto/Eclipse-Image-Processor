@@ -1,6 +1,6 @@
 # Application architecture
 
-This guide describes the active 0.7.0 implementation. See the [documentation index](README.md) for algorithm and export details.
+This guide describes the active 0.7.1 implementation. See the [documentation index](README.md) for algorithm and export details.
 
 ## Entry point and responsibilities
 

@@ -154,7 +154,7 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
             apply_mask=p.get("fnrgf_apply_mask", 0),
             operator_output=p.get("operator_output", False),
             statistics_valid=operator_support if p.get("operator_output", False) else None,
-            mode=p.get('fnrgf_mode', 'legacy'), radial_smooth=p.get('fnrgf_smooth', 8.), boundary_fade=p.get('fnrgf_fade', 0.),
+            mode=p.get('fnrgf_mode', 'legacy'), revised=p.get('normalization_mode','compatible')=='revised', radial_smooth=p.get('fnrgf_smooth', 8.), boundary_fade=p.get('fnrgf_fade', 0.),
             ridge=p.get('fnrgf_ridge', .01), width_floor=p.get('fnrgf_floor', .05),
             robust_iterations=p.get('fnrgf_robust', 2), min_pixels_per_sector=p.get('fnrgf_min_pixels', 1),
             mean_attenuation_range=(1., p.get('fnrgf_mean_tail', 0.)),
@@ -265,7 +265,7 @@ def apply_filter(worker, raw_image, params, *, process_label='FILTER', verbose=T
                 support &= worker.support
             img = apply_ael_achf(img, p['achf_str'], p['sx'], p['sy'], p['sr'],
                                  support, p.get('achf_ael_scale', 1.), p['achf_variant'],
-                                 p.get('achf_ael_parameters'))
+                                 p.get('achf_ael_parameters'),revised=p.get('normalization_mode','compatible')=='revised')
         elif p.get('achf_variant', 'adaptive') == 'adaptive':
             img = worker.run_achf(
                 img, p["achf_str"], p["achf_kernel"], p["achf_boost"], p["sx"], p["sy"], p["sr"],

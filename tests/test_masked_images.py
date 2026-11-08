@@ -164,6 +164,8 @@ class MaskedImageTests(unittest.TestCase):
         app = QApplication.instance() or QApplication([])
         window = EclipseProcessorApp()
         window.auto_calculate = False
+        # The small export fixture cannot support eight-scale WOW noise estimation.
+        window.ui_level.setCurrentIndex(1)
         yy, xx = np.mgrid[:160, :240]
         radius = np.hypot(xx-140, yy-90)
         image = np.where(radius > 23, 1+np.exp(-radius/40), np.nan).astype(np.float32)

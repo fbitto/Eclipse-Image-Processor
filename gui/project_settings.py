@@ -98,6 +98,36 @@ def reset_filter_defaults(window, *, ael=False):
         window.presentation_timer.stop()
 
 
+def apply_basic_starter(window):
+    """Apply the reviewed six-layer recipe once, after first-image heuristics."""
+    previous=window.auto_calculate
+    window.auto_calculate=False
+    try:
+        for name,index in (('combo_fnrgf_mode',1),('combo_tangential_encoding',1)):
+            getattr(window,name).setCurrentIndex(index)
+        for name,value in (('fnrgf_opacity',15),('fnrgf_rad',10),('fnrgf_rmax',126),
+                           ('fnrgf_bin_px',2),('fnrgf_ord',16),('fnrgf_seg',6),
+                           ('wow_noise_reduction',30)):
+            slider=getattr(window,'sl_'+name)
+            slider.setMaximum(max(slider.maximum(),value))
+            slider.setValue(value)
+            slider.setProperty('reset_value',value)
+        window.chk_statistics_separate_ael.setChecked(True)
+        for variant in ('ael_iso_04','ael_angular_4'):
+            controls=window.achf_ael_controls[variant]
+            controls['encoding'].setCurrentIndex(1)
+            controls['contrast'].setValue(30)
+            controls['contrast'].setProperty('reset_value',30)
+        from core.layer_engine import ORDER
+        for name in ORDER+('achf',):
+            getattr(window,'sec_'+name).chk_active.setChecked(
+                name in ('nafe','fnrgf','wow','tangential','achf'))
+    finally:
+        window.auto_calculate=previous
+        window.recalculation_timer.stop()
+        window.presentation_timer.stop()
+
+
 def _normalized_settings(window,settings):
     """Import current v4 recipes without reinterpreting selector indices."""
     if not isinstance(settings,dict):return settings
@@ -140,7 +170,7 @@ def validate_settings(window,settings):
     values=settings.get('controls')
     if isinstance(values,dict):
         values={k:v for k,v in values.items() if k != 'sl_achf_background'}
-    optional=set(filter_widgets(window)) | {'chk_statistics_separate_ael','btn_psb_preview','chk_prominences','sl_prominence_exposure','combo_background_degree','sl_warmth','sl_prominence_saturation','sl_prominence_contrast','sl_prominence_edge_softness'}
+    optional=set(filter_widgets(window)) | {'combo_normalization_mode','chk_statistics_separate_ael','btn_psb_preview','chk_prominences','sl_prominence_exposure','combo_background_degree','sl_warmth','sl_general_warmth','chk_reduce_green_sky','sl_green_reduction','sl_prominence_saturation','sl_prominence_contrast','sl_prominence_edge_softness'}
     if (not isinstance(values,dict) or set(values)-set(widgets) or
             set(widgets)-set(values)-optional):
         raise ValueError('Settings controls do not match this application version')
@@ -148,6 +178,8 @@ def validate_settings(window,settings):
         if not isinstance(record,dict):raise ValueError(f'Invalid control: {name}')
         widget=widgets[name];value=record.get('value')
         kind='slider' if isinstance(widget,QSlider) else 'check' if isinstance(widget,QAbstractButton) else 'combo'
+        if name in ('sl_general_warmth','sl_green_reduction') and (type(value) is not int or not 0 <= value <= 100):
+            raise ValueError(f'{name} must be between 0 and 100')
         expected=bool if kind=='check' else int
         if record.get('kind')!=kind or type(value) is not expected:
             raise ValueError(f'Invalid control value: {name}')
@@ -215,6 +247,7 @@ def _apply_settings(window,settings):
         window.combo_background_degree.setCurrentIndex(0)
         window.btn_psb_preview.setChecked(True)
         window.chk_statistics_separate_ael.setChecked(False)
+        window.combo_normalization_mode.setCurrentIndex(0)
         window.prominence_view.setCurrentIndex(0)
         window.chk_prominences.setChecked(False)
         window.sl_prominence_exposure.setValue(-200)
@@ -222,6 +255,9 @@ def _apply_settings(window,settings):
         window.sl_prominence_contrast.setValue(20)
         window.sl_prominence_edge_softness.setValue(30)
         window.sl_warmth.setValue(0)
+        window.sl_general_warmth.setValue(0)
+        window.chk_reduce_green_sky.setChecked(False)
+        window.sl_green_reduction.setValue(75)
         window.background.points=([tuple(p) for p in settings['background_samples']] if settings.get('background_samples') is not None else None)
         window.background.dirty=window.background.base is not None
         for key,value in settings['geometry'].items():getattr(window,'txt_'+key).setText(value)

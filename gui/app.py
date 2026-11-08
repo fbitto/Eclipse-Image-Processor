@@ -39,7 +39,7 @@ from core.colour import neutralize_tse, set_luminosity
 from core.result_cache import parameter_signature
 from core.export_paths import export_paths, protect_source, available_export_path
 from core.project_settings import MissingSourceImage, read_settings, write_settings
-from gui.project_settings import capture_settings, restore_settings, validate_settings, initialize_filter_defaults, reset_filter_defaults
+from gui.project_settings import capture_settings, restore_settings, validate_settings, initialize_filter_defaults, reset_filter_defaults, apply_basic_starter
 from gui.filter_controls import add_controls, collect_controls, add_advanced_mode, add_achf_variants, collect_achf_variants, add_layer_opacities
 from gui.ui_levels import build_achf_cards, add_ui_levels, apply_ui_level
 from gui.components import BUTTON_STYLE, CHECKBOX_STYLE, CollapsibleSection, FullRowCheckBox, InWindowTooltips, ScrollSafeComboBox
@@ -217,7 +217,7 @@ class EclipseProcessorApp(QMainWindow):
 
         self.btn_compare = QPushButton("View Original")
         self.btn_compare.setCheckable(True)
-        self.btn_compare.setToolTip("Temporarily bypass detail filters to inspect the working input with the selected PSB presentation or un-stretched view. Enabled background equalization, Calibrate color and Warmth apply to both views. The separate prominence layer is bypassed in View Original. This comparison does not change filter settings or the export.")
+        self.btn_compare.setToolTip("Compare with the working input by temporarily bypassing enhancement filters and the separate prominence layer. Background correction, color calibration, warmth and green reduction still apply when enabled. Keeps the selected presentation and exposure. Does not change saved filter settings or exports.")
         self.btn_compare.toggled.connect(self.toggle_compare_mode)
         btn_row.addWidget(self.btn_compare)
 
@@ -282,16 +282,34 @@ class EclipseProcessorApp(QMainWindow):
         self.preparation_layout.insertWidget(1,self.combo_input_state)
         self.preparation_layout.insertWidget(2,self.lbl_input_linearity)
         self.appearance_layout.insertWidget(1,self.chk_calibrate_colour)
-        self.sl_warmth, _ = create_slider('Warmth', 0, 100, 0, self.appearance_layout,
-            tooltip='Warm enhanced corona and streamers while protecting sampled sky color. The soft mask uses contrast above sky noise, supported by whiter color; there is no outer-radius cutoff. 0 keeps the calibrated image; 100 gives the strongest sunset tint. Requires RGB and six usable sky patches spread across the image. Review Background Gradient samples; equalization may remain off. Warmth has an editable mask in layer exports. Original prominences keep separate color controls.')
+        self.sl_warmth, _ = create_slider('Corona warmth', 0, 100, 0, self.appearance_layout,
+            tooltip='Add warmth to enhanced corona and streamers above the General warmth baseline, while protecting sampled sky color. Zero adds no extra tint. Requires RGB and at least six usable sky patches spread across the image; review Background Gradient samples even when equalization is off. Exported layers have an editable mask. Original prominences keep their own color controls.')
         self.appearance_layout.removeWidget(self.sl_warmth.parameter_row)
         self.appearance_layout.insertWidget(2,self.sl_warmth.parameter_row)
         self.sl_warmth.setEnabled(False)
         self.sl_warmth.valueChanged.connect(lambda _: self.render_matrix_to_screen())
+        self.sl_general_warmth, _ = create_slider('General warmth', 0, 100, 0, self.appearance_layout,
+            tooltip='Warm sky and corona together. Corona warmth adds extra tint above this baseline. Zero bypasses the adjustment. Requires RGB, but no sky fit. Original prominences keep their own color controls.')
+        self.appearance_layout.removeWidget(self.sl_general_warmth.parameter_row)
+        self.appearance_layout.insertWidget(2,self.sl_general_warmth.parameter_row)
+        self.sl_general_warmth.setEnabled(False)
+        self.sl_general_warmth.valueChanged.connect(lambda _: self.render_matrix_to_screen())
+        self.chk_reduce_green_sky = QCheckBox('Reduce green sky')
+        self.chk_reduce_green_sky.setStyleSheet(CHECKBOX_STYLE)
+        self.chk_reduce_green_sky.setToolTip('Conservatively reduce excess green only in sampled sky, protecting corona and original prominences. Requires a supported sky fit; review Background Gradient samples. Off by default.')
+        self.chk_reduce_green_sky.setEnabled(False)
+        self.chk_reduce_green_sky.toggled.connect(self._on_green_sky_changed)
+        self.appearance_layout.insertWidget(4,self.chk_reduce_green_sky)
+        self.sl_green_reduction, _ = create_slider('Green reduction (%)', 0, 100, 75, self.appearance_layout,
+            tooltip='Strength of green suppression in supported sky. Zero bypasses it; 100% removes the measured green excess above the red/blue average where the sky mask is fully active. The soft mask blends the correction and luminance is retained. Default 75%.')
+        self.appearance_layout.removeWidget(self.sl_green_reduction.parameter_row)
+        self.appearance_layout.insertWidget(5,self.sl_green_reduction.parameter_row)
+        self.sl_green_reduction.setEnabled(False)
+        self.sl_green_reduction.valueChanged.connect(lambda _: self.render_matrix_to_screen())
         add_advanced_mode(self, top_header_layout)
         self.chk_advanced.toggled.connect(self._update_prominence_mode)
         self._update_prominence_mode()
-        self.appearance_layout.insertWidget(3,self.lbl_colour_hint)
+        self.appearance_layout.insertWidget(6,self.lbl_colour_hint)
         self.sl_wow_scales.valueChanged.connect(lambda _: self.update_wow_controls())
         self.update_wow_controls()
         add_ui_levels(self,top_header_layout)
@@ -303,7 +321,7 @@ class EclipseProcessorApp(QMainWindow):
             self.sec_mgn: "Multi-scale Gaussian Normalization: combine local contrast at several scales with a global gamma image.",
             self.sec_wow: "Wavelets Optimized Whitening: normalize multiscale contrast with optional noise suppression.",
             self.sec_rhef: "Radial Histogram Equalization: map intensities to ranks within radial distributions.",
-            self.sec_tangential: "Tangential detail: subtract an angular blur with observed support and retain the Cartesian base.",
+            self.sec_tangential: "Tangential detail: subtract an angular background from observed intensities to form an independent signed-detail layer. Source-relative contrast is the Basic starting mapping.",
             self.sec_larson_sekanina: "Larson-Sekanina: extract signed rotational detail from the shared working input using the reference disk center. Radial increment is fixed at zero; the layer uses Linear Light.",
             self.sec_achf: "ACHF detail layers: Adaptive uses accepted opposite neighbor pairs; AEL ISO 01, ISO 04 and Angular use log-luminance residuals. Enable variants independently.",
         }
@@ -317,15 +335,15 @@ class EclipseProcessorApp(QMainWindow):
         self.sec_geo = CollapsibleSection("SOLAR DISK GEOMETRY", has_checkbox=False, is_expanded=True)
         coord_layout = QHBoxLayout()
         self.txt_x = create_stepper_input(
-            "Center X:", "0", coord_layout, "Horizontal (X) position of the lunar disk center in FULL-RESOLUTION pixels",
+            "Center X:", "0", coord_layout, "Horizontal position of the reference disk center in native image pixels, measured from the left edge.",
             on_change_callback=self.dispatch_pipeline_request_if_auto
         )
         self.txt_y = create_stepper_input(
-            "Center Y:", "0", coord_layout, "Vertical (Y) position of the lunar disk center in FULL-RESOLUTION pixels",
+            "Center Y:", "0", coord_layout, "Vertical position of the reference disk center in native image pixels, measured from the top edge.",
             on_change_callback=self.dispatch_pipeline_request_if_auto
         )
         self.txt_r = create_stepper_input(
-            "Radius R:", "300", coord_layout, "Radius of the lunar/solar disk in FULL-RESOLUTION pixels",
+            "Radius R:", "300", coord_layout, "Reference disk radius in native image pixels. Sets radial filter distances and the disk overlay; it is not an independent measurement of the physical solar radius.",
             on_change_callback=self.dispatch_pipeline_request_if_auto
         )
         self.sec_geo.content_layout.addLayout(coord_layout)
@@ -353,23 +371,27 @@ class EclipseProcessorApp(QMainWindow):
         self.btn_disk_overlay.toggled.connect(self.image_label.set_disk_overlay_visible)
         detection_row.addWidget(self.btn_disk_overlay)
         self.sec_geo.content_layout.addLayout(detection_row)
+        layout.addWidget(self.sec_geo)
+
+    def _build_filter_statistics(self, layout: QVBoxLayout):
+        """Build shared statistical support controls outside disk geometry."""
         self.chk_statistics_lunar = QCheckBox('Exclude lunar disk from filter statistics')
         self.chk_statistics_lunar.setChecked(True)
         self.chk_statistics_lunar.setToolTip('Exclude lunar/guard samples from estimation. Observed targets can still be evaluated where a supported model exists; missing-data validity is separate. AEL compatibility keeps its original support policy.')
         self.chk_statistics_separate_ael=QCheckBox('Experimental AEL support separation')
-        self.chk_statistics_separate_ael.setToolTip('Keep observed positive samples in AEL operators. Exclusions apply to ACHF radial fitting and layer display statistics; missing/nonpositive data stay excluded. Experimental: compatibility behavior remains the default.')
+        self.chk_statistics_separate_ael.setToolTip('Separate statistical exclusions from observed support for AEL ACHF and guided WOW. Excluded positive observations may still contribute to local responses; exclusions restrict radial fitting and display statistics. Missing/nonpositive samples remain excluded. Does not affect NAFE. Experimental; enabled in the Basic starter, off when absent from older recipes.')
         self.chk_statistics_separate_ael.toggled.connect(self.on_ael_support_changed)
-        self.sec_geo.content_layout.addWidget(self.chk_statistics_separate_ael)
+        layout.addWidget(self.chk_statistics_separate_ael)
         self.chk_statistics_bright = QCheckBox('Exclude bright limb samples from statistics')
-        self.chk_statistics_bright.setToolTip('Exclude the brightest samples in a selected limb annulus from estimation. Supported observed targets can retain enhancement; AEL compatibility retains excluded output holes unless the experimental mode is selected. This brightness heuristic is not a scientific prominence classifier.')
+        self.chk_statistics_bright.setToolTip('Exclude bright samples in the limb annulus when estimating filter statistics. Set the percentile and outer radius below. Output at excluded observations depends on filter support and the AEL support-separation setting. This does not mask prominences in the separate original-color layer.')
         for checkbox in (self.chk_statistics_lunar, self.chk_statistics_bright):
             checkbox.toggled.connect(self.dispatch_pipeline_request_if_auto)
-            self.sec_geo.content_layout.addWidget(checkbox)
-        self.sl_statistics_guard, _ = create_slider_float('Lunar guard (preview px)', 0, 640, 0, 10., self.sec_geo.content_layout,
+            layout.addWidget(checkbox)
+        self.sl_statistics_guard, _ = create_slider_float('Lunar guard (preview px)', 0, 640, 0, 10., layout,
             tooltip='Extra statistical exclusion beyond the reference lunar radius, scaled on export.', on_release_callback=self.dispatch_pipeline_request_if_auto)
-        self.sl_statistics_percentile, _ = create_slider_float('Bright-limb percentile', 900, 1000, 995, 10., self.sec_geo.content_layout,
+        self.sl_statistics_percentile, _ = create_slider_float('Bright-limb percentile', 900, 1000, 995, 10., layout,
             tooltip='Exclude samples above this percentile within the selected limb annulus. 100 excludes none.', on_release_callback=self.dispatch_pipeline_request_if_auto)
-        self.sl_statistics_outer, _ = create_slider_float('Limb annulus outer radius', 11, 30, 15, 10., self.sec_geo.content_layout,
+        self.sl_statistics_outer, _ = create_slider_float('Limb annulus outer radius', 11, 30, 15, 10., layout,
             tooltip='Outer radius of the bright-sample statistics annulus in reference disk radii; its inner radius is one.', on_release_callback=self.dispatch_pipeline_request_if_auto)
         for slider in (self.sl_statistics_guard, self.sl_statistics_percentile, self.sl_statistics_outer):
             slider.valueChanged.connect(self.dispatch_pipeline_request_if_auto)
@@ -378,10 +400,11 @@ class EclipseProcessorApp(QMainWindow):
         for slider in (self.sl_statistics_percentile, self.sl_statistics_outer):
             self.chk_statistics_bright.toggled.connect(slider.setEnabled)
             slider.setEnabled(self.chk_statistics_bright.isChecked())
-        layout.addWidget(self.sec_geo)
 
     def _build_filters_section(self, layout: QVBoxLayout):
         """Build radial, multiscale and sharpening filter sections."""
+        self.filter_settings_layout = create_filter_group('FILTER STATISTICS & NORMALIZATION', layout)
+        self._build_filter_statistics(self.filter_settings_layout)
         radial_group = create_filter_group("RADIAL ENHANCEMENT", layout)
         self.sec_nrgf = CollapsibleSection("NRGF", has_checkbox=True, is_expanded=False, is_active=False)
         self.sl_nrgf_rad, _ = create_slider_float(
@@ -429,13 +452,13 @@ class EclipseProcessorApp(QMainWindow):
             "Inner radius (R)", 5, 25, 10, self.sec_fnrgf.content_layout,
             divisor=10,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf),
-            tooltip="Process only above this radius, in disk radii"
+            tooltip="Start FNRGF at this multiple of the reference disk radius. Basic starts at 1 R. This boundary changes filter coverage, not source validity or the separate prominence mask."
         )
         self.sl_fnrgf_rmax, _ = create_slider(
             "Outer radius (R)", 15, 60, 30, self.sec_fnrgf.content_layout,
             divisor=10,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf),
-            tooltip="Outer boundary in disk radii. The upper limit follows the farthest image corner; verify coverage when the disk is off-center."
+            tooltip="Stop FNRGF at this multiple of the reference disk radius. Basic starts at 12.6 R; other first-load defaults reach the farthest image corner. Check the boundary on images with different framing."
         )
         self.sl_fnrgf_rmax.setMinimum(self.sl_fnrgf_rad.value() + 1)
         self.sl_fnrgf_rad.valueChanged.connect(
@@ -443,7 +466,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sl_fnrgf_bin_px, _ = create_slider(
             "Ring width (native px)", 1, 32, 4, self.sec_fnrgf.content_layout,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_fnrgf),
-            tooltip="Ring width in original-image pixels (default 4). Preview scales the width and retains the native radial-bin count. For logarithmic spacing this is the inner-ring width; outer rings are wider."
+            tooltip="Annular width in native image pixels. Basic starts at 2 px; Standard/Expert first-load defaults use 4 px. With Log spacing, this is the inner-ring width and outer rings grow wider. Fast preview rescales the bins approximately; inspect native output for banding."
         )
 
         w_row = QHBoxLayout()
@@ -453,7 +476,7 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_fnrgf_width = ScrollSafeComboBox()
         self.combo_fnrgf_width.addItems(["STD", "MAD"])
         self.combo_fnrgf_width.setCurrentIndex(1)
-        self.combo_fnrgf_width.setToolTip("Estimate sector spread using standard deviation or 1.4826 times median absolute deviation. MAD makes the spread less sensitive to outliers; the brightness model still uses sector means.")
+        self.combo_fnrgf_width.setToolTip("Estimate angular-sector spread using standard deviation or scaled median absolute deviation (MAD). MAD reduces sensitivity to outliers. The brightness model uses sector means, with a radial-centering correction in Continuous/Revised mode.")
         self.combo_fnrgf_width.currentIndexChanged.connect(lambda _: self.on_filter_slider_released(self.sec_fnrgf))
         w_lbl.setToolTip(self.combo_fnrgf_width.toolTip())
         w_row.addWidget(w_lbl)
@@ -495,7 +518,7 @@ class EclipseProcessorApp(QMainWindow):
             "Application Radius (disk radii)", 0, 100, 10, self.sec_rhef.content_layout,
             divisor=10,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_rhef),
-            tooltip="Application radius in disk radii"
+            tooltip="Start RHEF at this multiple of the reference disk radius. Regions without a supported radial distribution remain transparent in the layer."
         )
         self.sl_rhef_upsilon, _ = create_slider(
             "Lower-tail Upsilon", 1, 500, 35, self.sec_rhef.content_layout,
@@ -516,7 +539,7 @@ class EclipseProcessorApp(QMainWindow):
         self.sec_nafe.toggled_active.connect(self.on_filter_toggled)
         nafe_note = QLabel('Linear HDR input. Fast preview is approximate; export recalculates at native resolution. Noise and window controls are in Expert.')
         nafe_note.setWordWrap(True)
-        nafe_note.setToolTip('NAFE reads the shared linear HDR. Preview window scaling does not scale the twelve internal Gaussians; inspect native results before choosing opacity.')
+        nafe_note.setToolTip('NAFE reads the shared linear HDR. Preview scales the window and twelve internal Gaussians together. Local equalization still differs after resampling; inspect native results before choosing opacity.')
         self.sec_nafe.content_layout.addWidget(nafe_note)
         histogram_group.addWidget(self.sec_nafe)
 
@@ -526,13 +549,13 @@ class EclipseProcessorApp(QMainWindow):
             "Gamma", 1, 100, 32, self.sec_mgn.content_layout,
             divisor=10,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn),
-            tooltip="Global gamma exponent: default 3.2; usual MGN range 2.5–4. The wider 0.1–10 range is custom."
+            tooltip="Gamma of the global MGN component, from 0.1 to 10. Values above 1 brighten faint intensities; 1 is linear. Default 3.2. Global weight controls how much this component contributes."
         )
         self.sl_mgn_k, _ = create_slider(
             "Factor k", 0, 500, 70, self.sec_mgn.content_layout,
             divisor=100,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_mgn),
-            tooltip="Arctangent factor k, from 0 to 5"
+            tooltip="Local MGN contrast factor, from 0 to 5. Larger values make normalized local differences more pronounced before compression; they can also emphasize noise."
         )
         self.sl_mgn_h, _ = create_slider(
             "Global Weight h", 0, 100, 70, self.sec_mgn.content_layout,
@@ -595,7 +618,7 @@ class EclipseProcessorApp(QMainWindow):
         self.combo_achf_variant.addItem("AEL · ISO 01", "ael_iso_01")
         self.combo_achf_variant.addItem("AEL · ISO 04", "ael_iso_04")
         self.combo_achf_variant.addItem("AEL · Angular", "ael_angular_4")
-        self.combo_achf_variant.setToolTip("Choose which variant to edit. Include checkboxes independently enable multiple variants; each retains its opacity and parameters. AEL uses positive log-luminance and Overlay; best used on linear input. Boundary bands can remain.")
+        self.combo_achf_variant.setToolTip("Each ACHF variant has its own card and Active checkbox. Enable variants independently; each retains its opacity and parameters. AEL variants use positive log-luminance detail with Overlay blending. Inspect native output for boundary bands.")
         self.sec_achf.content_layout.addWidget(self.combo_achf_variant)
         self.achf_adaptive_panel = QWidget()
         adaptive_layout = QVBoxLayout(self.achf_adaptive_panel)
@@ -605,13 +628,13 @@ class EclipseProcessorApp(QMainWindow):
             "Support Radius (preview px)", 10, 200, 20, adaptive_layout,
             divisor=10,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf,"adaptive"),
-            tooltip="Circular kernel radius in preview pixels, scaled for full-resolution export. Doubling support radius costs roughly four times more at the same image size. Full-resolution supports can be expensive; use native verification and Cancel export."
+            tooltip="Adaptive ACHF neighborhood radius in preview pixels; scales to native pixels for full-resolution preview and export. Larger radii extract broader detail and increase computation. Use native preview to judge the result."
         )
         self.sl_achf_boost, _ = create_slider(
             "Contrast Gain", 0, 50, 20, adaptive_layout,
             divisor=10,
             on_release_callback=lambda: self.on_filter_slider_released(self.sec_achf,"adaptive"),
-            tooltip="Multiplier of ring-encoded signed detail from 0 to 5, before opacity blending."
+            tooltip="Scale adaptive ACHF detail from 0 to 5; zero gives a neutral layer. Compatible applies gain after ring encoding; Revised applies it inside the bounded contrast curve. Higher gain increases noise as well as detail. Opacity controls the final mixture."
         )
         self.sl_achf_threshold, _ = create_slider(
             "Neighbor contrast threshold (%)", 0, 200, 10, adaptive_layout,
@@ -644,7 +667,7 @@ class EclipseProcessorApp(QMainWindow):
         psb_group.addWidget(self.btn_psb_preview)
         self.lbl_psb_presentation = QLabel('Auto scale + exposure compensation · Asinh 10')
         self.lbl_psb_presentation.setWordWrap(True)
-        self.lbl_psb_presentation.setToolTip('P99.5 of positive native luminance outside 1.2 lunar radii. This automatic estimate is our heuristic; the Asinh curve and shared highlight shoulder follow AEL.')
+        self.lbl_psb_presentation.setToolTip('Automatic presentation scale estimated from the 99.5th percentile of positive native luminance outside 1.2 reference disk radii. Shared across preview resolutions and export; Exposure adjusts brightness above this scale.')
         psb_group.addWidget(self.lbl_psb_presentation)
         self.chk_prominences = QCheckBox('Export original prominences and chromosphere')
         self.chk_prominences.setEnabled(False)
@@ -778,6 +801,10 @@ class EclipseProcessorApp(QMainWindow):
         self.export_progress.hide()
         layout.addWidget(self.export_progress)
 
+    def _on_green_sky_changed(self, *_):
+        self.sl_green_reduction.setEnabled(self.full_source_rgb is not None and self.chk_reduce_green_sky.isChecked())
+        self.render_matrix_to_screen()
+
     def on_input_state_changed(self, *_):
         warning = getattr(self, '_input_linearity_warning', '')
         state = self.combo_input_state.currentData()
@@ -791,6 +818,9 @@ class EclipseProcessorApp(QMainWindow):
             self.chk_background.setChecked(False)
         self.chk_calibrate_colour.setEnabled(allowed)
         self.sl_warmth.setEnabled(self.full_source_rgb is not None)
+        self.sl_general_warmth.setEnabled(self.full_source_rgb is not None)
+        self.chk_reduce_green_sky.setEnabled(self.full_source_rgb is not None)
+        self.sl_green_reduction.setEnabled(self.full_source_rgb is not None and self.chk_reduce_green_sky.isChecked())
         self.chk_prominences.setEnabled(self.original_source_rgb is not None)
         if self.original_source_rgb is None:
             self.chk_prominences.setChecked(False)
@@ -1169,6 +1199,7 @@ class EclipseProcessorApp(QMainWindow):
         count = self.sl_wow_scales.value() or (8 if ael else maximum)
         for index, slider in enumerate(self.sl_wow_denoise):
             slider.setEnabled(not ael and index < count)
+        self.sl_wow_noise_reduction.setEnabled(ael)
         self.sl_wow_noise.setEnabled(not ael)
         self.sl_wow_noise_floor.setEnabled(False)
         from .filter_controls import set_control_visible
@@ -1524,8 +1555,11 @@ class EclipseProcessorApp(QMainWindow):
             self._input_linearity_warning = ('Input type is a user declaration; no automatic detection. '
                                              'Choose Non-linear (stretched) if a stretch was already applied.')
             if project is None:
-                with QSignalBlocker(self.sl_warmth), QSignalBlocker(self.sl_prominence_saturation):
+                with QSignalBlocker(self.sl_warmth), QSignalBlocker(self.sl_general_warmth), QSignalBlocker(self.chk_reduce_green_sky), QSignalBlocker(self.sl_green_reduction), QSignalBlocker(self.sl_prominence_saturation):
                     self.sl_warmth.setValue(0)
+                    self.sl_general_warmth.setValue(0)
+                    self.chk_reduce_green_sky.setChecked(False)
+                    self.sl_green_reduction.setValue(75)
                     self.sl_prominence_saturation.setValue(65)
             self.on_input_state_changed()
             self.combo_input_state.setVisible(True)
@@ -1554,6 +1588,8 @@ class EclipseProcessorApp(QMainWindow):
             if project is None and first_image:
                 reset_filter_defaults(self, ael=True)
                 self.apply_recommended_parameters_to_gui(r_full, w_full, h_full)
+                if self.ui_level.currentData() == 'basic':
+                    apply_basic_starter(self)
             if project is not None:
                 cx_full,cy_full,r_full=(float(getattr(self,"txt_"+key).text()) for key in ("x","y","r"))
             if project is not None:
@@ -1648,6 +1684,9 @@ class EclipseProcessorApp(QMainWindow):
                 prominence_contrast=self.sl_prominence_contrast.value()/20,
                 prominence_edge_softness=self.sl_prominence_edge_softness.value()/10,
                 warmth=self.sl_warmth.value()/100,
+                general_warmth=self.sl_general_warmth.value()/100,
+                reduce_green_sky=self.chk_reduce_green_sky.isChecked(),
+                green_reduction=self.sl_green_reduction.value()/100,
                 warmth_background=self.background.warmth_parameters(),
                 calibrate_colour=self.chk_calibrate_colour.isChecked(), white=self.source_rgb_white,
                 export_layers=self.chk_export_layers.isChecked(), layers_format=self.combo_layers_format.currentData(),
@@ -1756,6 +1795,9 @@ class EclipseProcessorApp(QMainWindow):
                 prominence_contrast=self.sl_prominence_contrast.value()/20,
                 prominence_edge_softness=self.sl_prominence_edge_softness.value()/10,
                 warmth=self.sl_warmth.value()/100,
+                general_warmth=self.sl_general_warmth.value()/100,
+                reduce_green_sky=self.chk_reduce_green_sky.isChecked(),
+                green_reduction=self.sl_green_reduction.value()/100,
                 warmth_background=self.background.warmth_parameters(),
                 prominence_view=self.prominence_view.currentData(),
                 calibrate=self.chk_calibrate_colour.isChecked(),
@@ -1797,6 +1839,8 @@ class EclipseProcessorApp(QMainWindow):
 
     def _on_prominence_changed(self, *_):
         enabled=self.chk_prominences.isEnabled() and self.chk_prominences.isChecked()
+        if enabled and self.prominence_view.currentData() != 'composition' and self.btn_compare.isChecked():
+            self.btn_compare.setChecked(False)
         self.sl_prominence_exposure.parameter_row.setEnabled(enabled)
         self.sl_prominence_edge_softness.parameter_row.setEnabled(enabled)
         self.sl_prominence_saturation.parameter_row.setEnabled(enabled)

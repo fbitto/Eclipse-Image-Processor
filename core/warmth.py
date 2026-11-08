@@ -22,6 +22,12 @@ def warmth_layer(rgb, amount=0., background=None, *, native_shape=None, valid=No
         raise ValueError('Warmth must be between 0 and 1')
     if amount == 0 or background is None:
         return None
+    model = _sky_model(rgb, background, native_shape=native_shape, valid=valid)
+    return None if model is None else _corona_layer(np.asarray(rgb), amount, model)
+
+
+def _sky_model(rgb, background, *, native_shape=None, valid=None):
+    """Supported sky plane and strength-independent corona coverage, or None."""
     a = np.asarray(rgb)
     if a.ndim != 3 or a.shape[-1] != 3 or not a.size:
         raise ValueError('Presentation warmth needs RGB pixels')
@@ -114,6 +120,14 @@ def warmth_layer(rgb, amount=0., background=None, *, native_shape=None, valid=No
     coverage = gaussian_filter(np.where(good,coverage,0.),feather)
     feather_support = gaussian_filter(good.astype(np.float32),feather)
     np.divide(coverage,feather_support,out=coverage,where=feather_support>0)
+    return a, good, luminance, sky, coverage
+
+
+def _corona_layer(a, amount, model):
+    original, good, luminance, sky, coverage = model
+    if a is not original:
+        luminance = np.where(good, a @ [.30,.59,.11], 0.).astype(np.float32)
+    h = a.shape[0]
     alpha = quantize_u16(np.where(good, coverage*amount, 0.))
     if not alpha.any():
         return None
@@ -141,3 +155,62 @@ def blend_warmth(rgb, layer):
         alpha = mask[first:last,:,None].astype(float)/65535.
         result[first:last] = rgb[first:last]*(1.-alpha) + target[first:last].astype(float)/65535.*alpha
     return result
+
+
+def colour_layers(rgb, general_warmth=0., warmth=0., reduce_green_sky=False,
+                  background=None, *, native_shape=None, valid=None, green_reduction=.75):
+    """Ordered RGB16/alpha16 display layers; masks come from the untinted input.
+
+    General warmth establishes the whole-image baseline; corona warmth adds
+    enhanced coronal excess. A configurable fraction of green excess above mean(R,B) is
+    suppressed only in supported sky. Original prominences are composed later.
+    """
+    for amount in (general_warmth, warmth):
+        if not np.isfinite(amount) or not 0 <= amount <= 1:
+            raise ValueError('Warmth must be between 0 and 1')
+    if not np.isfinite(green_reduction) or not 0 <= green_reduction <= 1:
+        raise ValueError('Green reduction must be between 0 and 1')
+    if not general_warmth and not warmth and not reduce_green_sky:
+        return []
+    a = np.asarray(rgb)
+    if a.ndim != 3 or a.shape[-1] != 3 or not a.size:
+        raise ValueError('Presentation colour needs RGB pixels')
+    observed = np.isfinite(a).all(axis=-1)
+    if valid is not None:
+        if np.shape(valid) != a.shape[:2]:
+            raise ValueError('Colour validity must match the display canvas')
+        observed &= valid
+    if native_shape is not None and (len(native_shape) != 2 or not np.isfinite(native_shape).all() or min(native_shape) <= 0):
+        raise ValueError('Colour needs positive native canvas dimensions')
+    model = (_sky_model(a, background, native_shape=native_shape, valid=observed)
+             if background is not None and (warmth or reduce_green_sky) else None)
+    layers = []
+    if general_warmth:
+        target = np.empty(a.shape, np.uint16)
+        for first,last in row_strips(a.shape[0]):
+            check_cancelled()
+            block = a[first:last]
+            target[first:last] = quantize_u16(set_luminosity(warm_colour(block,1.), block @ [.30,.59,.11]))
+        layer = target, quantize_u16(observed*general_warmth)
+        layers.append(('general_warmth', layer))
+        a = blend_warmth(a, layer)
+    if model is not None and warmth:
+        layer = _corona_layer(a, warmth, model)
+        if layer is not None:
+            layers.append(('warmth', layer))
+            a = blend_warmth(a, layer)
+    if model is not None and reduce_green_sky and green_reduction:
+        coverage = np.where(model[1], 1.-model[4], 0.)
+        target = np.empty(a.shape, np.uint16)
+        changed = False
+        for first,last in row_strips(a.shape[0]):
+            check_cancelled()
+            block = a[first:last]
+            excess = np.maximum(block[...,1]-(block[...,0]+block[...,2])/2, 0.)
+            changed |= bool(np.any((excess>0) & (coverage[first:last]>0)))
+            corrected = block.copy()
+            corrected[...,1] -= green_reduction*excess
+            target[first:last] = quantize_u16(set_luminosity(corrected, block @ [.30,.59,.11]))
+        if changed:
+            layers.append(('reduce_green_sky', (target, quantize_u16(coverage))))
+    return layers

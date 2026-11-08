@@ -12,13 +12,14 @@ from .cancellation import check_cancelled
 from .ael_achf import display_detail
 
 
-def _local_quadratic(y, sigma, x=None):
-    """Value at each node of a parabola fitted to its neighbours with Gaussian weights (σ in nodes).
+def _local_quadratic(y, sigma, x=None, *, degree=2):
+    """Value at each node of a local polynomial (quadratic by default) fitted to its neighbours with Gaussian weights (σ in nodes).
 
     x: node positions in units of the node spacing (default 0, 1, 2…). The window holds the same number of nodes on
     each side, so near the ends it narrows (the end node itself is returned as it is): a window cut on one side would
     bias the value by the profile's third derivative. Constants, straight lines and parabolas come back unchanged;
     with equally spaced nodes, cubics too."""
+    if degree not in (2,4):raise ValueError('Local radial polynomial degree must be 2 or 4')
     y = np.asarray(y, np.float64); n = len(y)
     if n < 2 or not sigma > 0:
         return y.copy()
@@ -31,7 +32,7 @@ def _local_quadratic(y, sigma, x=None):
             out[i] = y[i]; continue
         lo, hi = i-k, i+k+1
         t = x[lo:hi]-x[i]; w = np.sqrt(np.exp(-.5*(t/sigma)**2))
-        out[i] = np.linalg.lstsq(np.vander(t, 3, increasing=True)*w[:, None], y[lo:hi]*w, rcond=None)[0][0]
+        out[i] = np.linalg.lstsq(np.vander(t, min(degree+1,hi-lo), increasing=True)*w[:, None], y[lo:hi]*w, rcond=None)[0][0]
     return out
 
 

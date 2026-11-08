@@ -43,6 +43,8 @@ The PSB-preview toggle, exposure and export options are saved. Existing v4 recip
 
 Directly loading another image is a separate action from restoring JSON: it retains current filter settings and active/include flags, detects new geometry and regenerates background samples. First-load defaults are listed in [layer composition](layer-composition.md).
 
+Basic now permits FNRGF and Tangential. Its reviewed six-layer starter applies only to the first direct image load in Basic, after image heuristics. Restoring JSON never applies that starter: omitted filters remain disabled and optional missing controls keep their compatibility defaults. Switching control levels retains eligible settings rather than resetting them to the starter.
+
 ## Export failure boundaries
 
 Settings-only publication is atomic. Image export writes layers first, TIFF/JPEG next, JSON last. Failure at a later stage can leave previously completed outputs; the complete multi-file export is not a single atomic transaction. The JSON is a recipe for the original source, not an instruction to reprocess its rendered output.
@@ -64,3 +66,22 @@ Prominence contrast is optional in older v4 recipes and restores to 1.0 when omi
 ## NAFE compatibility
 
 The optional `sec_nafe`, `combo_nafe_sigma`, `combo_nafe_window` and `sl_nafe_*` controls use the existing version-4 envelope. Older recipes without them restore NAFE disabled, automatic residual-MAD sigma, multiplier 12, noise region 4 reference radii, residual guide sigma 4 native pixels and window 129. Manual `nafe_sigma` uses working linear input units; automatic mode records null in the parameter snapshot and the effective measured sigma in the layer receipt. `nafe_scale` identifies target/native resolution for the window and residual guide. Hidden Expert values persist. See [NAFE](nafe-ael.md) for noise fallbacks and the approximate-preview contract.
+
+## General and corona colour controls
+
+`sl_warmth` retains the existing Corona warmth percentage. Optional
+`sl_general_warmth` (integer 0–100, default 0) and `chk_reduce_green_sky`
+(boolean, default false), and optional `sl_green_reduction` (integer 0–100, default 75) are presentation settings. Older version-4 recipes
+restore warmth to 0, green enablement to off and green strength to 75% while retaining their saved corona value.
+Direct image loads reset both new controls. All modes expose them for RGB input.
+General warmth precedes additive corona warmth and sky-only green suppression;
+changes reuse numerical filters. Sky masks use the untinted presentation and
+native sky-sample coordinates. A failed sky fit bypasses only the masked stages.
+
+AEL WOW noise reduction is saved as raw slider ticks in `sl_wow_noise_reduction` (0–50, displayed 0–5). Missing controls reset to 0. The numerical `wow_noise_reduction` value enters the WOW cache signature and exported recipe. Other WOW backends ignore it and retain its saved value.
+
+`combo_normalization_mode` is an optional v4 selector: Compatible (default) or Revised (experimental), collected as `normalization_mode`. Missing fields reset to Compatible. The choice is retained across UI levels and participates only in affected ACHF/Tangential/continuous-FNRGF caches and their export recipes. See [revised normalization](revised-filter-normalization.md).
+
+Tangential's optional `combo_tangential_encoding` control collects `tangential_encoding=normalization` (default) or `source_relative`. Missing fields reset to the original mapping. The source-relative choice overrides the global normalization selection for Tangential only, participates in its numerical cache/recipe, and records empirical reference/noise metadata. See [source-relative contrast](tangential-source-relative.md).
+
+AEL ACHF's optional per-variant `encoding` and `contrast` controls select Follow filter normalization (default) or Bounded signed contrast. Missing controls reset to Follow and the qualified bounded gain limit (ISO01 2×, ISO04/Angular 4×). Bounded mode overrides global normalization for that variant only; unused contrast is excluded from Follow caches. See [bounded contrast](achf-bounded-contrast.md).

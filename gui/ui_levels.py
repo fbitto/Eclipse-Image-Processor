@@ -57,7 +57,7 @@ def add_ui_levels(window, header_layout):
     for title,value in [('Basic','basic'),('Standard','standard'),('Expert','expert')]:
         window.ui_level.addItem(title,value)
     window.ui_level.setCurrentIndex(0)
-    window.ui_level.setToolTip('Basic: NRGF, NAFE, MGN, AEL edge-aware WOW, ACHF ISO 04 and Angular; other filters are switched off. Standard: all filters with common controls. Expert: all parameters. Parameter values are retained when hidden.')
+    window.ui_level.setToolTip('Basic starts the first directly opened image with NAFE, FNRGF, WOW, Tangential, ISO04 and Angular; NRGF and MGN are also available. Standard shows all filters with common controls; Expert adds numerical parameters and statistical exclusions. Switching levels preserves eligible settings and does not reapply the starter. Basic disables excluded filters.')
     label.setToolTip(window.ui_level.toolTip())
     row.addWidget(label);row.addWidget(window.ui_level,1)
     header_layout.insertLayout(1,row)
@@ -81,6 +81,8 @@ def apply_ui_level(window, *, recalculate=True):
     from .project_settings import filter_widgets
     mode=window.ui_level.currentData()
     basic=mode=='basic';expert=mode=='expert'
+    window.filter_settings_layout.parentWidget().parentWidget().setVisible(not basic)
+    window.combo_normalization_mode.setVisible(not basic)
     widgets=filter_widgets(window)
     # Restore the shared controls before applying each level's visibility rules.
     for widget in widgets.values():
@@ -88,7 +90,7 @@ def apply_ui_level(window, *, recalculate=True):
         elif widget is not window.combo_achf_variant:widget.setVisible(True)
     with QSignalBlocker(window.chk_advanced):window.chk_advanced.setChecked(expert)
     window.update_detail_visibility(expert)
-    excluded=('fnrgf','rhef','tangential','larson_sekanina')
+    excluded=('rhef','larson_sekanina')
     disabled=[];changed=False
     if basic:
         changes=[(getattr(window,'sec_'+name).chk_active,False,name.upper()) for name in excluded]
@@ -109,8 +111,8 @@ def apply_ui_level(window, *, recalculate=True):
                 changed=True
         sync_achf_master(window)
         for widget in widgets.values():
-            if isinstance(widget,QSlider):set_control_visible(widget,bool(widget.property('mix_only')))
-            elif widget is not window.combo_achf_variant and not hasattr(widget,'isChecked'):
+            if isinstance(widget,QSlider):set_control_visible(widget,bool(widget.property('mix_only')) or bool(widget.property('bounded_contrast_control')) or widget is window.sl_wow_noise_reduction)
+            elif widget not in (window.combo_achf_variant,window.combo_nafe_method) and not widget.property('bounded_contrast_control') and not hasattr(widget,'isChecked'):
                 widget.hide()
     for name in excluded:getattr(window,'sec_'+name).setVisible(not basic)
     for variant,card in window.achf_cards.items():

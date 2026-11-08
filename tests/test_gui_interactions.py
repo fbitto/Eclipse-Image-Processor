@@ -405,7 +405,7 @@ class GuiInteractionTests(unittest.TestCase):
     def test_version_and_layer_model_tooltips_match_current_behavior(self):
         from config import APP_VERSION
         w=self.window
-        self.assertEqual(APP_VERSION,'0.7.0')
+        self.assertEqual(APP_VERSION,'0.7.1')
         self.assertIn('v'+APP_VERSION,w.windowTitle())
         self.assertFalse(hasattr(w,'combo_stretch_mode'))
         self.assertTrue(w.btn_psb_preview.isChecked())

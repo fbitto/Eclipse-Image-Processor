@@ -1,6 +1,6 @@
 # Third-party code and implementation attributions
 
-Eclipse Image Processor 0.7.0 is developed by Francisco Bitto. Third-party implementation authors retain credit and copyright for their contributions. The application's MIT license does not replace the notices retained for those components. Scientific-method references and other software acknowledgments are listed in the [README credits](README.md#algorithm-credits-scientific-references-and-acknowledgments).
+Eclipse Image Processor 0.7.1 is developed by Francisco Bitto. Third-party implementation authors retain credit and copyright for their contributions. The application's MIT license does not replace the notices retained for those components. Scientific-method references and other software acknowledgments are listed in the [README credits](README.md#algorithm-credits-scientific-references-and-acknowledgments).
 
 ## Agentic Eclipse Library (AEL)
 
@@ -9,6 +9,7 @@ Eclipse Image Processor 0.7.0 is developed by Francisco Bitto. Third-party imple
 - **Most recent AEL source used:** AEL **1.4.2**, for the bundled NAFE operator and residual-noise estimator. Component-specific origins are retained below.
 - **Original source version used for the bundled filter ports, tone curve and PSB writer:** AEL 1.3.3, confirmed from the installed runtime metadata (`pyproject.toml`). This identifies the source used, not a claim about the latest upstream release.
 - **Updated WOW operator and ACHF display:** AEL 1.3.5, commit `9a391b6ab5ec325efb98ea8d9e18d14ff54de9b6` (2026-10-28); other ports retain their stated source versions.
+- **Optional bounded ACHF contrast:** local EIP algebraic display extension over the attributed AEL operators; not an upstream AEL release or a new spatial filter. See [method and qualification](docs/achf-bounded-contrast.md).
 - **Updated NRGF partial-annulus statistics:** AEL 1.4.1 `radial.py`, commit `17029c9284748c087adcd0d40241f7e3faf8d778` (2026-10-31), including shared-angle chaining and its cut-corona regression control.
 - **NAFE operator and residual-noise estimator:** AEL 1.4.2 `filters.py` (`nafe_neighbourhood`, `nafe`) and `filterbank.py` (`nafe_noise_sigma`), from the installed plugin 1.1.6 runtime. Local changes add validation, stable input-unit scaling, cooperative cancellation, bounded two-level concurrency with shared FFT budgets and independent-layer integration.
 - **Copyright:** Copyright (c) 2026 Pere Guerra Serra.
@@ -36,7 +37,7 @@ The AEL-derived ACHF code is included in the application. The upstream Python pa
 
 ### Additional bundled AEL adaptations
 
-- [core/ael_nafe.py](core/ael_nafe.py) copies and adapts AEL 1.4.2 `filters.py` fuzzy neighbourhood equalization and `filterbank.py` residual-noise estimation. Local adaptations provide validation, stable input-unit scaling, cooperative cancellation, bounded parallel levels and independent-layer integration. Frozen upstream fixtures and their provenance are documented in [the NAFE oracle notes](tests/fixtures/ael_nafe_142.md).
+- [core/ael_nafe.py](core/ael_nafe.py) copies and adapts AEL 1.4.2 `filters.py` fuzzy neighbourhood equalization and `filterbank.py` residual-noise estimation. Local adaptations provide validation, stable input-unit scaling, cooperative cancellation, bounded parallel levels and independent-layer integration. The optional EIP limb-aware response reuses the AEL-derived radial log-profile helper from `core/ael_achf.py`; it is a local experimental extension, not upstream NAFE. Frozen upstream fixtures and their provenance are documented in [the NAFE oracle notes](tests/fixtures/ael_nafe_142.md).
 
 - [core/radial_continuous.py](core/radial_continuous.py) adapts current AEL 1.4.1 (17029c9) global radial quantile interpolation/inversion for the application reference-precision path. The independent float64 numerical path and custom support/quantile controls remain local extensions. Synthetic current-runtime fixtures retain upstream attribution. ACHF ISO/angular operators are also verified through that current revision.
 
@@ -65,3 +66,7 @@ The earlier study of continuous radial statistics and RHEF used AEL 1.3.2, revis
 See the [README software and scientific credits](README.md#algorithm-credits-scientific-references-and-acknowledgments), including sunkit-image, watroo, tse-tools/eclipsetools, EclipseForgeHDR, Eclipse_HDR. The tse-tools/eclipsetools MIT notice is retained in [docs/third-party/eclipsetools-MIT.txt](docs/third-party/eclipsetools-MIT.txt).
 
 The optional colour neutralization derives P1/P99 channel-span sampling from Samuli Vuorinen’s tse-tools/eclipsetools `color_calibrate` (revision `14ae3f7d823d0ac66688a32bf27d0c4b9b8a0391`). The current local adaptation applies multiplicative gains and one shared highlight scale; it deliberately omits the upstream per-channel background subtraction and additive pedestal shift to avoid brightness-dependent colour changes. Nonpositive samples are clipped only in the display copy; original input is preserved.
+
+The optional noise-reduction gate in `core/ael_wow.py` is an EIP extension to the attributed AEL guided WOW port. Its empirical per-band MAD estimates, coefficient significance weighting and original-response display anchor are local additions, not an upstream AEL feature. Existing AEL authorship and license notices remain unchanged.
+
+Optional revised normalization (8 November 2026) adds EIP signed-detail encoding and local ACHF profile endpoint/statistic corrections to the attributed AEL port. Continuous FNRGF cell-centering, curvature-preserving smoothing and cubic interpolation are local extensions. These revisions are not represented as upstream AEL behavior; Compatible retains the existing implementation and all original MIT notices.

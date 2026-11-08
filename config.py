@@ -1,6 +1,6 @@
-# config.py - Global configuration and styling for Eclipse Image Processor v0.7.0
+# config.py - Global configuration and styling for Eclipse Image Processor v0.7.1
 
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.7.1"
 
 import os
 

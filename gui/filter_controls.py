@@ -6,7 +6,7 @@ from .factories import create_slider_float, create_slider, update_slider_display
 # attribute, recipe key, title, min, max, default, divisor, help
 CONTROLS = {
     'nafe': [
-        ('nafe_sigma', 'nafe_sigma', 'Gate sigma (working units)', 1, 1000000, 10000, 1000000., 'Manual intensity-noise gate in the normalized linear working input units, not detector DN. Keep sigma proportional when changing input units; no EV or tone curve enters NAFE.'),
+        ('nafe_sigma', 'nafe_sigma', 'Gate sigma (working units)', 1, 1000000, 10000, 1000000., 'Manual intensity-noise gate in the linear working image units. Rescale sigma if input units change. Exposure and display curves do not affect it.'),
         ('nafe_noise_multiple', 'nafe_noise_multiple', 'Noise multiplier', 20, 120, 120, 10., 'Automatic sigma = this multiple of the measured residual noise; AEL default 12.'),
         ('nafe_noise_region', 'nafe_noise_region', 'Noise region starts (R)', 10, 100, 40, 10., 'Estimate noise outside this reference radius. Fewer than 20,000 region samples selects the outermost fifth of observed radii; the receipt records this fallback.'),
         ('nafe_noise_smooth', 'nafe_noise_smooth', 'Noise residual sigma (native px)', 10, 320, 40, 10., 'Normalized-Gaussian guide for the residual MAD estimate. Not an internal NAFE kernel scale; the native width is scaled for preview.')],
@@ -14,9 +14,9 @@ CONTROLS = {
         ('nrgf_min_count', 'nrgf_min_count', 'Minimum samples per ring', 2, 128, 12, 1., 'Annuli with fewer observed samples remain undefined; at least four consecutive usable annuli are needed.'),
         ('nrgf_smooth_bins', 'nrgf_smooth_bins', 'Profile smoothing (rings)', 0, 100, 0, 10., 'Optional local quadratic smoothing of radial model nodes, never image pixels. AEL default is zero; smoothing may bias curved profiles.')],
     'fnrgf': [
-        ('fnrgf_smooth', 'fnrgf_smooth', 'Model smoothing (preview px)', 0, 640, 80, 10., 'Gaussian-weighted local quadratic smoothing width of the continuous background model, not the final image. Zero disables smoothing.'),
+        ('fnrgf_smooth', 'fnrgf_smooth', 'Model smoothing (preview px)', 0, 640, 80, 10., 'Smooth the Continuous FNRGF radial model, not image pixels. Compatible uses a local quadratic fit; Revised preserves curvature with a quartic fit. Width is in preview pixels and scales for native output. Zero disables smoothing; ignored by Reference-compatible mode.'),
         ('fnrgf_fade', 'fnrgf_fade', 'Boundary fade (preview px)', 0, 1280, 80, 10., 'Continuous mode: smooth application at the inner and outer radii without changing observed-data validity.'),
-        ('fnrgf_ridge', 'fnrgf_ridge', 'Harmonic regularization', 0, 1000, 10, 1000., 'Dimensionless penalty on higher angular harmonics. Increased automatically for partial coverage; zero disables it.'),
+        ('fnrgf_ridge', 'fnrgf_ridge', 'Harmonic regularization', 0, 1000, 10, 1000., 'Continuous mode: limit higher angular harmonics to stabilize partially covered annuli. Larger values increase regularization; zero removes the penalty. Ignored by Reference-compatible mode.'),
         ('fnrgf_floor', 'fnrgf_floor', 'Minimum width fraction', 0, 100, 5, 100., 'Floor relative to typical annular spread. Continuous mode also keeps its divisor positive.'),
         ('fnrgf_robust', 'fnrgf_robust', 'Robust fit iterations', 0, 5, 2, 1., 'Continuous-model reweighting passes; zero selects ordinary regularized least squares.'),
         ('fnrgf_min_pixels', 'fnrgf_min_pixels', 'Minimum samples per sector', 1, 32, 1, 1., 'Sectors with fewer observed pixels do not constrain the model. Widths always need at least two samples; rings without three measured sector widths have undefined, transparent layer output.'),
@@ -32,7 +32,7 @@ CONTROLS = {
         ('larson_sekanina_nearby_delta', 'larson_sekanina_nearby_delta', 'Nearby angle delta (degrees)', 0, 100, 0, 100., 'Average the selected rotation and its two neighbors at plus/minus this delta. Zero keeps the classic operator. Reduces interpolation noise variation but changes fine-detail response and costs about three times the sampling. Spacing shrinks near 0 and 180 degrees.')],
     'tangential': [
         ('tangential_arc', 'tangential_arc', 'Angular Gaussian sigma (degrees)', 1, 300, 30, 10., 'Angular blur sigma, 0.1 to 30 degrees. The corresponding arc length increases with radius.'),
-        ('tangential_gain', 'tangential_gain', 'Detail gain', 0, 50, 10, 10., 'Multiplier of ring-encoded detail contrast, before opacity blending.'),
+        ('tangential_gain', 'tangential_gain', 'Detail gain', 0, 50, 10, 10., 'Scale signed Tangential contrast; zero gives a neutral layer. Follow normalization uses the selected global encoding; Source-relative uses its source-based contrast scale. Higher gain also increases visible noise. Opacity controls the final mixture.'),
         ('tangential_denoise', 'tangential_denoise', 'Noise threshold (sigma)', 0, 100, 0, 10., 'Soft threshold on signed detail, using a robust adjacent-pixel noise estimate. Zero bypasses it; not calibrated detector noise.'),
         ('tangential_inner', 'tangential_inner', 'Inner radius (disk radii)', 0, 40, 10, 10., 'Start of tangential processing in reference disk radii.'),
         ('tangential_outer', 'tangential_outer', 'Outer radius (disk radii)', 11, 200, 40, 10., 'Outer processing radius in reference disk radii, used only when Limit outer radius is checked.'),
@@ -41,6 +41,28 @@ CONTROLS = {
 
 
 def add_controls(window):
+    window.combo_normalization_mode = ScrollSafeComboBox()
+    window.combo_normalization_mode.addItem('Filter normalization: Compatible', 'compatible')
+    window.combo_normalization_mode.addItem('Filter normalization: Revised (experimental)', 'revised')
+    window.combo_normalization_mode.setAccessibleName('Filter normalization')
+    window.combo_normalization_mode.setToolTip('Choose the shared contrast policy for ACHF, Tangential and Continuous FNRGF. Compatible retains the original mapping; Revised changes signed-detail encoding and radial models to reduce tested normalization artifacts. Per-filter Bounded or Source-relative choices override it. Reference-compatible FNRGF and other filters are unaffected. Hidden in Basic; its saved value remains active.')
+    window.combo_normalization_mode.currentIndexChanged.connect(lambda _: window.dispatch_pipeline_request_if_auto())
+    window.filter_settings_layout.addWidget(window.combo_normalization_mode)
+    window.combo_tangential_encoding = ScrollSafeComboBox()
+    window.combo_tangential_encoding.addItem('Contrast: Follow filter normalization', 'normalization')
+    window.combo_tangential_encoding.addItem('Contrast: Source-relative (experimental)', 'source_relative')
+    window.combo_tangential_encoding.setAccessibleName('Tangential contrast mapping')
+    window.combo_tangential_encoding.setToolTip('Source-relative uses 5% of an observed-source continuum with a three-sigma empirical noise floor and bounded signed contrast. It restores outer visibility and noise together, and overrides the global normalization choice for Tangential only. Preview is approximate; inspect native limbs, coverage edges and faint detail. Basic starts with Source-relative; existing recipes retain their mapping.')
+    window.combo_tangential_encoding.currentIndexChanged.connect(lambda _: window.on_filter_slider_released(window.sec_tangential))
+    window.sec_tangential.content_layout.insertWidget(0,window.combo_tangential_encoding)
+    window.combo_nafe_method = ScrollSafeComboBox()
+    window.combo_nafe_method.addItem('AEL original', 'ael')
+    window.combo_nafe_method.addItem('Limb-aware (experimental)', 'limb_aware')
+    window.combo_nafe_method.setAccessibleName('NAFE implementation')
+    window.combo_nafe_method.setToolTip('AEL original preserves the upstream fuzzy equalization. Limb-aware subtracts the response of a smooth radial reference before a bounded contrast encoding; it needs an additional NAFE pass and sufficient radial support. No missing pixels are filled. A dark inner-limb response can remain; compare both methods at native resolution before export.')
+    window.combo_nafe_method.currentIndexChanged.connect(lambda _: window.on_filter_slider_released(window.sec_nafe))
+    window.sec_nafe.content_layout.insertWidget(0,window.combo_nafe_method)
+
     window.combo_nafe_sigma = ScrollSafeComboBox()
     window.combo_nafe_sigma.addItem('Automatic noise sigma (AEL)', 'auto')
     window.combo_nafe_sigma.addItem('Manual sigma in working units', 'manual')
@@ -53,7 +75,7 @@ def add_controls(window):
         window.combo_nafe_window.addItem(f'{n} × {n} native-pixel window',n)
     window.combo_nafe_window.setCurrentIndex(1)
     window.combo_nafe_window.setAccessibleName('NAFE native support window')
-    window.combo_nafe_window.setToolTip('Only the support window scales for preview. The twelve internal Gaussian sigmas remain 1.414–64 target pixels; preview is approximate, not native parity.')
+    window.combo_nafe_window.setToolTip('The support window and all twelve Gaussian sigmas scale together from native pixels. Preview remains approximate because resampling changes the local intensity distribution; use native verification for the limb.')
     window.combo_nafe_window.currentIndexChanged.connect(lambda _: window.on_filter_slider_released(window.sec_nafe))
     window.sec_nafe.content_layout.addWidget(window.combo_nafe_window)
     window.combo_nrgf_partial_annuli = ScrollSafeComboBox()
@@ -91,7 +113,7 @@ def add_controls(window):
     window.combo_fnrgf_mode = ScrollSafeComboBox()
     window.combo_fnrgf_mode.addItem('Continuous · observed support', 'continuous')
     window.combo_fnrgf_mode.addItem('Reference-compatible', 'legacy')
-    window.combo_fnrgf_mode.setToolTip('Continuous fits use observed angular support and interpolated radial models. Compatible mode retains the original reference conventions.')
+    window.combo_fnrgf_mode.setToolTip('Continuous models interpolate across populated radial bins; Revised global normalization also changes their fitting and encoding. Reference-compatible retains the original annular conventions and ignores global normalization. Basic starts with Reference-compatible. Compare native detail and concentric banding.')
     window.sec_fnrgf.content_layout.insertWidget(0, window.combo_fnrgf_mode)
     window.combo_fnrgf_mode.currentIndexChanged.connect(lambda _: window.on_filter_slider_released(window.sec_fnrgf))
     def mode_changed():
@@ -134,21 +156,27 @@ def add_controls(window):
                                             tooltip=help_text, on_release_callback=lambda: window.on_filter_slider_released(window.sec_mgn))
             collection.append(slider)
     window.sl_wow_bilateral, _ = create_slider_float('Bilateral intensity scale', 1, 50, 10, 10.,
-        window.sec_wow.content_layout, tooltip='Positive intensity sensitivity for the bilateral WOW backend (0.1 to 5); enabled only in edge-aware mode.',
+        window.sec_wow.content_layout, tooltip='Range sensitivity for the watroo bilateral WOW backend, from 0.1 to 5. Larger values allow more mixing across intensity differences. Does not control AEL guided edge-aware WOW.',
+        on_release_callback=lambda: window.on_filter_slider_released(window.sec_wow))
+    window.sl_wow_noise_reduction, _ = create_slider_float('Noise reduction', 0, 50, 0, 10.,
+        window.sec_wow.content_layout,
+        tooltip='AEL guided WOW noise suppression, from 0 to 5. Zero preserves the original result; Basic starts at 3. Stronger suppression can remove faint corona. Noise is estimated outside 4 reference radii, falling back to supported image samples. If support is insufficient, reduce scales in Expert or set this to zero. Inspect native detail.',
         on_release_callback=lambda: window.on_filter_slider_released(window.sec_wow))
     # Retain the hidden widget so existing v4 control snapshots still load.
     window.sl_wow_noise_floor, _ = create_slider_float('AEL noise floor', 0, 100, 30, 10.,
-        window.sec_wow.content_layout, tooltip='Retired compatibility value; current AEL guided WOW uses its fixed upstream noise regularization. This control has no effect.',
+        window.sec_wow.content_layout, tooltip='Retired compatibility value with no effect. Use Noise reduction for AEL edge-aware WOW.',
         on_release_callback=lambda: window.on_filter_slider_released(window.sec_wow))
 
 
 def collect_controls(window):
-    params = {'larson_sekanina_radial': 0.}
+    params = {'larson_sekanina_radial': 0., 'normalization_mode': window.combo_normalization_mode.currentData(),
+              'tangential_encoding': window.combo_tangential_encoding.currentData()}
     params['nrgf_partial_annuli'] = window.combo_nrgf_partial_annuli.currentData()
     for specs in CONTROLS.values():
         for attr, key, label, minimum, maximum, default, divisor, help_text in specs:
             value = getattr(window, 'sl_'+attr).value()/divisor
             params[key] = int(value) if divisor == 1 else value
+    params['nafe_method'] = window.combo_nafe_method.currentData()
     params['nafe_window'] = window.combo_nafe_window.currentData()
     if window.combo_nafe_sigma.currentData() == 'auto':
         params['nafe_sigma'] = None
@@ -163,6 +191,7 @@ def collect_controls(window):
     params['mgn_weights'] = tuple(sl.value()/100 for sl in window.sl_mgn_weights)
     params['wow_bilateral'] = window.sl_wow_bilateral.value()/10 if window.combo_wow_bilateral.currentIndex() else None
     params['wow_mode'] = 'ael_bilateral' if window.combo_wow_bilateral.currentIndex() == 2 else 'native'
+    params['wow_noise_reduction'] = window.sl_wow_noise_reduction.value()/10
     params['wow_noise_floor'] = window.sl_wow_noise_floor.value()/10
     return params
 
@@ -186,7 +215,7 @@ def add_advanced_mode(window, header_layout):
     window.sl_wow_noise, _ = create_slider_float(
         'Noise threshold (all scales, sigma)', 0, 100, 0, 10.,
         window.sec_wow.content_layout,
-        tooltip='Standard/watroo modes: apply this noise threshold to every native wavelet scale. Zero disables noise suppression. Editing replaces individual Expert thresholds.',
+        tooltip='Standard/watroo modes: apply this noise threshold to every native wavelet scale. Zero disables thresholding in these backends. Editing replaces individual Expert thresholds. AEL guided WOW uses its separate Noise reduction control.',
         on_release_callback=lambda: window.on_filter_slider_released(window.sec_wow))
     window.lbl_advanced_values = QLabel('Individual WOW thresholds or separate RHEF tails remain active. Edit the Standard control to link them again.')
     window.lbl_advanced_values.setWordWrap(True)
@@ -250,7 +279,7 @@ def add_advanced_mode(window, header_layout):
 def add_achf_variants(window):
     """One persistent panel per AEL variant; switching never overwrites edits."""
     from PySide6.QtWidgets import QWidget, QVBoxLayout
-    from core.ael_achf import AEL_PRESETS
+    from core.ael_achf import AEL_PRESETS, BOUNDED_CONTRAST_LIMITS
     window.achf_ael_controls = {}
     for variant, preset in AEL_PRESETS.items():
         panel = QWidget()
@@ -266,6 +295,24 @@ def add_achf_variants(window):
             tooltip='Overlay opacity; changing this only recomposes cached layers.')
         controls['opacity'].setProperty('mix_only',True)
         controls['opacity'].valueChanged.connect(window.on_layer_mix_changed)
+        controls['encoding']=ScrollSafeComboBox()
+        controls['encoding'].addItem('Contrast: Follow filter normalization','normalization')
+        controls['encoding'].addItem('Contrast: Bounded signed (experimental)','bounded')
+        controls['encoding'].setAccessibleName(variant+' contrast mapping')
+        controls['encoding'].setProperty('bounded_contrast_control',True)
+        controls['encoding'].setToolTip('Choose this variant\'s contrast mapping. Bounded signed overrides global normalization with a zero-centered bounded curve; isotropic variants also use the revised radial fit. Higher contrast increases noise too. Basic starts ISO04/Angular at Bounded contrast 3. Saved recipes retain their selected mapping.')
+        layout.addWidget(controls['encoding'])
+        limit=int(10*BOUNDED_CONTRAST_LIMITS[variant])
+        controls['contrast'],_=create_slider_float('Detail contrast',10,limit,limit,10.,layout,
+            tooltip=f'Bounded contrast gain, 1 to {limit/10:g}. This changes the signed display curve, not the spatial filter. Opacity still controls the mixture.',
+            on_release_callback=lambda variant=variant: window.on_filter_slider_released(window.sec_achf,variant))
+        controls['contrast'].setProperty('bounded_contrast_control',True)
+        controls['contrast'].setProperty('achf_variant',variant)
+        def update_encoding(_, controls=controls, variant=variant):
+            controls['contrast'].parameter_row.setEnabled(controls['encoding'].currentData()=='bounded')
+            window.on_filter_slider_released(window.sec_achf,variant)
+        controls['encoding'].currentIndexChanged.connect(update_encoding)
+        controls['contrast'].parameter_row.setEnabled(False)
         if 'sigmas' in preset:
             controls['sigmas'] = []
             for i, value in enumerate(preset['sigmas']):
@@ -292,7 +339,8 @@ def collect_achf_variants(window):
     result = {}
     for variant, controls in window.achf_ael_controls.items():
         settings = dict(strength=100,outer_sigma=controls['outer_sigma'].value()/10.,
-                        opacity=controls['opacity'].value(),enabled=controls['enabled'].isChecked())
+                        opacity=controls['opacity'].value(),enabled=controls['enabled'].isChecked(),
+                        encoding=controls['encoding'].currentData(),contrast=controls['contrast'].value()/10.)
         if 'sigmas' in controls:
             settings['sigmas'] = [slider.value()/10. for slider in controls['sigmas']]
         else:
@@ -322,6 +370,7 @@ def add_layer_opacities(window):
         layout.removeWidget(row)
         layout.insertWidget(0,row)
         setattr(window,'sl_'+name+'_opacity',slider)
+    window.sec_wow.content_layout.insertWidget(1,window.sl_wow_noise_reduction.parameter_row)
     window.chk_achf_adaptive=QCheckBox('Include Adaptive in composition')
     window.chk_achf_adaptive.setToolTip('Include the adaptive ACHF layer; the other variants can be enabled independently.')
     window.chk_achf_adaptive.setChecked(True)

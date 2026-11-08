@@ -152,6 +152,8 @@ class ProjectSettingsTests(unittest.TestCase):
                     image=f['image']
                 tifffile.imwrite(source,image)
                 w=EclipseProcessorApp();windows.append(w);w.auto_calculate=False
+                # Exercise Standard defaults on this small upstream filter fixture.
+                w.ui_level.setCurrentIndex(1)
                 with patch('gui.app.QFileDialog.getOpenFileName',return_value=(str(source),'')):
                     w.load_image_action();wait_for_gui(w)
                 self.assertEqual(w.source_path,str(source),w.status_label.text())

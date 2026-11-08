@@ -14,7 +14,8 @@ import numpy as np
 from scipy import fft as sfft
 from scipy.special import ndtr
 
-from .ael_achf import normalized_gaussian
+from .ael_achf import normalized_gaussian, radial_log_residual
+from types import SimpleNamespace
 from .cancellation import check_cancelled
 from .parallelism import filter_budget, filter_cpu_budget, memory_bounded_workers
 from .progress import report
@@ -62,18 +63,20 @@ def _level_results(level, positions, workers):
         executor.shutdown(wait=True, cancel_futures=True)
 
 
-def nafe_neighbourhood(n=129):
-    """Odd support window; twelve target-pixel sigmas 2**(m/2), c_m=1, centre=1."""
+def nafe_neighbourhood(n=129, *, scale=1.):
+    """Odd support; twelve native sigmas 2**(m/2) scaled to target pixels; centre=1."""
     if isinstance(n, (bool, np.bool_)) or not isinstance(n, (int, np.integer)) or n < 1 or n % 2 != 1:
         raise ValueError('NAFE window must be a positive odd integer')
+    if not np.isfinite(scale) or not np.sqrt(np.finfo(float).tiny) <= scale <= 1:
+        raise ValueError('NAFE kernel scale must be resolvable, finite and in (0,1]')
     k = np.arange(n) - n // 2
     r2 = (k[:, None]**2 + k[None, :]**2).astype(np.float64)
-    sig = 2.**(np.arange(1, 13)/2)
+    sig = 2.**(np.arange(1, 13)/2)*scale
     g = sum(np.exp(-.5*r2/s**2)/(2*np.pi*np.sqrt(s)) for s in sig)
     return g*(2*np.pi/np.sum(sig**-.5))
 
 
-def nafe(image, valid, sigma, *, n=129, level_step=.005, target_valid=None):
+def nafe(image, valid, sigma, *, n=129, level_step=.005, target_valid=None, kernel_scale=1.):
     """AEL fuzzy CDF with a Gaussian intensity gate; no image tone curve or fill.
 
     Signed radiance is supported. Subtracting a common pedestal and rescaling
@@ -86,7 +89,7 @@ def nafe(image, valid, sigma, *, n=129, level_step=.005, target_valid=None):
         raise ValueError('NAFE sigma must be finite and positive in input units')
     if not np.isfinite(level_step) or not 0 < level_step <= 1:
         raise ValueError('NAFE level step must be finite and in (0,1]')
-    kernel = nafe_neighbourhood(n)
+    kernel = nafe_neighbourhood(n,scale=kernel_scale)
     a = np.asarray(image, np.float32)
     if a.ndim != 2 or not a.size:
         raise ValueError('NAFE requires a nonempty 2D image')
@@ -97,7 +100,8 @@ def nafe(image, valid, sigma, *, n=129, level_step=.005, target_valid=None):
     m = np.isfinite(a) if valid is None else np.asarray(valid, bool) & np.isfinite(a)
     targets = m if target_valid is None else np.asarray(target_valid,bool) & np.isfinite(a)
     info = dict(n=int(n), c_m=1, sigma=float(sigma), level_step=float(level_step),
-                internal_sigmas_target_px=(2.**(np.arange(1,13)/2)).tolist(),
+                internal_sigmas_target_px=(2.**(np.arange(1,13)/2)*kernel_scale).tolist(),
+                kernel_scale=float(kernel_scale),
                 centre_normalization=1, levels=0, convolutions=0, level_workers=0)
     if not m.any() or not targets.any():
         return np.full(a.shape, np.nan, np.float32), dict(info, undefined=True)
@@ -243,12 +247,44 @@ def nafe_noise_sigma(image, valid, cx, cy, radius, *, multiple=12., region_rsun=
         noise_estimate=f'1.4826 MAD of residual from a {smooth_px:g} target-pixel normalized Gaussian')
 
 
+def _radial_reference(image, samples, targets, sigma, cx, cy, radius):
+    """Smooth diagnostic continuum on observed support; never replace source pixels."""
+    check_cancelled()
+    y,x = np.ogrid[:image.shape[0], :image.shape[1]]
+    radii = np.hypot(x-cx,y-cy).astype(np.float32)
+    low = float(np.min(image[samples]))
+    unit = max(float(np.ptp(image[samples])),float(sigma))
+    shifted = np.where(samples,(image.astype(float)-low+sigma)/unit,np.nan).astype(np.float32)
+    residual,fit = radial_log_residual(shifted,samples,
+        SimpleNamespace(sun_radius_px=radius,radius_map=lambda:radii))
+    supported = samples & np.isfinite(residual)
+    if not supported.any():
+        raise ValueError('Limb-aware NAFE needs supported radial statistics; use AEL original')
+    model = np.full(image.shape,np.nan,np.float32)
+    model[supported] = (np.exp(np.log(shifted[supported]).astype(float)-residual[supported])*unit+low-sigma).astype(np.float32)
+    query = targets & ~supported
+    if query.any():
+        check_cancelled()
+        order = np.argsort(radii[supported])
+        # Extend the model only to observed queries, not into missing image data.
+        model[query] = np.interp(radii[query],radii[supported][order],model[supported][order]).astype(np.float32)
+    check_cancelled()
+    return model,fit
+
+
 def nafe_layer(image, params, valid=None, targets=None):
-    """Independent Overlay E; preview window scales, internal sigmas do not."""
+    """Independent Overlay E; preview window and internal sigmas share native scale."""
     a = np.asarray(image,np.float32)
     if a.ndim != 2 or not a.size or (valid is not None and np.shape(valid) != a.shape):
         raise ValueError('NAFE requires a nonempty 2D image and matching validity')
     m = np.isfinite(a) if valid is None else np.asarray(valid,bool) & np.isfinite(a)
+    method = params.get('nafe_method','ael')
+    if method not in ('ael','limb_aware'):
+        raise ValueError('Unknown NAFE method')
+    if method == 'limb_aware':
+        geometry = [params.get(key,np.nan) for key in ('sx','sy','sr')]
+        if not np.isfinite(geometry).all() or geometry[2] <= 0:
+            raise ValueError('Limb-aware NAFE needs finite geometry and a positive radius')
     scale = float(params.get('nafe_scale',1.))
     if not np.isfinite(scale) or not 0 < scale <= 1:
         raise ValueError('NAFE resolution scale must be in (0,1]')
@@ -259,7 +295,7 @@ def nafe_layer(image, params, valid=None, targets=None):
     info = dict(input='linear luminance',sigma_units='working linear input units',upstream_version='1.4.2',
         operator='Druckmüller (2013), ApJS 207, 25, equations 11–14; AEL NAFE E',
         display='E itself; Overlay, no display stretch',native_window=int(window),target_scale=scale,
-        resolution='native' if scale==1 else 'approximate preview; internal Gaussians remain in target pixels',
+        resolution='native' if scale==1 else 'approximate preview; window and internal Gaussians scaled from native pixels',
         support='observed statistical/operator samples; separate observed output targets')
     if not m.any():
         return np.full(a.shape,np.nan,np.float32),dict(info,undefined=True)
@@ -271,5 +307,18 @@ def nafe_layer(image, params, valid=None, targets=None):
         info.update(sigma_from='automatic residual MAD',**noise)
     else:
         info['sigma_from'] = 'manual'
-    q,operator = nafe(a,m,sigma,n=n,target_valid=targets)
-    return q,dict(info,**operator)
+    q,operator = nafe(a,m,sigma,n=n,target_valid=targets,kernel_scale=scale)
+    info.update(operator,method=method)
+    if method == 'limb_aware' and np.isfinite(q).any():
+        observed = np.isfinite(a) if targets is None else np.asarray(targets,bool) & np.isfinite(a)
+        model,fit = _radial_reference(a,m,observed,sigma,params['sx'],params['sy'],params['sr'])
+        expected,reference_operator = nafe(model,m,sigma,n=n,target_valid=observed,kernel_scale=scale)
+        if np.any(np.isfinite(q) & ~np.isfinite(expected)):
+            raise ValueError('Limb-aware reference has insufficient support; use AEL original')
+        # Unit slope at neutral retains faint contrast without hard clipping strong differences.
+        q = .5+.5*np.tanh(2*(q-expected))
+        info.update(operator_revision='eip-nafe-radial-reference-1',radial_reference=fit,
+            reference_operator=reference_operator,experimental=True,
+            display='0.5 + 0.5 tanh(2(E - E_reference)); Overlay',
+            operator='EIP radial-reference response using AEL NAFE and radial spline')
+    return q,info

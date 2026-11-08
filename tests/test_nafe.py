@@ -241,10 +241,101 @@ class NAFETests(unittest.TestCase):
         self.assertEqual(p['nafe_sigma'],.04)
         q,info=nafe_layer(self.a,p,self.m)
         self.assertEqual(info['n'],129);self.assertEqual(info['native_window'],257)
-        self.assertEqual(info['internal_sigmas_target_px'][-1],64)
+        self.assertEqual(info['internal_sigmas_target_px'][-1],32)
+        self.assertEqual(info['kernel_scale'],.5)
         self.assertIn('approximate',info['resolution'])
         p=prepare_parameters(dict(self.p,nafe_window=257),self.a.shape,(16,20),self.a.shape)
         self.assertEqual(nafe_layer(self.a,p,self.m)[1]['n'],257)
+
+    def test_scaled_kernel_preserves_native_and_matches_physical_gaussians(self):
+        native=nafe_neighbourhood(9)
+        np.testing.assert_array_equal(native,nafe_neighbourhood(9,scale=1.))
+        for scale in (.25,.5):
+            kernel=nafe_neighbourhood(9,scale=scale)
+            x=np.arange(9)-4;r2=x[:,None]**2+x[None,:]**2
+            sigmas=2.**(np.arange(1,13)/2)*scale
+            expected=sum(np.exp(-.5*r2/s**2)/(2*np.pi*np.sqrt(s)) for s in sigmas)
+            expected/=expected[4,4]
+            np.testing.assert_allclose(kernel,expected,atol=1e-15)
+            self.assertAlmostEqual(kernel[4,4],1.)
+            np.testing.assert_array_equal(kernel,kernel[::-1,::-1])
+            self.assertLess(kernel[0,0],native[0,0])
+        for bad in (0.,-1.,1.01,np.nan,np.inf,1e-300):
+            with self.assertRaises(ValueError):nafe_neighbourhood(9,scale=bad)
+
+    def test_scaled_direct_cdf_null_masks_and_cancellation(self):
+        a=np.arange(49,dtype=np.float32).reshape(7,7)/49
+        valid=np.ones(a.shape,bool);valid[3,3]=False
+        q,_=nafe(a,valid,.2,n=3,target_valid=np.ones(a.shape,bool),kernel_scale=.5)
+        weights=nafe_neighbourhood(3,scale=.5);weights[1,1]=0
+        exact=np.sum(weights*ndtr((float(a[3,3])-a[2:5,2:5])/.2))/weights.sum()
+        self.assertAlmostEqual(float(q[3,3]),float(exact),delta=.008)
+        flat=np.ones((24,24),np.float32);y,x=np.indices(flat.shape)
+        support=np.hypot(x-12,y-12)>4;flat[~support]=np.nan
+        result,_=nafe(flat,support,.1,n=9,kernel_scale=.5)
+        np.testing.assert_allclose(result[support],.5,atol=2e-6)
+        self.assertTrue(np.isnan(result[~support]).all())
+        with patch('core.ael_nafe.check_cancelled',side_effect=ProcessingCancelled()):
+            with self.assertRaises(ProcessingCancelled):nafe(flat,support,.1,n=9,kernel_scale=.5)
+
+    def test_layer_scales_kernel_and_native_receipt_stays_exact(self):
+        params=dict(self.p,nafe_scale=.5)
+        q,info=nafe_layer(self.a,params,self.m)
+        expected,_=nafe(self.a,self.m,.04,n=5,kernel_scale=.5)
+        np.testing.assert_array_equal(q,expected)
+        np.testing.assert_allclose(info['internal_sigmas_target_px'],2.**(np.arange(1,13)/2)*.5)
+        native,receipt=nafe_layer(self.a,self.p,self.m)
+        direct,_=nafe(self.a,self.m,.04,n=9)
+        np.testing.assert_array_equal(native,direct)
+        self.assertEqual(receipt['kernel_scale'],1.)
+
+    def test_limb_aware_null_signal_units_support_and_method_validation(self):
+        y,x=np.indices((256,256));r=np.hypot(x-128,y-128)
+        valid=r>55
+        a=(.05+np.maximum(r/55,1)**-3).astype(np.float32);a[~valid]=np.nan
+        p=dict(sx=128,sy=128,sr=55,nafe_sigma=.025,nafe_window=33,nafe_method='limb_aware')
+        before=a.copy();q,info=nafe_layer(a,p,valid,valid)
+        np.testing.assert_array_equal(a,before)
+        np.testing.assert_array_equal(np.isfinite(q),valid)
+        self.assertLess(abs(np.median(q[valid&(r<65)])-.5),.02)
+        self.assertTrue(info['experimental'])
+        units,_=nafe_layer(a*7+2,dict(p,nafe_sigma=.175),valid,valid)
+        np.testing.assert_allclose(q,units,atol=.001,equal_nan=True)
+        signal=(.02*np.cos(8*np.arctan2(y-128,x-128))*np.exp(-((r-65)/8)**2)).astype(np.float32)
+        changed=a+signal
+        enhanced,_=nafe_layer(changed,p,valid,valid)
+        original,_=nafe_layer(a,dict(p,nafe_method='ael'),valid,valid)
+        original_changed,_=nafe_layer(changed,dict(p,nafe_method='ael'),valid,valid)
+        region=valid&(r>57)&(r<80)&(abs(signal)>.01)
+        response=(original_changed-original)[region];actual=(enhanced-q)[region]
+        self.assertAlmostEqual(float(np.dot(response,actual)/np.dot(response,response)),1.,delta=.1)
+        self.assertGreater(np.mean(response*actual>=0),.98)
+        with self.assertRaises(ValueError):nafe_layer(a,dict(p,nafe_method='unknown'),valid)
+        with self.assertRaises(ValueError):nafe_layer(a,dict(p,sr=0),valid)
+        legacy,_=nafe_layer(self.a,dict(nafe_sigma=.04,nafe_window=9),self.m)
+        np.testing.assert_allclose(legacy,self.expected,atol=2e-6,equal_nan=True)
+
+    def test_method_cache_isolation_and_experimental_export_receipt(self):
+        from core.layer_package import build_layer_package
+        from core.psb_export import export_psb_layers,verify_psb_document
+        worker=FilterWorker();engine=LayerEngine()
+        with patch('core.ael_nafe.nafe_layer',wraps=nafe_layer) as operator:
+            original=engine.layer(worker,self.a,self.p,'nafe')
+            p=dict(self.p,nafe_method='limb_aware')
+            experimental=engine.layer(worker,self.a,p,'nafe')
+            engine.layer(worker,self.a,dict(p,nafe_opacity=80),'nafe')
+            self.assertEqual(operator.call_count,2)
+        self.assertFalse(np.array_equal(original['image'],experimental['image']))
+        package=build_layer_package(worker,self.a,p,{},'synthetic.fits')
+        row=next(row for row in package.recipe['layers'] if row['filter']=='nafe')
+        self.assertEqual(row['normalization']['method'],'limb_aware')
+        self.assertTrue(row['normalization']['experimental'])
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'experimental.psb'
+            export_psb_layers(package,path);verify_psb_document(path,package)
+        with patch('core.ael_nafe._radial_reference',side_effect=ProcessingCancelled):
+            with self.assertRaises(ProcessingCancelled):
+                LayerEngine().layer(worker,self.a,p,'nafe')
 
     def test_tiff_jpeg_psb_and_recipe_share_the_independent_layer(self):
         from core.export import export_images
@@ -276,6 +367,9 @@ class NAFEGuiTests(unittest.TestCase):
         try:
             a=np.ones((32,40),np.float32);w.full_raw_image=w.raw_image=w.preview_image=a
             self.assertFalse(w.sec_nafe.is_filter_active())
+            self.assertEqual(w.combo_nafe_method.currentData(),'ael')
+            self.assertFalse(w.combo_nafe_method.isHidden())
+            w.combo_nafe_method.setCurrentIndex(1)
             self.assertEqual(w.sl_nafe_opacity.value(),40)
             self.assertEqual(w.sl_nafe_opacity.property('reset_value'),40)
             self.assertTrue(w.sec_nafe.isVisibleTo(w))
@@ -286,6 +380,7 @@ class NAFEGuiTests(unittest.TestCase):
             saved=capture_settings(w);restore_settings(w,saved)
             self.assertEqual(capture_settings(w),saved)
             p=w.collect_filter_parameters(a.shape)
+            self.assertEqual(p['nafe_method'],'limb_aware')
             self.assertTrue(p['nafe_enabled']);self.assertEqual(p['nafe_sigma'],.04)
             self.assertEqual(p['nafe_window'],257)
             w.ui_level.setCurrentIndex(1)
@@ -307,6 +402,7 @@ class NAFEGuiTests(unittest.TestCase):
             old['controls']={k:v for k,v in old['controls'].items() if '_nafe_' not in k}
             restore_settings(w,old)
             self.assertFalse(w.sec_nafe.is_filter_active())
+            self.assertEqual(w.combo_nafe_method.currentData(),'ael')
             self.assertEqual(w.combo_nafe_sigma.currentData(),'auto')
             self.assertEqual(w.combo_nafe_window.currentData(),129)
         finally:close_window(w)
