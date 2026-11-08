@@ -1,5 +1,7 @@
 # Qt GUI patterns
 
+- AEL ACHF bounded encoding/gain controls carry `bounded_contrast_control` so Basic retains them in ISO04/Angular cards. Enable the gain's whole parameter_row only in bounded mode. Keep per-variant settings optional; Follow ignores gain in cache keys, bounded ignores global normalization. ISO01 gain is capped at 2 after the unchanged injection-correlation criterion rejected 4; ISO04/Angular allow 4.
+
 - Windows JSON tests must read UTF-8 explicitly when comparing persisted selector text. File readers (including TiffFile in tests) need context managers: Windows cannot remove open files. Layer scheduling must use physical_memory_bytes rather than assuming os.sysconf exists; the helper already supports GlobalMemoryStatusEx.
 - Native Windows file-dialog accessibility focus can describe the search box while the screenshot shows the filename caret. Target the related dialog screenshot, inspect visible focus and entered text, and refresh after each action. Packaged recipe/export/cancel/close checks succeeded through the native UI using this workflow.
 
@@ -69,3 +71,21 @@
 - Fresh windows start in Basic; saved ui_mode and legacy Advanced-to-Standard/Expert mapping still govern recipe restoration. Tests exercising all-filter controls must select Standard explicitly.
 
 - OpacitySlider keeps QSlider values/signals in integer percentages for recipes, reset and keyboard/accessibility; custom painting and pointer mapping alone apply the 1.5 travel curve. All filter and ACHF opacity factories use it; Gain remains linear.
+
+- General warmth and additive Corona warmth share colour_layers across render/export/packages. Derive sky/corona masks from the untinted presentation once; unsupported fits bypass only masked stages. Keep sl_warmth for old corona recipes, default new general/green fields to 0/off, and snapshot them without invalidating numerical filters.
+
+- Prominence composition must not depend on PSB preview being on. Explicit mask/on-black selection exits View Original. Green-sky reduction now carries a separate 0–100% strength (75% default) through settings and worker/export snapshots; source prominence masks remain independent of warmth/green controls.
+
+- Approved colour-validation source is the explicit CoronaHDR_Work/.coronahdr-jobs/e1c3c474c41b4163b9c04099bb909948/result/master.fits. Do not tune the app from the rejected artifacts/.coronahdr-jobs/596a8739cfd846ef97b19c8408a73420 master; its experimental prominence-selection fallback was removed. User warmth reference is amber/orange with a near-white inner rim, not rose/magenta.
+
+- User clarified this is a sunset eclipse: visual references are amber/orange corona with a near-white inner rim and copper/brown sky with reddish horizon glow. Preserve sky gradients and genuine sunset colour; do not apply blanket magenta removal or tune from the rejected master.
+
+- NAFE implementation selector stays visible in Basic mode: default AEL original; optional EIP limb-aware response uses the same radial spline/NAFE on observed support only. Preserve its experimental label and dark innermost-limb limitation. Preview scales both window and Gaussian widths; scale 1 stays native-exact.
+
+- AEL WOW noise reduction is a separate numeric control, not a mix-only slider. Keep its row visible in Basic and disable it for watroo modes. Existing filter-widget snapshots supply optional-field reset-to-zero; do not alias the retired noise-floor or watroo threshold controls.
+
+- Filter normalization is a global optional v4 combo in Geometry: missing recipes reset Compatible. Revised changes ACHF/Tangential and continuous FNRGF only. Exclude it from unrelated filter cache keys (especially expensive NAFE); keep it in affected signatures and export receipts. Basic must keep the selector visible; use native source normalization bounds for linear signed-detail scale in preview and export.
+
+- Tangential source-relative encoding is an optional filter-owned combo below opacity (Standard/Expert), defaulting to Follow filter normalization. Its reference uses allowed source statistics independently of output limits. In source_relative mode, exclude global normalization_mode from its cache key/metadata; changing that unrelated setting must reuse the layer. Keep approximate preview and empirical-noise warnings explicit.
+
+- Basic six-layer starter is applied only after first direct-image heuristics via apply_basic_starter. Never apply it in apply_ui_level or reset_filter_defaults: that would overwrite mode-switch edits or omitted controls in old JSON recipes. Basic now permits FNRGF and Tangential.
